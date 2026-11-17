@@ -1,0 +1,71 @@
+export type Track = "mic" | "system";
+
+export type MeetingStatus = "recording" | "processing" | "done" | "error";
+
+export type Summary = {
+  title: string;
+  overview: string;
+  decisions: string[];
+  actionItems: { owner: string; task: string; due: string }[];
+  topics: { title: string; points: string[] }[];
+};
+
+export type MeetingRow = {
+  id: number;
+  title: string;
+  startedAt: string;
+  status: MeetingStatus;
+  unread: boolean;
+};
+
+/** Where an utterance's audio lives: a chunk file URL and the offset into it. */
+export type AudioRef = { url: string; offsetSec: number };
+
+export type Utterance = { id: number; track: Track; startSec: number; text: string };
+
+export type MeetingDetail = MeetingRow & {
+  summary: Summary | null;
+  error: string | null;
+  pendingChunks: number;
+  utterances: Utterance[];
+};
+
+export type Chunk = { meetingId: number; track: Track; startSec: number; pcm: Int16Array };
+
+export type TranscriptionProvider = "qgrid" | "openai";
+export type SummaryProvider = "qgrid" | "openai" | "anthropic";
+
+export const DEFAULT_MODELS = {
+  transcription: { openai: "gpt-4o-transcribe", qgrid: "openai/gpt-transcribe" },
+  summary: { openai: "gpt-6-luna", anthropic: "claude-sonnet-5-5", qgrid: "openai/gpt-6-luna" },
+} as const;
+
+export type Settings = {
+  qgridUrl: string;
+  transcription: { provider: TranscriptionProvider; model: string };
+  summary: { provider: SummaryProvider; model: string };
+  language: string;
+  /** Names and terms, comma-separated; steers spelling in transcription and summary. */
+  glossary: string;
+  /** Whether a key is stored; key values never leave the main process. */
+  hasKey: { openai: boolean; anthropic: boolean };
+};
+
+export type SettingsUpdate = Omit<Settings, "hasKey"> & {
+  /** undefined keeps the stored key, "" deletes it. */
+  keys?: { openai?: string; anthropic?: string };
+};
+
+export type Api = {
+  listMeetings(query: string): Promise<MeetingRow[]>;
+  getMeeting(id: number): Promise<MeetingDetail | null>;
+  startMeeting(): Promise<number>;
+  sendChunk(chunk: Chunk): void;
+  stopMeeting(id: number): Promise<void>;
+  resummarize(id: number): Promise<void>;
+  markOpened(id: number): Promise<void>;
+  audioFor(meetingId: number, track: Track, startSec: number): Promise<AudioRef | null>;
+  getSettings(): Promise<Settings>;
+  saveSettings(update: SettingsUpdate): Promise<void>;
+  onMeetingChanged(listener: (id: number) => void): () => void;
+};

@@ -1,0 +1,678 @@
+/* Hallmark · app layout · inverted-L chrome (sidebar + header) around the main surface;
+ * sidebar borrows Discord's channel list + voice panel, the transcript borrows message
+ * groups, the summary panel borrows the member list.
+ */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  height: 100%;
+}
+
+/* ── Sidebar ────────────────────────────────────────────────────────── */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-chrome);
+}
+
+/* Empty drag strip under the native traffic lights. */
+.sidebar__chrome {
+  height: var(--titlebar-inset);
+  flex: none;
+}
+
+.sidebar__top {
+  padding: 0 var(--space-3) var(--space-2);
+}
+
+/* Discord's "find or start a conversation" button: looks like an input, opens ⌘K. */
+.search-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-h);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-main);
+  color: var(--color-ink-3);
+  text-align: left;
+  transition: background-color var(--dur-micro) var(--ease-out);
+}
+
+.search-trigger svg {
+  width: 14px;
+  height: 14px;
+}
+
+.search-trigger span:first-of-type {
+  flex: 1;
+}
+
+@media (hover: hover) {
+  .search-trigger:hover {
+    background: var(--color-hover);
+    color: var(--color-ink-2);
+  }
+}
+
+.channel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-2) var(--space-4);
+}
+
+.channel-group + .channel-group {
+  margin-top: var(--space-4);
+}
+
+.channel-group__label {
+  padding: 0 var(--space-2) var(--space-1);
+  color: var(--color-ink-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-strong);
+}
+
+.channel {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 32px;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-ink-2);
+  text-align: left;
+  transition: background-color var(--dur-micro) var(--ease-out);
+}
+
+.channel__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel__meta {
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+}
+
+@media (hover: hover) {
+  .channel:hover {
+    background: var(--color-hover);
+    color: var(--color-ink);
+  }
+}
+
+.channel.is-hover {
+  background: var(--color-hover);
+  color: var(--color-ink);
+}
+
+.channel[aria-current="true"] {
+  background: var(--color-selected);
+  color: var(--color-ink);
+}
+
+/* Discord's unread pill: a short bar on the left edge; it grows for the open item. */
+.channel::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--space-2) * -1);
+  top: 50%;
+  width: 4px;
+  height: 8px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--color-ink);
+  translate: 0 -50%;
+  scale: 0 1;
+  transform-origin: left;
+  transition: scale var(--dur-short) var(--ease-out);
+}
+
+.channel[data-unread="true"]::before {
+  scale: 1 1;
+}
+
+.channel[data-unread="true"] {
+  color: var(--color-ink);
+  font-weight: var(--weight-strong);
+}
+
+.channel__status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+}
+
+.channel__status[data-status="recording"] {
+  color: var(--color-accent-text);
+}
+
+.channel__status[data-status="error"] {
+  color: var(--color-danger);
+}
+
+.empty {
+  padding: var(--space-4) var(--space-2);
+  color: var(--color-ink-3);
+}
+
+/* Discord's voice-connected panel, as the recorder dock. */
+.dock {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-top: var(--rule);
+}
+
+.dock__live {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  flex: none;
+}
+
+.dock__live-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.dock__live-title {
+  color: var(--color-accent-text);
+  font-weight: var(--weight-strong);
+}
+
+.dock__live-meta {
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+}
+
+.dock__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.dock__row .btn {
+  flex: 1;
+}
+
+/* ── Main surface ───────────────────────────────────────────────────── */
+.main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: var(--header-h) minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  margin: var(--space-2) var(--space-2) var(--space-2) 0;
+  border: var(--rule);
+  border-radius: var(--radius-lg);
+  background: var(--color-main);
+  overflow: hidden;
+}
+
+.main__header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-3) 0 var(--space-5);
+  border-bottom: var(--rule);
+}
+
+.main__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-base);
+  font-weight: var(--weight-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.main__meta {
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.placeholder {
+  grid-column: 1 / -1;
+  display: grid;
+  place-content: center;
+  gap: var(--space-2);
+  color: var(--color-ink-3);
+  text-align: center;
+}
+
+.placeholder strong {
+  color: var(--color-ink-2);
+  font-weight: var(--weight-medium);
+}
+
+/* ── Transcript as message groups ───────────────────────────────────── */
+.transcript {
+  overflow-y: auto;
+  padding: var(--space-4) 0 var(--space-8);
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 var(--space-5) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.notice svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.msg-group {
+  margin-top: var(--space-4);
+}
+
+.msg {
+  position: relative;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  padding: var(--space-half) var(--space-5) var(--space-half) 0;
+  transition: background-color var(--dur-micro) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .msg:hover {
+    background: var(--color-chrome);
+  }
+  .msg:hover .msg__gutter-time,
+  .msg:hover .msg__actions {
+    opacity: 1;
+  }
+}
+
+.msg.is-hover {
+  background: var(--color-chrome);
+}
+
+.msg.is-hover .msg__gutter-time,
+.msg.is-hover .msg__actions {
+  opacity: 1;
+}
+
+.msg__gutter {
+  display: flex;
+  justify-content: center;
+  padding-top: var(--space-half);
+}
+
+.msg--head .msg__gutter {
+  padding-top: 4px;
+}
+
+.msg__gutter-time {
+  padding-top: var(--space-half);
+  color: var(--color-ink-3);
+  font-size: var(--text-xs);
+  opacity: 0;
+}
+
+.msg__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-half);
+}
+
+.msg__name {
+  font-weight: var(--weight-strong);
+}
+
+.msg__name[data-speaker="mic"] {
+  color: var(--color-accent-text);
+}
+
+.msg__time {
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+}
+
+.msg__text {
+  font-size: var(--text-read);
+  line-height: var(--leading-read);
+  overflow-wrap: anywhere;
+}
+
+/* Discord's hover toolbar, pinned to the row's top-right. */
+.msg__actions {
+  position: absolute;
+  top: -12px;
+  right: var(--space-5);
+  display: flex;
+  gap: var(--space-half);
+  padding: var(--space-half);
+  border: var(--rule);
+  border-radius: var(--radius-md);
+  background: var(--color-raised);
+  box-shadow: var(--shadow-pop);
+  opacity: 0;
+  transition: opacity var(--dur-micro) var(--ease-out);
+}
+
+.msg__actions:focus-within {
+  opacity: 1;
+}
+
+.msg__actions .icon-btn {
+  width: 26px;
+  height: 26px;
+}
+
+.msg__actions .icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.msg[data-playing="true"] {
+  background: var(--color-accent-soft);
+}
+
+.typing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5) 0 56px;
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+}
+
+/* ── Summary panel (member-list slot) ───────────────────────────────── */
+.panel {
+  width: var(--panel-w);
+  border-left: var(--rule);
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-5) var(--space-8);
+  background: var(--color-main);
+}
+
+.panel__section + .panel__section {
+  margin-top: var(--space-6);
+}
+
+.panel__label {
+  margin-bottom: var(--space-2);
+  color: var(--color-ink-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-strong);
+}
+
+.panel__overview {
+  font-size: var(--text-read);
+  line-height: var(--leading-read);
+}
+
+.panel__list {
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+.panel__list li {
+  position: relative;
+  padding-left: var(--space-4);
+}
+
+.panel__list li::before {
+  content: "";
+  position: absolute;
+  left: var(--space-half);
+  top: 0.6em;
+  width: 4px;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-ink-3);
+}
+
+.action {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: var(--rule);
+  border-radius: var(--radius-md);
+}
+
+.action + .action {
+  margin-top: var(--space-2);
+}
+
+.action__meta {
+  display: flex;
+  gap: var(--space-2);
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+}
+
+.action__owner {
+  color: var(--color-ink-2);
+  font-weight: var(--weight-medium);
+}
+
+.topic + .topic {
+  margin-top: var(--space-3);
+}
+
+.topic__title {
+  margin-bottom: var(--space-1);
+  font-size: var(--text-base);
+  font-weight: var(--weight-strong);
+}
+
+.panel__foot {
+  margin-top: var(--space-6);
+}
+
+.panel__pending {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-ink-3);
+}
+
+/* ── Command palette (⌘K) ───────────────────────────────────────────── */
+.palette {
+  width: min(560px, calc(100vw - var(--space-8)));
+  margin-top: 14vh;
+}
+
+.palette__input {
+  width: 100%;
+  height: 48px;
+  padding: 0 var(--space-5);
+  border: 0;
+  border-bottom: var(--rule);
+  background: transparent;
+  font-size: var(--text-lg);
+}
+
+.palette__list {
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: var(--space-2);
+}
+
+.palette__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  text-align: left;
+}
+
+.palette__item[aria-selected="true"] {
+  background: var(--color-selected);
+}
+
+.palette__item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette__item-meta {
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+}
+
+.palette__foot {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-top: var(--rule);
+  background: var(--color-chrome);
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+}
+
+.palette__foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* ── Settings dialog layout ─────────────────────────────────────────── */
+.field-row {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+.field-hint {
+  color: var(--color-success);
+  font-weight: var(--weight-medium);
+}
+
+.dock .notice {
+  margin: 0;
+}
+
+.transcript .empty {
+  padding-inline: var(--space-5);
+}
+
+/* ── Style guide (dev only) ─────────────────────────────────────────── */
+.guide {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  overflow-y: auto;
+  padding: var(--space-8) var(--space-10) var(--space-10);
+}
+
+.guide__title {
+  font-size: var(--text-2xl);
+}
+
+.guide__lede {
+  margin-top: var(--space-2);
+  color: var(--color-ink-3);
+}
+
+.guide__h {
+  margin: var(--space-10) 0 var(--space-4);
+  padding-bottom: var(--space-2);
+  border-bottom: var(--rule);
+  font-size: var(--text-lg);
+}
+
+.guide__swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-3);
+}
+
+.swatch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+}
+
+.swatch__chip {
+  width: 28px;
+  height: 28px;
+  border: var(--rule);
+  border-radius: var(--radius-md);
+  flex: none;
+}
+
+.guide__type {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+}
+
+.guide code {
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+}
+
+.guide__grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.guide__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.guide__row > code {
+  width: 72px;
+}
+
+.guide__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-2) var(--space-5);
+}
+
+.guide__channels {
+  width: var(--sidebar-w);
+  padding: var(--space-2);
+  border-radius: var(--radius-lg);
+  background: var(--color-chrome);
+}
+
+.guide__messages {
+  max-width: 640px;
+  margin-top: var(--space-4);
+}
