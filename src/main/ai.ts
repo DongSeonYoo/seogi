@@ -30,7 +30,7 @@ export async function transcribeWav(store: SettingsStore, wav: Uint8Array): Prom
 }
 
 /**
- * On noise without speech, prompted models read the prompt back ("용어: 동선, 큐그리드").
+ * On noise without speech, prompted models read the glossary prompt back as the transcript.
  * Treats a transcript that is only a piece of the prompt as empty. A lone glossary word that
  * was really spoken is dropped too.
  */

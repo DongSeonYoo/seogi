@@ -21,6 +21,7 @@ Electron + React meeting recorder for macOS: records mic and system audio, trans
 - Every interactive element needs default, hover, focus-visible, active, disabled, loading, error, and success states. Check new components in the dev style guide (`⌘⇧D`).
 - After changing colour tokens, re-check WCAG contrast for the pairs listed in `design.md`.
 
-# Commits
+# Language
 
-- Conventional-commit type and scope in English, subject in Korean, e.g. `feat(recorder): 무음 구간 감지 개선`.
+- Write commit messages, code comments, README, and other docs in English, e.g. `feat(recorder): detect pauses with a noise-floor estimate`.
+- UI copy stays Korean; it is product text, not documentation.
