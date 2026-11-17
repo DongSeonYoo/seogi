@@ -11,7 +11,12 @@ const api: Api = {
   markOpened: (id) => ipcRenderer.invoke("markOpened", id),
   audioFor: (meetingId, track, startSec) => ipcRenderer.invoke("audioFor", meetingId, track, startSec),
   getSettings: () => ipcRenderer.invoke("getSettings"),
-  saveSettings: (u) => ipcRenderer.invoke("saveSettings", u),
+  patchSettings: (patch) => ipcRenderer.invoke("patchSettings", patch),
+  setKey: (name, value) => ipcRenderer.invoke("setKey", name, value),
+  testConnection: (role) => ipcRenderer.invoke("testConnection", role),
+  storageInfo: () => ipcRenderer.invoke("storageInfo"),
+  openDataFolder: () => ipcRenderer.invoke("openDataFolder"),
+  appInfo: () => ipcRenderer.invoke("appInfo"),
   onMeetingChanged(listener) {
     const handler = (_e: unknown, id: number) => listener(id);
     ipcRenderer.on("meeting-changed", handler);

@@ -3,8 +3,9 @@ import { createOpenAI } from "@ai-sdk/openai";
 import qgrid from "@cartanova/qgrid-ai-sdk";
 import { generateText, Output, transcribe, type LanguageModel } from "ai";
 import { z } from "zod";
-import type { Summary } from "../shared/types";
+import type { ConnectionResult, ConnectionRole, Summary } from "../shared/types";
 import type { SettingsStore } from "./settings";
+import { toWav, SAMPLE_RATE } from "./wav.ts";
 
 export type Transcript = { text: string; words: { startSecond: number }[]; durationSec: number };
 
@@ -20,9 +21,11 @@ export async function transcribeWav(store: SettingsStore, wav: Uint8Array): Prom
         })
       : createOpenAI({ apiKey: store.key("openai") }).transcription(id);
 
+  // "auto" leaves language detection to the model.
+  const language: Record<string, string> = s.language === "auto" ? {} : { language: s.language };
   const providerOptions: Record<string, Record<string, string>> = id.startsWith("grok/")
-    ? { xai: { language: s.language } }
-    : { openai: { language: s.language, ...(prompt && { prompt }) } };
+    ? { xai: language }
+    : { openai: { ...language, ...(prompt && { prompt }) } };
 
   const r = await transcribe({ model, audio: wav, providerOptions, maxRetries: 2 });
   const text = prompt && isPromptEcho(r.text, prompt) ? "" : r.text.trim();
@@ -102,4 +105,16 @@ export async function summarize(store: SettingsStore, transcript: string): Promi
     maxRetries: 2,
   });
   return output;
+}
+
+/** One cheap real request through the configured provider, so a bad key or model shows up now. */
+export async function testConnection(store: SettingsStore, role: ConnectionRole): Promise<ConnectionResult> {
+  const started = Date.now();
+  try {
+    if (role === "transcription") await transcribeWav(store, toWav(new Int16Array(SAMPLE_RATE)));
+    else await generateText({ model: summaryModel(store, store.get()), prompt: "Reply with OK.", maxRetries: 0 });
+    return { ok: true, ms: Date.now() - started };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }

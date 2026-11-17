@@ -3,7 +3,9 @@ import {
   useEffect,
   useId,
   useRef,
+  useState,
   type ButtonHTMLAttributes,
+  type KeyboardEvent,
   type ReactNode,
   type SelectHTMLAttributes,
 } from "react";
@@ -145,4 +147,121 @@ export function Dialog({
       {open && children}
     </dialog>
   );
+}
+
+export function Switch({
+  checked,
+  onChange,
+  label,
+  disabled,
+  className = "",
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      className={`switch ${className}`}
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="switch__thumb" aria-hidden />
+    </button>
+  );
+}
+
+/** A radio group drawn as one segmented control; arrow keys move the choice. */
+export function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+  label,
+}: {
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (next: T) => void;
+  label: string;
+}) {
+  return (
+    <div
+      className="segmented"
+      role="radiogroup"
+      aria-label={label}
+      onKeyDown={(e) => {
+        const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+        if (!step) return;
+        e.preventDefault();
+        const i = options.findIndex((o) => o.value === value);
+        const next = options[(i + step + options.length) % options.length];
+        onChange(next.value);
+        (e.currentTarget.querySelector(`[data-value="${next.value}"]`) as HTMLElement | null)?.focus();
+      }}
+    >
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          data-value={o.value}
+          className="segmented__item"
+          aria-checked={o.value === value}
+          tabIndex={o.value === value ? 0 : -1}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A text input that commits on blur or Enter and reverts on Esc, so instant-save settings do not
+ * write on every keystroke.
+ */
+export function CommitInput({
+  value,
+  onCommit,
+  multiline,
+  ...rest
+}: {
+  value: string;
+  onCommit: (next: string) => void;
+  multiline?: boolean;
+  placeholder?: string;
+  id?: string;
+  "aria-label"?: string;
+  "aria-describedby"?: string;
+  type?: string;
+  rows?: number;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    if (draft !== value) onCommit(draft);
+  };
+  const props = {
+    ...rest,
+    className: "control",
+    value: draft,
+    onChange: (e: { target: { value: string } }) => setDraft(e.target.value),
+    onBlur: commit,
+    onKeyDown: (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setDraft(value);
+      } else if (e.key === "Enter" && !(multiline && !e.metaKey)) {
+        e.preventDefault();
+        commit();
+      }
+    },
+  };
+  return multiline ? <textarea {...props} /> : <input {...props} />;
 }

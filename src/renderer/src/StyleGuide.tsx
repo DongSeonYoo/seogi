@@ -1,6 +1,6 @@
 import { Copy, Mic, Play, Settings } from "lucide-react";
 import { useState } from "react";
-import { Button, Dialog, Field, IconButton, Kbd, Select } from "./ui";
+import { Button, Dialog, Field, IconButton, Kbd, Segmented, Select, Switch } from "./ui";
 
 /** Dev-only living style guide (⌘⇧D). Every component in every state, on real tokens. */
 const COLORS = [
@@ -17,6 +17,7 @@ const STATES = ["default", "hover", "focus", "active", "disabled", "loading", "e
 
 export function StyleGuide() {
   const [dialog, setDialog] = useState(false);
+  const [theme, setTheme] = useState<"system" | "light" | "dark">("system");
   return (
     <div className="guide selectable">
       <h1 className="guide__title">Seogi 디자인 시스템</h1>
@@ -86,6 +87,29 @@ export function StyleGuide() {
             </Select>
           )}
         </Field>
+      </div>
+
+      <h2 className="guide__h">스위치 · 여러 칸 선택</h2>
+      <div className="guide__row">
+        <code>switch</code>
+        <Switch label="꺼짐" checked={false} onChange={() => {}} />
+        <Switch label="켜짐" checked onChange={() => {}} />
+        <Switch label="호버" className="is-hover" checked={false} onChange={() => {}} />
+        <Switch label="포커스" className="is-focus" checked onChange={() => {}} />
+        <Switch label="비활성" disabled checked onChange={() => {}} />
+      </div>
+      <div className="guide__row">
+        <code>segmented</code>
+        <Segmented
+          label="테마"
+          value={theme}
+          onChange={setTheme}
+          options={[
+            { value: "system", label: "시스템" },
+            { value: "light", label: "라이트" },
+            { value: "dark", label: "다크" },
+          ]}
+        />
       </div>
 
       <h2 className="guide__h">회의 목록 항목</h2>

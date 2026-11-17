@@ -1,9 +1,9 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, net, protocol, session } from "electron";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { app, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, net, protocol, session, shell } from "electron";
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { AudioRef, Chunk, SettingsUpdate, Track } from "../shared/types";
-import { splitUtterances, summarize, transcribeWav } from "./ai";
+import type { AppInfo, AudioRef, Chunk, ConnectionRole, KeyName, StorageInfo, StoredSettings, Track } from "../shared/types";
+import { splitUtterances, summarize, testConnection, transcribeWav } from "./ai";
 import { openDb } from "./db";
 import { openSettings } from "./settings";
 import { toWav, SAMPLE_RATE } from "./wav";
@@ -22,6 +22,7 @@ protocol.registerSchemesAsPrivileged([
 app.whenReady().then(() => {
   const db = openDb(path.join(dataDir, "seogi.db"));
   const settings = openSettings(dataDir);
+  const dbMeetings = () => db.listMeetings("").length;
   const notify = (id: number) => win?.webContents.send("meeting-changed", id);
 
   // Transcription requests in flight per meeting; stop waits for them before summarizing.
@@ -127,7 +128,20 @@ app.whenReady().then(() => {
     return net.fetch(pathToFileURL(path.join(audioDir, id, file)).toString());
   });
   ipcMain.handle("getSettings", () => settings.view());
-  ipcMain.handle("saveSettings", (_e, u: SettingsUpdate) => settings.save(u));
+  ipcMain.handle("patchSettings", (_e, patch: Partial<StoredSettings>) => settings.patch(patch));
+  ipcMain.handle("setKey", (_e, name: KeyName, value: string) => settings.setKey(name, value));
+  ipcMain.handle("testConnection", (_e, role: ConnectionRole) => testConnection(settings, role));
+  ipcMain.handle("storageInfo", (): StorageInfo => {
+    const db = readdirSync(dataDir).filter((f) => f.startsWith("seogi.db"));
+    const bytes = dirSize(audioDir) + db.reduce((n, f) => n + statSync(path.join(dataDir, f)).size, 0);
+    return { path: dataDir, bytes, meetings: dbMeetings() };
+  });
+  ipcMain.handle("openDataFolder", () => shell.openPath(dataDir).then(() => undefined));
+  ipcMain.handle("appInfo", (): AppInfo => ({
+    version: app.getVersion(),
+    electron: process.versions.electron,
+    platform: `macOS ${process.getSystemVersion()}`,
+  }));
 
   // getDisplayMedia in the renderer gets system audio through Core Audio tap (Electron 39+,
   // macOS 14.2+). Chromium requires a video source too; the renderer stops it immediately.
@@ -157,4 +171,12 @@ app.on("window-all-closed", () => app.quit());
 function clock(sec: number) {
   const m = Math.floor(sec / 60);
   return `${String(m).padStart(2, "0")}:${String(Math.floor(sec % 60)).padStart(2, "0")}`;
+}
+
+function dirSize(dir: string): number {
+  if (!existsSync(dir)) return 0;
+  return readdirSync(dir, { withFileTypes: true }).reduce((n, e) => {
+    const p = path.join(dir, e.name);
+    return n + (e.isDirectory() ? dirSize(p) : statSync(p).size);
+  }, 0);
 }

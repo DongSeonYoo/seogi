@@ -390,3 +390,106 @@ select.control {
 .dialog:focus-visible {
   outline: none;
 }
+
+/* ── Switch ─────────────────────────────────────────────────────────── */
+.switch {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-line-control);
+  flex: none;
+  transition: background-color var(--dur-micro) var(--ease-out);
+}
+
+.switch::before {
+  content: "";
+  position: absolute;
+  inset: -8px;
+}
+
+.switch__thumb {
+  position: absolute;
+  top: var(--space-half);
+  left: var(--space-half);
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+  background: var(--color-raised);
+  transition: transform var(--dur-short) var(--ease-out);
+}
+
+.switch[aria-checked="true"] {
+  background: var(--color-accent);
+}
+
+.switch[aria-checked="true"] .switch__thumb {
+  transform: translateX(14px);
+}
+
+@media (hover: hover) {
+  .switch:not(:disabled):hover {
+    background: var(--color-ink-3);
+  }
+  .switch[aria-checked="true"]:not(:disabled):hover {
+    background: var(--color-accent-hover);
+  }
+}
+.switch.is-hover {
+  background: var(--color-ink-3);
+}
+
+.switch.is-focus {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.switch:not(:disabled):active .switch__thumb,
+.switch.is-active .switch__thumb {
+  scale: 0.9;
+}
+
+.switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Segmented (radio group) ────────────────────────────────────────── */
+.segmented {
+  display: inline-flex;
+  gap: var(--space-half);
+  padding: var(--space-half);
+  border: var(--rule);
+  border-radius: var(--radius-md);
+  background: var(--color-chrome);
+}
+
+.segmented__item {
+  height: calc(var(--control-h) - var(--space-1) - 2px);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-ink-2);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  transition: background-color var(--dur-micro) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .segmented__item:hover {
+    color: var(--color-ink);
+  }
+}
+
+.segmented__item[aria-checked="true"] {
+  border-color: var(--color-line-strong);
+  background: var(--color-raised);
+  color: var(--color-ink);
+}
+
+.segmented__item:active {
+  background: var(--color-hover);
+}

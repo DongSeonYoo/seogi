@@ -17,6 +17,7 @@ The locked design system for the Seogi (서기) meeting-notes app. New screens u
 | Member list | Collapsible summary panel on the right (auto-collapses while recording) |
 | Voice-connected panel | Recorder dock at the bottom of the sidebar |
 | Quick switcher | `⌘K` search across titles, summaries and transcript text |
+| User settings | `⌘,` swaps the whole window to settings: category list in the sidebar, grouped rows on the right, changes apply instantly |
 
 ## Colour
 
@@ -69,6 +70,8 @@ All pairs pass in both themes. Text ≥ 4.5:1, focus rings and control boundarie
 - **IconButton**: 28px with an enlarged hit area; `aria-pressed` for toggles.
 - **Field**: label above, helper below on a reserved line, error replaces helper (`aria-invalid`, `aria-describedby`). Border width never changes between states; focus is a 2px outline.
 - **Select**: native select with a Lucide chevron.
+- **Switch** (`role="switch"`) for on/off settings; **Segmented** (radio group, arrow keys move the choice) for 2–4 exclusive options.
+- **CommitInput**: text input for instant-save settings; commits on blur or Enter, reverts on Esc.
 - **Dialog**: native `<dialog>` in modal mode (focus trap, Esc, inert background); state syncs on the platform `close` event.
 - **Kbd**, **Spinner**, **Avatar** (`data-speaker="mic"` uses the accent wash).
 

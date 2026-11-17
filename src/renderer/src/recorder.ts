@@ -12,18 +12,30 @@ const WORKLET = `registerProcessor("tap", class extends AudioWorkletProcessor {
 
 type Emit = (track: Track, startSec: number, pcm: Int16Array) => void;
 
+export type RecordingOptions = { micDeviceId: string; systemAudio: boolean };
+
 /**
- * Records mic and system audio on one AudioContext (one clock for both tracks) and emits each
- * track as 16 kHz PCM16 chunks cut at a pause between MIN_SEC and MAX_SEC. Silent chunks are
- * dropped.
+ * Records mic and (optionally) system audio on one AudioContext (one clock for both tracks) and
+ * emits each track as 16 kHz PCM16 chunks cut at a pause between MIN_SEC and MAX_SEC. Silent
+ * chunks are dropped.
  */
-export async function startRecording(emit: Emit): Promise<() => Promise<void>> {
+export async function startRecording(
+  emit: Emit,
+  { micDeviceId, systemAudio }: RecordingOptions,
+): Promise<() => Promise<void>> {
   const mic = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true },
+    // "ideal" falls back to the default input when the chosen device is unplugged.
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      ...(micDeviceId && { deviceId: { ideal: micDeviceId } }),
+    },
   });
-  const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-  display.getVideoTracks().forEach((t) => t.stop());
-  if (!display.getAudioTracks().length) {
+  const display = systemAudio
+    ? await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+    : null;
+  display?.getVideoTracks().forEach((t) => t.stop());
+  if (display && !display.getAudioTracks().length) {
     mic.getTracks().forEach((t) => t.stop());
     throw new Error("시스템 오디오를 가져오지 못했습니다");
   }
@@ -33,12 +45,9 @@ export async function startRecording(emit: Emit): Promise<() => Promise<void>> {
     URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" })),
   );
 
-  const flushers = (
-    [
-      ["mic", mic],
-      ["system", new MediaStream(display.getAudioTracks())],
-    ] as const
-  ).map(([track, stream]) => {
+  const tracks: [Track, MediaStream][] = [["mic", mic]];
+  if (display) tracks.push(["system", new MediaStream(display.getAudioTracks())]);
+  const flushers = tracks.map(([track, stream]) => {
     const node = new AudioWorkletNode(ctx, "tap");
     ctx.createMediaStreamSource(stream).connect(node);
     const chunker = new Chunker((startSec, pcm) => emit(track, startSec, pcm));
@@ -48,7 +57,7 @@ export async function startRecording(emit: Emit): Promise<() => Promise<void>> {
 
   return async () => {
     mic.getTracks().forEach((t) => t.stop());
-    display.getTracks().forEach((t) => t.stop());
+    display?.getTracks().forEach((t) => t.stop());
     await ctx.close();
     flushers.forEach((f) => f());
   };

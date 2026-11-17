@@ -3,7 +3,7 @@ import type { MeetingDetail, MeetingRow } from "../../shared/types";
 import { CommandPalette } from "./CommandPalette";
 import { MeetingView } from "./MeetingView";
 import { startRecording } from "./recorder";
-import { SettingsDialog } from "./SettingsDialog";
+import { SettingsView } from "./SettingsView";
 import { Sidebar, type Recording } from "./Sidebar";
 import { StyleGuide } from "./StyleGuide";
 import { Kbd } from "./ui";
@@ -49,7 +49,7 @@ export function App() {
     function onKey(e: KeyboardEvent) {
       if (!e.metaKey) return;
       if (e.key === "k") setPalette((v) => !v);
-      else if (e.key === ",") setSettings(true);
+      else if (e.key === ",") setSettings((v) => !v);
       else if (e.key === "d" && e.shiftKey && import.meta.env.DEV) setGuide((v) => !v);
       else return;
       e.preventDefault();
@@ -60,10 +60,12 @@ export function App() {
 
   async function start() {
     setError(null);
+    const { recording: options } = await api.getSettings();
     const id = await api.startMeeting();
     try {
-      stopRef.current = await startRecording((track, startSec, pcm) =>
-        api.sendChunk({ meetingId: id, track, startSec, pcm }),
+      stopRef.current = await startRecording(
+        (track, startSec, pcm) => api.sendChunk({ meetingId: id, track, startSec, pcm }),
+        options,
       );
     } catch (e) {
       await api.stopMeeting(id);
@@ -86,6 +88,27 @@ export function App() {
     stopRef.current = null;
     await api.stopMeeting(id);
   }
+
+  const closeSettings = useCallback(() => setSettings(false), []);
+  const palettePortal = (
+    <CommandPalette
+      open={palette}
+      onClose={() => setPalette(false)}
+      onPick={(id) => {
+        setSelected(id);
+        setGuide(false);
+        setSettings(false);
+      }}
+    />
+  );
+
+  if (settings)
+    return (
+      <>
+        <SettingsView recording={recording} onClose={closeSettings} />
+        {palettePortal}
+      </>
+    );
 
   return (
     <div className="app">
@@ -126,15 +149,7 @@ export function App() {
           </>
         )}
       </main>
-      <CommandPalette
-        open={palette}
-        onClose={() => setPalette(false)}
-        onPick={(id) => {
-          setSelected(id);
-          setGuide(false);
-        }}
-      />
-      <SettingsDialog open={settings} onClose={() => setSettings(false)} />
+      {palettePortal}
     </div>
   );
 }

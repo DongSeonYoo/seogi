@@ -40,21 +40,35 @@ export const DEFAULT_MODELS = {
   summary: { openai: "gpt-6-luna", anthropic: "claude-sonnet-5-5", qgrid: "openai/gpt-6-luna" },
 } as const;
 
+export type ThemeMode = "system" | "light" | "dark";
+export type KeyName = "openai" | "anthropic";
+export type ConnectionRole = "transcription" | "summary";
+
 export type Settings = {
+  theme: ThemeMode;
   qgridUrl: string;
   transcription: { provider: TranscriptionProvider; model: string };
   summary: { provider: SummaryProvider; model: string };
   language: string;
   /** Names and terms, comma-separated; steers spelling in transcription and summary. */
   glossary: string;
+  recording: {
+    /** "" follows the macOS default input. */
+    micDeviceId: string;
+    /** Off for in-person meetings: record the microphone only. */
+    systemAudio: boolean;
+  };
   /** Whether a key is stored; key values never leave the main process. */
   hasKey: { openai: boolean; anthropic: boolean };
 };
 
-export type SettingsUpdate = Omit<Settings, "hasKey"> & {
-  /** undefined keeps the stored key, "" deletes it. */
-  keys?: { openai?: string; anthropic?: string };
-};
+export type StoredSettings = Omit<Settings, "hasKey">;
+
+export type ConnectionResult = { ok: true; ms: number } | { ok: false; error: string };
+
+export type StorageInfo = { path: string; bytes: number; meetings: number };
+
+export type AppInfo = { version: string; electron: string; platform: string };
 
 export type Api = {
   listMeetings(query: string): Promise<MeetingRow[]>;
@@ -66,6 +80,13 @@ export type Api = {
   markOpened(id: number): Promise<void>;
   audioFor(meetingId: number, track: Track, startSec: number): Promise<AudioRef | null>;
   getSettings(): Promise<Settings>;
-  saveSettings(update: SettingsUpdate): Promise<void>;
+  /** Applies immediately; nested groups (transcription, summary, recording) are replaced whole. */
+  patchSettings(patch: Partial<StoredSettings>): Promise<Settings>;
+  /** "" deletes the key. */
+  setKey(name: KeyName, value: string): Promise<Settings>;
+  testConnection(role: ConnectionRole): Promise<ConnectionResult>;
+  storageInfo(): Promise<StorageInfo>;
+  openDataFolder(): Promise<void>;
+  appInfo(): Promise<AppInfo>;
   onMeetingChanged(listener: (id: number) => void): () => void;
 };
