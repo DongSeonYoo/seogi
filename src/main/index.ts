@@ -2,6 +2,7 @@ import { app, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, protocol, se
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AppInfo, AudioRef, Chunk, ConnectionRole, KeyName, StorageInfo, StoredSettings, Track } from "../shared/types";
+import { joinSplitSentences } from "../shared/transcript";
 import { splitUtterances, summarize, testConnection, transcribeWav } from "./ai";
 import { openDb } from "./db";
 import { openSettings } from "./settings";
@@ -73,7 +74,7 @@ app.whenReady().then(() => {
       const m = db.getMeeting(id);
       if (!m?.utterances.length)
         throw new Error(`전사된 내용이 없습니다${failed ? ` (${failed.last})` : ""}`);
-      const transcript = m.utterances
+      const transcript = joinSplitSentences(m.utterances)
         .map((u) => `[${clock(u.startSec)}] ${u.track === "mic" ? "나" : "상대"}: ${u.text}`)
         .join("\n");
       db.setSummary(id, await summarize(settings, transcript));

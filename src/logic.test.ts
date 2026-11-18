@@ -47,3 +47,22 @@ test("isPromptEcho drops a transcript that only repeats the glossary prompt", ()
   assert.ok(!isPromptEcho("큐그리드 대시보드 개편 일정입니다.", prompt));
   assert.ok(!isPromptEcho("", prompt));
 });
+
+test("joinSplitSentences rejoins a sentence cut at a chunk boundary, and nothing else", async () => {
+  const { joinSplitSentences } = await import("./shared/transcript.ts");
+  const u = (id: number, track: "mic" | "system", startSec: number, text: string) => ({ id, track, startSec, text });
+
+  const joined = joinSplitSentences([
+    u(1, "system", 32, "쿠폰 문제는 동선님이 이번 주 수요일까지"),
+    u(2, "system", 35, "수정하기로 했습니다."),
+    u(3, "system", 38, "다음 안건입니다."),
+  ]);
+  assert.deepEqual(joined.map((x) => x.text), ["쿠폰 문제는 동선님이 이번 주 수요일까지 수정하기로 했습니다.", "다음 안건입니다."]);
+  assert.equal(joined[0].id, 1); // keeps the first piece's id and start time for playback
+  assert.equal(joined[0].startSec, 32);
+
+  // A different speaker in between, finished sentences, and a long gap all stay separate.
+  assert.equal(joinSplitSentences([u(1, "system", 32, "말이 끊겼는데"), u(2, "mic", 33, "네.")]).length, 2);
+  assert.equal(joinSplitSentences([u(1, "system", 32, "끝난 문장입니다."), u(2, "system", 35, "새 문장.")]).length, 2);
+  assert.equal(joinSplitSentences([u(1, "system", 32, "끝맺음 없음"), u(2, "system", 90, "한참 뒤.")]).length, 2);
+});

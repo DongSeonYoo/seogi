@@ -1,6 +1,7 @@
 import { AlertCircle, Check, Copy, PanelRight, Pause, Play, RefreshCw } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { MeetingDetail, Utterance } from "../../shared/types";
+import { joinSplitSentences } from "../../shared/transcript";
 import { clock, fullDate, groupUtterances, SPEAKER } from "./format";
 import { Button, IconButton } from "./ui";
 
@@ -61,7 +62,7 @@ function Transcript({ meeting: m }: { meeting: MeetingDetail }) {
           {m.error}
         </p>
       )}
-      {groupUtterances(m.utterances).map((group) => (
+      {groupUtterances(joinSplitSentences(m.utterances)).map((group) => (
         <ol key={group[0].id} className="msg-group">
           {group.map((u, i) => (
             <Message key={u.id} u={u} head={i === 0} player={player} />
