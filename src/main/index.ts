@@ -160,7 +160,7 @@ app.whenReady().then(() => {
     trafficLightPosition: { x: 18, y: 18 },
     // Matches --color-chrome so the window never flashes white before CSS loads.
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#1d1c1a" : "#f3f1eb",
-    webPreferences: { preload: path.join(import.meta.dirname, "../preload/index.mjs"), sandbox: false },
+    webPreferences: { preload: path.join(import.meta.dirname, "../preload/index.cjs"), sandbox: true },
   });
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL);
   else win.loadFile(path.join(import.meta.dirname, "../renderer/index.html"));
