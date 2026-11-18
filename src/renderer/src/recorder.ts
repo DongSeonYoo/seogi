@@ -19,6 +19,8 @@ export type RecordingOptions = {
   systemAudio: boolean;
   /** Called with true once the system track has been all zeros for a while, false when sound returns. */
   onSystemSilence?: (silent: boolean) => void;
+  /** Every ~100 ms of each track as 16 kHz PCM16, for live captions. */
+  onFrame?: (track: Track, pcm: Int16Array) => void;
 };
 
 /**
@@ -28,7 +30,7 @@ export type RecordingOptions = {
  */
 export async function startRecording(
   emit: Emit,
-  { micDeviceId, systemAudio, onSystemSilence }: RecordingOptions,
+  { micDeviceId, systemAudio, onSystemSilence, onFrame }: RecordingOptions,
 ): Promise<() => Promise<void>> {
   const mic = await navigator.mediaDevices.getUserMedia({
     // "ideal" falls back to the default input when the chosen device is unplugged.
@@ -62,9 +64,18 @@ export async function startRecording(
       track === "system" && onSystemSilence
         ? new SilenceWatch(SYSTEM_SILENCE_HINT_SEC * RATE, onSystemSilence)
         : null;
+    let batch: Float32Array[] = [];
+    let batched = 0;
     node.port.onmessage = (e: MessageEvent<Float32Array>) => {
       chunker.push(e.data);
       watch?.push(e.data);
+      if (!onFrame) return;
+      batch.push(e.data);
+      batched += e.data.length;
+      if (batched < RATE / 10) return;
+      onFrame(track, toPcm16(batch, batched));
+      batch = [];
+      batched = 0;
     };
     return () => chunker.flush();
   });
@@ -135,17 +146,18 @@ export class Chunker {
   }
 
   flush() {
-    if (this.voiced) {
-      const pcm = new Int16Array(this.samples);
-      let i = 0;
-      for (const f of this.frames)
-        for (const v of f) pcm[i++] = Math.max(-1, Math.min(1, v)) * 0x7fff;
-      this.emit(this.startSample / RATE, pcm);
-    }
+    if (this.voiced) this.emit(this.startSample / RATE, toPcm16(this.frames, this.samples));
     this.startSample += this.samples;
     this.frames = [];
     this.samples = 0;
     this.quietSamples = 0;
     this.voiced = false;
   }
+}
+
+function toPcm16(frames: Float32Array[], samples: number) {
+  const pcm = new Int16Array(samples);
+  let i = 0;
+  for (const f of frames) for (const v of f) pcm[i++] = Math.max(-1, Math.min(1, v)) * 0x7fff;
+  return pcm;
 }

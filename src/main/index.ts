@@ -5,6 +5,7 @@ import type { AppInfo, AudioRef, Chunk, ConnectionRole, KeyName, StorageInfo, St
 import { joinSplitSentences } from "../shared/transcript";
 import { splitUtterances, summarize, testConnection, transcribeWav } from "./ai";
 import { openDb } from "./db";
+import { LiveCaptions, openLiveStream } from "./live";
 import { openSettings } from "./settings";
 import { toWav, SAMPLE_RATE } from "./wav";
 
@@ -28,6 +29,25 @@ app.whenReady().then(async () => {
   // Transcription requests in flight per meeting; stop waits for them before summarizing.
   const pending = new Map<number, Set<Promise<void>>>();
   const failures = new Map<number, { count: number; last: string }>();
+  const live = new Map<number, LiveCaptions>();
+  const sendLive = (id: number) => win?.webContents.send("live", id, live.get(id)?.view() ?? { lines: [], error: null });
+
+  function startLive(id: number) {
+    const s = settings.get();
+    const language = s.language === "auto" ? undefined : s.language;
+    const prompt = s.glossary.trim() ? `용어: ${s.glossary}` : undefined;
+    const captions = new LiveCaptions(
+      (onEvent) =>
+        openLiveStream(
+          s.transcription.provider === "qgrid"
+            ? { provider: "qgrid", url: s.qgridUrl, language, prompt }
+            : { provider: "openai", apiKey: settings.key("openai"), language, prompt },
+          onEvent,
+        ),
+      () => sendLive(id),
+    );
+    live.set(id, captions);
+  }
 
   // ponytail: one global limit of 3 concurrent transcriptions; per-provider limits if needed.
   let running = 0;
@@ -50,8 +70,9 @@ app.whenReady().then(async () => {
     writeFileSync(path.join(dir, `${track}-${startSec.toFixed(1)}.wav`), wav);
     try {
       const t = await limited(() => transcribeWav(settings, wav));
-      if (!t.text) return;
-      db.addUtterances(meetingId, track, splitUtterances(t, startSec, pcm.length / SAMPLE_RATE));
+      const chunkSec = pcm.length / SAMPLE_RATE;
+      if (t.text) db.addUtterances(meetingId, track, splitUtterances(t, startSec, chunkSec));
+      live.get(meetingId)?.settle(track, startSec, startSec + chunkSec);
     } catch (e) {
       const last = e instanceof Error ? e.message : String(e);
       const count = (failures.get(meetingId)?.count ?? 0) + 1;
@@ -66,8 +87,12 @@ app.whenReady().then(async () => {
   async function finish(id: number) {
     db.setStatus(id, "processing");
     notify(id);
+    live.get(id)?.stop();
     await Promise.allSettled(pending.get(id) ?? []);
     pending.delete(id);
+    // Every chunk has its final transcript now; drafts that never settled belong to failed chunks.
+    live.delete(id);
+    sendLive(id);
     const failed = failures.get(id);
     failures.delete(id);
     try {
@@ -97,8 +122,11 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("startMeeting", () => {
     const title = `회의 ${new Date().toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })}`;
-    return db.createMeeting(title);
+    const id = db.createMeeting(title);
+    startLive(id);
+    return id;
   });
+  ipcMain.on("liveAudio", (_e, id: number, track: Track, pcm: Int16Array) => live.get(id)?.audio(track, pcm));
   ipcMain.on("sendChunk", (_e, chunk: Chunk) => {
     const set = pending.get(chunk.meetingId) ?? new Set();
     pending.set(chunk.meetingId, set);

@@ -39,8 +39,8 @@ export function groupByDay(meetings: MeetingRow[], now = new Date()) {
 }
 
 /** Discord message grouping: consecutive lines from one speaker within two minutes share a header. */
-export function groupUtterances(utterances: Utterance[], gapSec = 120) {
-  const groups: Utterance[][] = [];
+export function groupUtterances<T extends Utterance>(utterances: T[], gapSec = 120) {
+  const groups: T[][] = [];
   for (const u of utterances) {
     const last = groups.at(-1);
     const prev = last?.at(-1);

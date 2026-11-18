@@ -364,6 +364,10 @@
   overflow-wrap: anywhere;
 }
 
+.msg--draft .msg__text {
+  color: var(--color-ink-3);
+}
+
 /* Discord's hover toolbar, pinned to the row's top-right. */
 .msg__actions {
   position: absolute;

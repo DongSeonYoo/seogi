@@ -30,6 +30,10 @@ export type MeetingDetail = MeetingRow & {
   utterances: Utterance[];
 };
 
+/** A live caption draft, shown while recording until the chunk transcript replaces it. */
+export type LiveLine = { key: string; track: Track; startSec: number; text: string };
+export type LiveView = { lines: LiveLine[]; error: string | null };
+
 export type Chunk = { meetingId: number; track: Track; startSec: number; pcm: Int16Array };
 
 export type TranscriptionProvider = "qgrid" | "openai";
@@ -75,6 +79,8 @@ export type Api = {
   getMeeting(id: number): Promise<MeetingDetail | null>;
   startMeeting(): Promise<number>;
   sendChunk(chunk: Chunk): void;
+  /** About 100 ms of 16 kHz PCM16 for the live captions, every frame from the track's start. */
+  sendLiveAudio(meetingId: number, track: Track, pcm: Int16Array): void;
   stopMeeting(id: number): Promise<void>;
   resummarize(id: number): Promise<void>;
   markOpened(id: number): Promise<void>;
@@ -89,4 +95,5 @@ export type Api = {
   openDataFolder(): Promise<void>;
   appInfo(): Promise<AppInfo>;
   onMeetingChanged(listener: (id: number) => void): () => void;
+  onLive(listener: (meetingId: number, view: LiveView) => void): () => void;
 };

@@ -1,6 +1,6 @@
 import { AlertCircle, Check, Copy, PanelRight, Pause, Play, RefreshCw } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { MeetingDetail, Utterance } from "../../shared/types";
+import type { LiveView, MeetingDetail, Utterance } from "../../shared/types";
 import { joinSplitSentences } from "../../shared/transcript";
 import { clock, fullDate, groupUtterances, SPEAKER } from "./format";
 import { Button, IconButton } from "./ui";
@@ -9,11 +9,13 @@ const STATUS = { recording: "녹음 중", processing: "정리 중", done: "완�
 
 export function MeetingView({
   meeting: m,
+  live,
   panelOpen,
   onTogglePanel,
   onResummarize,
 }: {
   meeting: MeetingDetail;
+  live: LiveView | null;
   panelOpen: boolean;
   onTogglePanel: () => void;
   onResummarize: () => void;
@@ -29,13 +31,16 @@ export function MeetingView({
           <PanelRight aria-hidden />
         </IconButton>
       </header>
-      <Transcript meeting={m} />
+      <Transcript meeting={m} live={live} />
       {panelOpen && <SummaryPanel meeting={m} onResummarize={onResummarize} />}
     </>
   );
 }
 
-function Transcript({ meeting: m }: { meeting: MeetingDetail }) {
+/** A transcript line; drafts are live captions not yet replaced by a chunk transcript. */
+type Line = Utterance & { key: string; draft?: boolean };
+
+function Transcript({ meeting: m, live }: { meeting: MeetingDetail; live: LiveView | null }) {
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const player = usePlayer(m.id);
@@ -44,9 +49,13 @@ function Transcript({ meeting: m }: { meeting: MeetingDetail }) {
   useLayoutEffect(() => {
     const el = scroller.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [m.utterances.length]);
+  }, [m.utterances.length, live]);
 
-  const live = m.status === "recording" || m.status === "processing";
+  const busy = m.status === "recording" || m.status === "processing";
+  const lines: Line[] = [
+    ...joinSplitSentences(m.utterances).map((u) => ({ ...u, key: String(u.id) })),
+    ...(live?.lines ?? []).map((d, i) => ({ ...d, id: -1 - i, draft: true })),
+  ].sort((a, b) => a.startSec - b.startSec);
   return (
     <div
       className="transcript selectable"
@@ -62,21 +71,21 @@ function Transcript({ meeting: m }: { meeting: MeetingDetail }) {
           {m.error}
         </p>
       )}
-      {groupUtterances(joinSplitSentences(m.utterances)).map((group) => (
-        <ol key={group[0].id} className="msg-group">
+      {groupUtterances(lines).map((group) => (
+        <ol key={group[0].key} className="msg-group">
           {group.map((u, i) => (
-            <Message key={u.id} u={u} head={i === 0} player={player} />
+            <Message key={u.key} u={u} head={i === 0} player={player} />
           ))}
         </ol>
       ))}
-      {!m.utterances.length && !live && !m.error && <p className="empty">전사된 내용이 없습니다.</p>}
-      {live && (
+      {!lines.length && !busy && !m.error && <p className="empty">전사된 내용이 없습니다.</p>}
+      {busy && (
         <p className="typing" role="status">
           <span className="spinner" aria-hidden />
           {m.status === "recording"
-            ? m.pendingChunks > 0
-              ? "받아 적는 중…"
-              : "듣는 중… 말이 끊기는 지점마다 30초 안팎으로 받아 적습니다."
+            ? live?.error
+              ? `실시간 자막 오류: ${live.error}`
+              : "듣는 중… 흐린 글씨는 실시간 초안이고, 30초 안팎마다 정확한 받아쓰기로 바뀝니다."
             : "남은 구간을 받아 적고 요약을 만드는 중…"}
         </p>
       )}
@@ -84,11 +93,14 @@ function Transcript({ meeting: m }: { meeting: MeetingDetail }) {
   );
 }
 
-function Message({ u, head, player }: { u: Utterance; head: boolean; player: Player }) {
+function Message({ u, head, player }: { u: Line; head: boolean; player: Player }) {
   const [copied, setCopied] = useState(false);
   const playing = player.playingId === u.id;
   return (
-    <li className={head ? "msg msg--head" : "msg"} data-playing={playing || undefined}>
+    <li
+      className={`msg${head ? " msg--head" : ""}${u.draft ? " msg--draft" : ""}`}
+      data-playing={playing || undefined}
+    >
       <div className="msg__gutter">
         {head ? (
           <span className="avatar" data-speaker={u.track} aria-hidden>
@@ -109,7 +121,7 @@ function Message({ u, head, player }: { u: Utterance; head: boolean; player: Pla
         )}
         <p className="msg__text">{u.text}</p>
       </div>
-      <div className="msg__actions">
+      {!u.draft && <div className="msg__actions">
         <IconButton label={playing ? "재생 멈춤" : "이 지점부터 듣기"} onClick={() => player.toggle(u)}>
           {playing ? <Pause aria-hidden /> : <Play aria-hidden />}
         </IconButton>
@@ -123,7 +135,7 @@ function Message({ u, head, player }: { u: Utterance; head: boolean; player: Pla
         >
           {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
         </IconButton>
-      </div>
+      </div>}
     </li>
   );
 }

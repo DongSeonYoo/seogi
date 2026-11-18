@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MeetingDetail, MeetingRow } from "../../shared/types";
+import type { LiveView, MeetingDetail, MeetingRow } from "../../shared/types";
 import { CommandPalette } from "./CommandPalette";
 import { MeetingView } from "./MeetingView";
 import { startRecording } from "./recorder";
@@ -21,6 +21,7 @@ export function App() {
   const [guide, setGuide] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [systemSilent, setSystemSilent] = useState(false);
+  const [live, setLive] = useState<{ id: number; view: LiveView } | null>(null);
   const stopRef = useRef<(() => Promise<void>) | null>(null);
 
   const refreshList = useCallback(() => api.listMeetings("").then(setMeetings), []);
@@ -39,6 +40,8 @@ export function App() {
       }),
     [refreshList, refreshDetail, selected],
   );
+
+  useEffect(() => api.onLive((id, view) => setLive({ id, view })), []);
 
   // Opening a finished meeting clears its unread pill.
   useEffect(() => {
@@ -66,7 +69,11 @@ export function App() {
     try {
       stopRef.current = await startRecording(
         (track, startSec, pcm) => api.sendChunk({ meetingId: id, track, startSec, pcm }),
-        { ...options, onSystemSilence: setSystemSilent },
+        {
+          ...options,
+          onSystemSilence: setSystemSilent,
+          onFrame: (track, pcm) => api.sendLiveAudio(id, track, pcm),
+        },
       );
     } catch (e) {
       await api.stopMeeting(id);
@@ -136,6 +143,7 @@ export function App() {
         ) : detail ? (
           <MeetingView
             meeting={detail}
+            live={live?.id === detail.id ? live.view : null}
             panelOpen={panelOpen}
             onTogglePanel={() => setPanelOpen((v) => !v)}
             onResummarize={() => api.resummarize(detail.id)}

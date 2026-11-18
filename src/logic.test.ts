@@ -81,3 +81,27 @@ test("SilenceWatch flags a long run of exact zeros and clears on the first sound
   w.push(sound); // any non-zero sample clears it
   assert.deepEqual(events, [true, false]);
 });
+
+test("live drafts leave only once successful chunks cover their whole span", async () => {
+  const { LiveCaptions } = await import("./main/live.ts");
+  const c = new LiveCaptions(() => ({ audio() {}, stop() {} }), () => {});
+  const seg = (id: string, startSec: number, endSec: number) =>
+    c.onEvent("system", { type: "segment", id, text: id, startSec, endSec });
+  const keys = () => c.view().lines.map((l) => l.text);
+
+  seg("a", 2, 6); // inside chunk 0-30
+  seg("b", 28, 33); // straddles the 30 s cut
+  seg("c", 40, 44); // inside chunk 30-60
+  c.onEvent("system", { type: "delta", id: "d", text: "말하는 중", atSec: 61 }); // still open
+
+  c.settle("system", 30, 60); // out of order: the later chunk lands first
+  assert.deepEqual(keys(), ["a", "b", "말하는 중"]); // b keeps its 28-30 s part until chunk 0 lands
+  c.settle("mic", 0, 30); // the other track settles nothing here
+  assert.deepEqual(keys(), ["a", "b", "말하는 중"]);
+  c.settle("system", 0, 30);
+  assert.deepEqual(keys(), ["말하는 중"]);
+  seg("e", 50, 55); // a draft finishing after its chunk already landed never shows
+  assert.deepEqual(keys(), ["말하는 중"]);
+  c.settle("system", 60, 90); // a delta that never got its segment leaves once a segment's span is covered
+  assert.deepEqual(keys(), []);
+});
