@@ -1,7 +1,6 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, net, protocol, session, shell } from "electron";
-import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { app, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, protocol, session, shell } from "electron";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import type { AppInfo, AudioRef, Chunk, ConnectionRole, KeyName, StorageInfo, StoredSettings, Track } from "../shared/types";
 import { splitUtterances, summarize, testConnection, transcribeWav } from "./ai";
 import { openDb } from "./db";
@@ -125,7 +124,14 @@ app.whenReady().then(() => {
   protocol.handle(AUDIO_SCHEME, (req) => {
     const [, id, file] = new URL(req.url).pathname.split("/");
     if (!/^\d+$/.test(id ?? "") || !CHUNK_FILE.test(file ?? "")) return new Response(null, { status: 404 });
-    return net.fetch(pathToFileURL(path.join(audioDir, id, file)).toString());
+    // Whole file with its length: a streamed file: response has no duration and seeks unreliably.
+    // Chunks are at most ~1 MB (35 s of 16 kHz PCM16).
+    const full = path.join(audioDir, id, file);
+    if (!existsSync(full)) return new Response(null, { status: 404 });
+    const body = readFileSync(full);
+    return new Response(body, {
+      headers: { "content-type": "audio/wav", "content-length": String(body.byteLength) },
+    });
   });
   ipcMain.handle("getSettings", () => settings.view());
   ipcMain.handle("patchSettings", (_e, patch: Partial<StoredSettings>) => settings.patch(patch));
