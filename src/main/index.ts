@@ -19,9 +19,9 @@ protocol.registerSchemesAsPrivileged([
   { scheme: AUDIO_SCHEME, privileges: { stream: true, supportFetchAPI: true } },
 ]);
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   const db = openDb(path.join(dataDir, "seogi.db"));
-  const settings = openSettings(dataDir);
+  const settings = await openSettings(dataDir);
   const dbMeetings = () => db.listMeetings("").length;
   const notify = (id: number) => win?.webContents.send("meeting-changed", id);
 

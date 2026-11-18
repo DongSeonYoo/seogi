@@ -13,17 +13,17 @@ const DEFAULTS: StoredSettings = {
   recording: { micDeviceId: "", systemAudio: true },
 };
 
-export type SettingsStore = ReturnType<typeof openSettings>;
+export type SettingsStore = Awaited<ReturnType<typeof openSettings>>;
 
 /** Plain settings in settings.json; API keys encrypted with the OS keychain in keys.bin. */
-export function openSettings(dir: string) {
+export async function openSettings(dir: string) {
   const settingsFile = path.join(dir, "settings.json");
   const keysFile = path.join(dir, "keys.bin");
 
   let settings: StoredSettings = existsSync(settingsFile)
     ? { ...DEFAULTS, ...JSON.parse(readFileSync(settingsFile, "utf8")) }
     : DEFAULTS;
-  const keys = readKeys(keysFile);
+  const keys = await readKeys(keysFile);
 
   // CSS prefers-color-scheme follows themeSource, so one switch re-themes every window.
   nativeTheme.themeSource = settings.theme;
@@ -53,10 +53,10 @@ export function openSettings(dir: string) {
       return view();
     },
 
-    setKey(name: KeyName, value: string): Settings {
+    async setKey(name: KeyName, value: string): Promise<Settings> {
       if (value.trim()) keys[name] = value.trim();
       else delete keys[name];
-      writeFileSync(keysFile, safeStorage.encryptString(JSON.stringify(keys)));
+      await writeKeys(keysFile, keys);
       return view();
     },
   };
@@ -67,12 +67,20 @@ export function openSettings(dir: string) {
  * folder leaves keys.bin undecryptable. Start without keys instead of failing to launch; the user
  * re-enters them and the next save overwrites the file.
  */
-function readKeys(file: string): Partial<Record<KeyName, string>> {
+async function readKeys(file: string): Promise<Partial<Record<KeyName, string>>> {
   if (!existsSync(file)) return {};
   try {
-    return JSON.parse(safeStorage.decryptString(readFileSync(file)));
+    const { result, shouldReEncrypt } = await safeStorage.decryptStringAsync(readFileSync(file));
+    const keys = JSON.parse(result);
+    // The keychain secret was rotated; store the keys under the current one.
+    if (shouldReEncrypt) await writeKeys(file, keys);
+    return keys;
   } catch (e) {
     console.warn("[seogi] stored API keys could not be decrypted; starting without keys:", e);
     return {};
   }
+}
+
+async function writeKeys(file: string, keys: Partial<Record<KeyName, string>>) {
+  writeFileSync(file, await safeStorage.encryptStringAsync(JSON.stringify(keys)));
 }
