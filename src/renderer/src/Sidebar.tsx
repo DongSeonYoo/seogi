@@ -1,4 +1,4 @@
-import { AlertCircle, Mic, Search, Settings, Square } from "lucide-react";
+import { AlertCircle, Info, Mic, Search, Settings, Square } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { MeetingRow } from "../../shared/types";
 import { clock, groupByDay, timeOfDay } from "./format";
@@ -12,6 +12,7 @@ export function Sidebar({
   recording,
   pendingChunks,
   error,
+  systemSilent,
   onSelect,
   onSearch,
   onStart,
@@ -23,6 +24,7 @@ export function Sidebar({
   recording: Recording | null;
   pendingChunks: number;
   error: string | null;
+  systemSilent: boolean;
   onSelect: (id: number) => void;
   onSearch: () => void;
   onStart: () => void;
@@ -86,6 +88,15 @@ export function Sidebar({
                 </div>
               </div>
             </div>
+            {systemSilent && (
+              <p className="dock__hint" role="status">
+                <Info aria-hidden />
+                <span>
+                  아직 상대방 소리가 없습니다. 통화 중인데 계속 비어 있으면 시스템 설정 › 개인정보 보호 및 보안 ›
+                  화면 및 시스템 오디오 녹음에서 이 앱을 허용하세요.
+                </span>
+              </p>
+            )}
             <div className="dock__row">
               <Button variant="danger" icon={<Square aria-hidden />} onClick={onStop}>
                 녹음 종료

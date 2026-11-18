@@ -66,3 +66,18 @@ test("joinSplitSentences rejoins a sentence cut at a chunk boundary, and nothing
   assert.equal(joinSplitSentences([u(1, "system", 32, "끝난 문장입니다."), u(2, "system", 35, "새 문장.")]).length, 2);
   assert.equal(joinSplitSentences([u(1, "system", 32, "끝맺음 없음"), u(2, "system", 90, "한참 뒤.")]).length, 2);
 });
+
+test("SilenceWatch flags a long run of exact zeros and clears on the first sound", async () => {
+  const { SilenceWatch } = await import("./renderer/src/recorder.ts");
+  const events: boolean[] = [];
+  const w = new SilenceWatch(4000, (s) => events.push(s));
+  for (let i = 0; i < 2; i++) w.push(new Float32Array(1600)); // 3200 zeros: not yet
+  assert.deepEqual(events, []);
+  w.push(new Float32Array(1600)); // 4800 zeros: flagged once
+  w.push(new Float32Array(1600));
+  assert.deepEqual(events, [true]);
+  const sound = new Float32Array(1600);
+  sound[10] = 0.001;
+  w.push(sound); // any non-zero sample clears it
+  assert.deepEqual(events, [true, false]);
+});

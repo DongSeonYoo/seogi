@@ -20,6 +20,7 @@ export function App() {
   const [settings, setSettings] = useState(false);
   const [guide, setGuide] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [systemSilent, setSystemSilent] = useState(false);
   const stopRef = useRef<(() => Promise<void>) | null>(null);
 
   const refreshList = useCallback(() => api.listMeetings("").then(setMeetings), []);
@@ -65,7 +66,7 @@ export function App() {
     try {
       stopRef.current = await startRecording(
         (track, startSec, pcm) => api.sendChunk({ meetingId: id, track, startSec, pcm }),
-        options,
+        { ...options, onSystemSilence: setSystemSilent },
       );
     } catch (e) {
       await api.stopMeeting(id);
@@ -83,6 +84,7 @@ export function App() {
     if (!recording) return;
     const { id } = recording;
     setRecording(null);
+    setSystemSilent(false);
     setPanelOpen(true);
     await stopRef.current?.();
     stopRef.current = null;
@@ -118,6 +120,7 @@ export function App() {
         recording={recording}
         pendingChunks={recording && detail?.id === recording.id ? detail.pendingChunks : 0}
         error={error}
+        systemSilent={systemSilent}
         onSelect={(id) => {
           setSelected(id);
           setGuide(false);

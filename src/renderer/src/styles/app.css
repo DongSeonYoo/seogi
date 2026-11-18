@@ -845,3 +845,19 @@
 .connection__result[data-tone="error"] {
   color: var(--color-danger);
 }
+
+/* Self-clearing hint, not an error: silence may simply mean nobody is talking yet. */
+.dock__hint {
+  display: flex;
+  gap: var(--space-2);
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.dock__hint svg {
+  width: 14px;
+  height: 14px;
+  margin-top: var(--space-half);
+  flex: none;
+}

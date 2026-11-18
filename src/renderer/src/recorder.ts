@@ -5,6 +5,8 @@ const MIN_SEC = 25; // start looking for a pause
 const MAX_SEC = 35; // cut regardless
 const PAUSE_SEC = 0.4;
 const SILENCE_RMS = 0.01;
+/** How long the system track may stay digitally silent before the dock shows a permission hint. */
+const SYSTEM_SILENCE_HINT_SEC = 45;
 
 const WORKLET = `registerProcessor("tap", class extends AudioWorkletProcessor {
   process(inputs) { const ch = inputs[0][0]; if (ch) this.port.postMessage(ch.slice()); return true; }
@@ -12,7 +14,12 @@ const WORKLET = `registerProcessor("tap", class extends AudioWorkletProcessor {
 
 type Emit = (track: Track, startSec: number, pcm: Int16Array) => void;
 
-export type RecordingOptions = { micDeviceId: string; systemAudio: boolean };
+export type RecordingOptions = {
+  micDeviceId: string;
+  systemAudio: boolean;
+  /** Called with true once the system track has been all zeros for a while, false when sound returns. */
+  onSystemSilence?: (silent: boolean) => void;
+};
 
 /**
  * Records mic and (optionally) system audio on one AudioContext (one clock for both tracks) and
@@ -21,7 +28,7 @@ export type RecordingOptions = { micDeviceId: string; systemAudio: boolean };
  */
 export async function startRecording(
   emit: Emit,
-  { micDeviceId, systemAudio }: RecordingOptions,
+  { micDeviceId, systemAudio, onSystemSilence }: RecordingOptions,
 ): Promise<() => Promise<void>> {
   const mic = await navigator.mediaDevices.getUserMedia({
     // "ideal" falls back to the default input when the chosen device is unplugged.
@@ -51,7 +58,14 @@ export async function startRecording(
     const node = new AudioWorkletNode(ctx, "tap");
     ctx.createMediaStreamSource(stream).connect(node);
     const chunker = new Chunker((startSec, pcm) => emit(track, startSec, pcm));
-    node.port.onmessage = (e: MessageEvent<Float32Array>) => chunker.push(e.data);
+    const watch =
+      track === "system" && onSystemSilence
+        ? new SilenceWatch(SYSTEM_SILENCE_HINT_SEC * RATE, onSystemSilence)
+        : null;
+    node.port.onmessage = (e: MessageEvent<Float32Array>) => {
+      chunker.push(e.data);
+      watch?.push(e.data);
+    };
     return () => chunker.flush();
   });
 
@@ -61,6 +75,38 @@ export async function startRecording(
     await ctx.close();
     flushers.forEach((f) => f());
   };
+}
+
+/**
+ * A denied screen & system audio permission delivers exact zeros, but so does a call where nobody
+ * is talking yet, so this only reports "all zeros for a while"; the UI treats it as a hint.
+ */
+export class SilenceWatch {
+  private zeros = 0;
+  private flagged = false;
+  private readonly limit: number;
+  private readonly onChange: (silent: boolean) => void;
+
+  constructor(limitSamples: number, onChange: (silent: boolean) => void) {
+    this.limit = limitSamples;
+    this.onChange = onChange;
+  }
+
+  push(frame: Float32Array) {
+    if (frame.some((v) => v !== 0)) {
+      this.zeros = 0;
+      if (this.flagged) {
+        this.flagged = false;
+        this.onChange(false);
+      }
+      return;
+    }
+    this.zeros += frame.length;
+    if (!this.flagged && this.zeros >= this.limit) {
+      this.flagged = true;
+      this.onChange(true);
+    }
+  }
 }
 
 export class Chunker {
