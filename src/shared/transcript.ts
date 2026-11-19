@@ -1,5 +1,17 @@
 import type { Utterance } from "./types";
 
+/** Concurrent tracks and import workers may finish out of order or overlap a snapshot. */
+export function mergeUtterances(current: Utterance[], added: Utterance[]): Utterance[] {
+  if (!added.length) return current;
+  const ids = new Set(current.map((u) => u.id));
+  const fresh = added.filter((u) => {
+    if (ids.has(u.id)) return false;
+    ids.add(u.id);
+    return true;
+  });
+  return fresh.length ? current.concat(fresh).sort((a, b) => a.startSec - b.startSec || a.id - b.id) : current;
+}
+
 const ENDS_SENTENCE = /[.?!。…]["')\]]*$/;
 const MAX_JOIN_GAP_SEC = 30;
 

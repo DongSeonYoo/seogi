@@ -523,6 +523,8 @@
 
 .msg-group {
   margin-top: var(--space-4);
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 6rem;
 }
 
 .msg {
@@ -615,7 +617,11 @@
   transition: opacity var(--dur-micro) var(--ease-out);
 }
 
-.msg__actions:focus-within {
+.msg--head .msg__actions {
+  top: 0;
+}
+
+.msg:focus-within .msg__actions {
   opacity: 1;
 }
 

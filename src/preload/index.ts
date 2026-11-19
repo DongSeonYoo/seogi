@@ -48,6 +48,7 @@ const api: Api = {
   openDataFolder: () => ipcRenderer.invoke("openDataFolder"),
   appInfo: () => ipcRenderer.invoke("appInfo"),
   onMeetingChanged: (listener) => on("meeting-changed", listener),
+  onUtterancesAdded: (listener) => on("utterances-added", listener),
   onLive: (listener) => on("live", listener),
   onLocale: (listener) => on("locale", listener),
 };

@@ -66,6 +66,10 @@ app.whenReady().then(async () => {
   const db = openDb(path.join(dataDir, "seogi.db"), tr()("error.appQuit"));
   const history = new History();
   const notify = (id: number) => broadcast("meeting-changed", id);
+  function storeUtterances(id: number, track: Track, segments: Parameters<typeof db.addUtterances>[2]) {
+    const rows = db.addUtterances(id, track, segments);
+    if (rows.length) win?.webContents.send("utterances-added", id, rows);
+  }
   let menuState: { disabled: Set<string>; labels: Record<string, string> } = { disabled: new Set(), labels: {} };
   const rebuildMenu = () =>
     Menu.setApplicationMenu(appMenu(history, sendAction, openSettingsWindow, tr(), menuState.disabled, menuState.labels));
@@ -122,8 +126,7 @@ app.whenReady().then(async () => {
         : (track, segment) => {
             // GPT-Live gets no transcription prompt, so it has nothing to echo.
             if (prompt && !rendererDriven && isPromptEcho(segment.text, prompt)) return;
-            db.addUtterances(id, track, [segment]);
-            notify(id);
+            storeUtterances(id, track, [segment]);
           },
     );
     live.set(id, { captions, tailMs: rendererDriven ? GPT_LIVE_TAIL_MS + 1000 : 0 });
@@ -253,7 +256,7 @@ app.whenReady().then(async () => {
         try {
           const t = await transcribeFile(settings, toWav(pcm.subarray(from, to)), glossary, language);
           if (t.text)
-            db.addUtterances(
+            storeUtterances(
               id,
               "system",
               splitUtterances(t, from / SAMPLE_RATE, (to - from) / SAMPLE_RATE).map((u) => ({ ...u, speaker: turn.speaker })),
@@ -262,7 +265,6 @@ app.whenReady().then(async () => {
           error = e instanceof Error ? e.message : String(e);
         }
         importProgress(id, { phase: "transcribe", done: ++done, total });
-        notify(id);
       }
     };
     const total = turns.length;

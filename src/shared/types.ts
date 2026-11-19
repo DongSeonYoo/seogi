@@ -229,6 +229,7 @@ export type Api = {
   openDataFolder(): Promise<void>;
   appInfo(): Promise<AppInfo>;
   onMeetingChanged(listener: (id: number) => void): () => void;
+  onUtterancesAdded(listener: (meetingId: number, rows: Utterance[]) => void): () => void;
   /** The UI language changed in settings. */
   onLocale(listener: (locale: Locale) => void): () => void;
   onLive(listener: (meetingId: number, view: LiveView) => void): () => void;

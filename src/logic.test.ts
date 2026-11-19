@@ -73,6 +73,33 @@ test("joinSplitSentences rejoins a sentence cut at a chunk boundary, and nothing
   assert.equal(joinSplitSentences([u(1, "system", 32, "끝맺음 없음"), u(2, "system", 90, "한참 뒤.")]).length, 2);
 });
 
+test("caption inserts merge with a snapshot in time and id order, once per stored row", async () => {
+  const { openDb } = await import("./main/db.ts");
+  const { mergeUtterances } = await import("./shared/transcript.ts");
+  const db = openDb(":memory:");
+  const id = db.createMeeting("Sync");
+  const [first] = db.addUtterances(id, "mic", [{ startSec: 8, text: "First." }]);
+  const snapshot = db.getMeeting(id)!.utterances;
+  const [tie, earlier] = db.addUtterances(id, "system", [
+    { startSec: 8, text: "Second.", speaker: 2 }, { startSec: 3, text: "Earlier.", speaker: 1 },
+  ]);
+  const merged = mergeUtterances(snapshot, [tie, first, earlier, tie]);
+  assert.deepEqual(merged, [earlier, first, tie]);
+  assert.deepEqual(merged, db.getMeeting(id)!.utterances);
+  assert.equal(mergeUtterances(merged, [tie]), merged);
+});
+
+test("drafts split and bridge speaker groups in time order and leave distant groups intact", async () => {
+  const { groupUtterances, insertDrafts } = await import("./renderer/src/format.ts");
+  const u = (id: number, track: "mic" | "system", startSec: number) => ({ id, track, startSec, text: ".", speaker: null });
+  const rows = [u(1, "mic", 1), u(2, "system", 12), u(3, "system", 16), u(4, "system", 160)];
+  const drafts = [u(-1, "mic", 12), u(-2, "system", 110)];
+  const groups = groupUtterances(rows);
+  const mixed = insertDrafts(groups, drafts);
+  assert.deepEqual(mixed.map((g) => g.map((row) => row.id)), [[1], [2], [-1], [3, -2, 4]]);
+  assert.equal(mixed[0], groups[0]);
+});
+
 test("SilenceWatch flags a long run of exact zeros and clears on the first sound", async () => {
   const { SilenceWatch } = await import("./renderer/src/recorder.ts");
   const events: boolean[] = [];

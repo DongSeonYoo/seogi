@@ -175,8 +175,12 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       );
       db.exec("BEGIN");
       try {
-        for (const u of rows) insert.run(meetingId, track, u.startSec, u.text, u.speaker ?? null);
+        const stored = rows.map(({ startSec, text, speaker }): Utterance => {
+          const { lastInsertRowid } = insert.run(meetingId, track, startSec, text, speaker ?? null);
+          return { id: Number(lastInsertRowid), track, startSec, text, speaker: speaker ?? null };
+        });
         db.exec("COMMIT");
+        return stored;
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;
@@ -224,7 +228,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       if (!r) return null;
       const utterances = db
         .prepare(
-          "SELECT id, track, start_sec, text, speaker FROM utterances WHERE meeting_id = ? ORDER BY start_sec",
+          "SELECT id, track, start_sec, text, speaker FROM utterances WHERE meeting_id = ? ORDER BY start_sec, id",
         )
         .all(id)
         .map(

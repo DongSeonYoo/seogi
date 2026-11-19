@@ -1,9 +1,9 @@
 import { AlertCircle, BookmarkPlus, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AudioRef, LiveView, MeetingDetail, ModelOption, Settings, Track, Utterance } from "../../shared/types";
 import { speakerName } from "../../shared/summary";
 import { joinSplitSentences } from "../../shared/transcript";
-import { clock, duration, fullDate, groupUtterances } from "./format";
+import { clock, duration, fullDate, groupUtterances, insertDrafts } from "./format";
 import { useI18n, useT } from "./i18n";
 import { Elapsed, type Recording } from "./Toolbar";
 import { IMPORT_EXTENSIONS, importAudio, readAudioFile, useImportProgress, type AudioFile } from "./importAudio";
@@ -50,7 +50,7 @@ export function MeetingView({
 }) {
   const i18n = useI18n();
   const { t } = i18n;
-  const speakers = [...new Set(m.utterances.map((u) => speakerName(u, t)))];
+  const speakers = useMemo(() => [...new Set(m.utterances.map((u) => speakerName(u, t)))], [m.utterances, t]);
   // An unrecorded session also takes an audio file, dropped anywhere on the transcript side.
   const canImport = m.status === "new" && !recording;
   const [file, setFile] = useState<AudioFile | null>(null);
@@ -67,10 +67,10 @@ export function MeetingView({
   // A [mm:ss] clicked in the summary; n makes a second click on the same time scroll again.
   const [focus, setFocus] = useState<{ sec: number; n: number } | null>(null);
   /** Appends a transcript line, with its time, to the end of the summary. */
-  const stamp = (u: Utterance) => {
+  const stamp = useCallback((u: Utterance) => {
     const line = `- ${u.text} [${clock(u.startSec)}]`;
     void window.api.setSummaryText(m.id, m.summary?.trim() ? `${m.summary.trimEnd()}\n${line}` : line);
-  };
+  }, [m.id, m.summary]);
   useEffect(() => {
     setFile(null);
     setFileError(null);
@@ -302,7 +302,8 @@ function SessionOptions({ meeting: m }: { meeting: MeetingDetail }) {
 const speakerKey = (u: { track: string; speaker: number | null }) => (u.speaker ? `s${(u.speaker - 1) % 5}` : u.track);
 
 /** A transcript line; drafts are live captions whose sentence is still being spoken. */
-type Line = Utterance & { key: string; draft?: boolean };
+type Line = Utterance & { key?: string; draft?: boolean };
+const lineKey = (u: Line) => u.key ?? u.id;
 
 function Transcript({
   meeting: m,
@@ -317,56 +318,55 @@ function Transcript({
 }) {
   const t = useT();
   const scroller = useRef<HTMLDivElement>(null);
+  const bottom = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const player = usePlayer(m.id);
-  const [focused, setFocused] = useState<string | null>(null);
+  const [focused, setFocused] = useState<number | null>(null);
+  const confirmed = useMemo(() => joinSplitSentences(m.utterances), [m.utterances]);
+  const grouped = useMemo(() => groupUtterances<Line>(confirmed), [confirmed]);
+  const groups = useMemo(() => {
+    const drafts = (live?.lines ?? []).map((d, i) => ({ ...d, id: -1 - i, speaker: null, draft: true }));
+    return insertDrafts(grouped, drafts);
+  }, [grouped, live]);
 
   // A time from the summary: the line it names scrolls into view and is marked briefly. Times are
   // written as whole seconds (a line at 24.89 s reads [00:24]), so a line in that second wins,
   // else the nearest one.
   useEffect(() => {
     if (!focus) return;
-    const shown = joinSplitSentences(m.utterances);
     const target =
-      shown.find((u) => Math.floor(u.startSec) === focus.sec) ??
-      shown.reduce<Utterance | undefined>((best, u) => (!best || Math.abs(u.startSec - focus.sec) < Math.abs(best.startSec - focus.sec) ? u : best), undefined);
+      confirmed.find((u) => Math.floor(u.startSec) === focus.sec) ??
+      confirmed.reduce<Utterance | undefined>((best, u) => (!best || Math.abs(u.startSec - focus.sec) < Math.abs(best.startSec - focus.sec) ? u : best), undefined);
     if (!target) return;
     const el = scroller.current?.querySelector(`[data-key="${target.id}"]`);
     stick.current = false;
     el?.scrollIntoView({ block: "center", behavior: "smooth" });
-    setFocused(String(target.id));
+    setFocused(target.id);
     const timer = setTimeout(() => setFocused(null), 2000);
     return () => clearTimeout(timer);
   }, [focus]);
 
   // Chat behaviour: keep following new lines only while the reader is at the bottom.
+  useEffect(() => {
+    const observer = new IntersectionObserver(([entry]) => { stick.current = entry.isIntersecting; }, {
+      root: scroller.current,
+      rootMargin: "0px 0px 80px",
+    });
+    observer.observe(bottom.current!);
+    return () => observer.disconnect();
+  }, []);
   useLayoutEffect(() => {
     const el = scroller.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [m.utterances.length, live]);
 
   const busy = m.status === "recording" || m.status === "processing";
-  const lines: Line[] = [
-    ...joinSplitSentences(m.utterances).map((u) => ({ ...u, key: String(u.id) })),
-    ...(live?.lines ?? []).map((d, i) => ({ ...d, id: -1 - i, speaker: null, draft: true })),
-  ].sort((a, b) => a.startSec - b.startSec);
   return (
-    <div
-      className="transcript selectable"
-      ref={scroller}
-      onScroll={(e) => {
-        const el = e.currentTarget;
-        stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-      }}
-    >
-      {groupUtterances(lines).map((group) => (
-        <ol key={group[0].key} className="msg-group">
-          {group.map((u, i) => (
-            <Message key={u.key} u={u} head={i === 0} player={player} focused={focused === u.key} onStamp={onStamp} />
-          ))}
-        </ol>
+    <div className="transcript selectable" ref={scroller}>
+      {groups.map((group) => (
+        <MessageGroup key={lineKey(group[0])} group={group} player={player} focused={focused} onStamp={onStamp} />
       ))}
-      {!lines.length && !busy && (
+      {!groups.length && !busy && (
         <p className="empty">{t(m.status === "new" ? "detail.notRecorded" : "detail.emptyTranscript")}</p>
       )}
       {m.status === "recording" && (
@@ -375,11 +375,27 @@ function Transcript({
           {t("detail.listening")}
         </p>
       )}
+      <div ref={bottom} aria-hidden />
     </div>
   );
 }
 
-function Message({
+const MessageGroup = memo(function MessageGroup({ group, player, focused, onStamp }: {
+  group: Line[];
+  player: Player;
+  focused: number | null;
+  onStamp: (u: Utterance) => void;
+}) {
+  return (
+    <ol className="msg-group">
+      {group.map((u, i) => (
+        <Message key={lineKey(u)} u={u} head={i === 0} player={player} focused={focused === u.id} onStamp={onStamp} />
+      ))}
+    </ol>
+  );
+});
+
+const Message = memo(function Message({
   u,
   head,
   player,
@@ -395,13 +411,20 @@ function Message({
   const t = useT();
   const [copied, setCopied] = useState(false);
   const [stamped, setStamped] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [hasFocus, setHasFocus] = useState(false);
   const playing = player.playingId === u.id;
   return (
     <li
       className={`msg${head ? " msg--head" : ""}${u.draft ? " msg--draft" : ""}`}
-      data-key={u.key}
+      data-key={lineKey(u)}
       data-playing={playing || undefined}
       data-focused={focused || undefined}
+      tabIndex={u.draft ? undefined : 0}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setHasFocus(true)}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setHasFocus(false); }}
     >
       <div className="msg__gutter">
         {head ? (
@@ -423,7 +446,7 @@ function Message({
         )}
         <p className="msg__text">{u.text}</p>
       </div>
-      {!u.draft && <div className="msg__actions">
+      {!u.draft && (hovered || hasFocus) && <div className="msg__actions">
         <IconButton label={playing ? t("detail.pause") : t("detail.play")} onClick={() => player.toggle(u)}>
           {playing ? <Pause aria-hidden /> : <Play aria-hidden />}
         </IconButton>
@@ -450,7 +473,7 @@ function Message({
       </div>}
     </li>
   );
-}
+});
 
 type Player = ReturnType<typeof usePlayer>;
 
@@ -487,7 +510,7 @@ function usePlayer(meetingId: number) {
     await a.play();
   }
 
-  async function toggle(u: Utterance) {
+  const toggle = useCallback(async (u: Utterance) => {
     const a = audio.current;
     if (!a) return;
     if (playingId === u.id) return a.pause();
@@ -495,9 +518,9 @@ function usePlayer(meetingId: number) {
     if (!ref) return;
     await play(ref, u.track, ref.offsetSec);
     setPlayingId(u.id);
-  }
+  }, [meetingId, playingId]);
 
-  return { playingId, toggle };
+  return useMemo(() => ({ playingId, toggle }), [playingId, toggle]);
 }
 
 /**

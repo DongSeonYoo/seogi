@@ -8,7 +8,9 @@ import type {
   MeetingDetail,
   MeetingRow,
   MenuSpec,
+  Utterance,
 } from "../../shared/types";
+import { mergeUtterances } from "../../shared/transcript";
 import { CommandPalette, type PaletteAction } from "./CommandPalette";
 import { MeetingList } from "./MeetingList";
 import { MeetingView } from "./MeetingView";
@@ -30,6 +32,12 @@ const EMPTY_LIBRARY: Library = {
 
 /** A text field has focus, so ⌘Z and friends belong to it. */
 const typing = () => document.activeElement?.matches("input, textarea, [contenteditable]") ?? false;
+
+function addToDetail(detail: MeetingDetail, rows: Utterance[]): MeetingDetail {
+  const utterances = mergeUtterances(detail.utterances, rows);
+  if (utterances === detail.utterances) return detail;
+  return { ...detail, utterances, durationSec: Math.max(detail.durationSec, utterances.at(-1)!.startSec) };
+}
 
 export function App() {
   const t = useT();
@@ -65,24 +73,38 @@ export function App() {
     setMeetings(rows);
     setLibrary(lib);
   }, [view]);
-  const refreshDetail = useCallback(async () => {
-    if (selected === null) return setDetail(null);
-    const d = await api.getMeeting(selected);
-    setDetail(d);
-    // A deleted meeting leaves the detail pane.
-    if (!d) setSelected(null);
-  }, [selected]);
-
   useEffect(() => void refreshList(), [refreshList]);
-  useEffect(() => void refreshDetail(), [refreshDetail]);
-  useEffect(
-    () =>
-      api.onMeetingChanged((id) => {
-        void refreshList();
-        if (id === selected || id === -1) void refreshDetail();
-      }),
-    [refreshList, refreshDetail, selected],
-  );
+  useEffect(() => api.onMeetingChanged(() => void refreshList()), [refreshList]);
+  useEffect(() => {
+    let pending: Utterance[] | null = null;
+    async function reload() {
+      if (selected === null) return setDetail(null);
+      // Keep inserts delivered after the snapshot was taken, even on the first selection.
+      const added: Utterance[] = [];
+      pending = added;
+      const d = await api.getMeeting(selected);
+      if (pending !== added) return;
+      pending = null;
+      setDetail(d && addToDetail(d, added));
+      if (!d) setSelected((id) => id === selected ? null : id);
+    }
+    const offRows = api.onUtterancesAdded((id, rows) => {
+      const lastSec = rows.reduce((last, u) => Math.max(last, u.startSec), 0);
+      setMeetings((list) => list.map((m) => m.id === id && m.durationSec < lastSec ? { ...m, durationSec: lastSec } : m));
+      if (id !== selected) return;
+      pending?.push(...rows);
+      setDetail((d) => d?.id === id ? addToDetail(d, rows) : d);
+    });
+    const offChange = api.onMeetingChanged((id) => {
+      if (id === selected || id === -1) void reload();
+    });
+    void reload();
+    return () => {
+      pending = null;
+      offRows();
+      offChange();
+    };
+  }, [selected]);
   useEffect(() => api.onLive((id, v) => setLive({ id, view: v })), []);
 
   // The selection follows the macOS accent colour.
