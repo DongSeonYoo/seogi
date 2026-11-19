@@ -8,10 +8,18 @@ import type { History } from "./library";
  * with the same code as the toolbar, context menus and ⌘K. Edit keeps the standard roles so
  * cut, copy, paste and select-all work in every field.
  */
-export function appMenu(history: History, send: (id: ActionId) => void, openSettings: () => void, t: Translate): Menu {
+export function appMenu(
+  history: History,
+  send: (id: ActionId) => void,
+  openSettings: () => void,
+  t: Translate,
+  /** Commands the main window cannot run right now; greyed out here as they are on screen. */
+  disabled: ReadonlySet<string> = new Set(),
+): Menu {
   const item = (id: ActionId, label: string, accelerator?: string): MenuItemConstructorOptions => ({
     label,
     accelerator,
+    enabled: !disabled.has(id),
     click: () => send(id),
   });
   const template: MenuItemConstructorOptions[] = [
@@ -48,8 +56,8 @@ export function appMenu(history: History, send: (id: ActionId) => void, openSett
       label: t("menu.edit"),
       submenu: [
         // Not role "undo": in a text field the renderer undoes typing, elsewhere the last library change.
-        item("undo", history.undoLabel ? t("action.undoWhat", { what: history.undoLabel }) : t("action.undo"), "Cmd+Z"),
-        item("redo", history.redoLabel ? t("action.redoWhat", { what: history.redoLabel }) : t("action.redo"), "Cmd+Shift+Z"),
+        item("undo", history.undoLabel(t) ? t("action.undoWhat", { what: history.undoLabel(t)! }) : t("action.undo"), "Cmd+Z"),
+        item("redo", history.redoLabel(t) ? t("action.redoWhat", { what: history.redoLabel(t)! }) : t("action.redo"), "Cmd+Shift+Z"),
         { type: "separator" },
         { role: "cut", label: t("menu.cut") },
         { role: "copy", label: t("menu.copy") },

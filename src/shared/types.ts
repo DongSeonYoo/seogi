@@ -170,6 +170,8 @@ export type Api = {
   redo(): Promise<string | null>;
   /** Pops a native context menu at the pointer; resolves to the chosen item id. */
   showMenu(items: MenuSpec[]): Promise<string | null>;
+  /** The commands disabled on screen right now, so the menu bar greys out the same ones. */
+  setMenuState(disabled: ActionId[]): void;
   /** Commands from the app menu bar, by action id. */
   onMenuAction(listener: (id: ActionId) => void): () => void;
   openSettings(): void;

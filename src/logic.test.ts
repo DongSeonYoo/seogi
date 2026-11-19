@@ -163,7 +163,7 @@ test("library changes undo and redo, deletes purge for real, and a resummary kee
   db.setSummary(a, "요약 제목", "## 개요\n\n요약 본문");
   assert.equal(db.listMeetings("all").find((m) => m.id === a)?.preview, "요약 본문");
   assert.equal(db.getMeeting(a)?.title, "내 제목");
-  history.undo();
+  history.undo(translator("ko"));
   assert.equal(db.getMeeting(a)?.title, "회의 A");
 
   const folder = run({ type: "createFolder", name: "고객사" });
@@ -172,23 +172,23 @@ test("library changes undo and redo, deletes purge for real, and a resummary kee
   run({ type: "star", ids: [b], starred: true });
   assert.deepEqual(db.listFolders(), [{ id: folder.id, name: "고객사", count: 2 }]);
   assert.equal(db.counts().starred, 1);
-  assert.equal(history.undo(), "즐겨찾기");
-  assert.equal(history.undo(), "폴더 이동");
+  assert.equal(history.undo(translator("ko")), "즐겨찾기");
+  assert.equal(history.undo(translator("ko")), "폴더 이동");
   assert.equal(db.listMeetings(folder.id!).length, 0);
-  assert.equal(history.redo(), "폴더 이동");
+  assert.equal(history.redo(translator("ko")), "폴더 이동");
   assert.equal(db.listMeetings(folder.id!).length, 2);
 
   run({ type: "deleteFolder", id: folder.id! });
   assert.equal(db.listFolders().length, 0);
   assert.equal(db.listMeetings("all").every((m) => m.folderId === null), true); // unfiled while deleted
-  history.undo();
+  history.undo(translator("ko"));
 
   run({ type: "delete", ids: [a] });
   assert.deepEqual(titles(), ["회의 B"]);
   assert.equal(db.counts().all, 1);
-  history.undo();
+  history.undo(translator("ko"));
   assert.equal(db.counts().all, 2);
-  history.redo();
+  history.redo(translator("ko"));
   assert.deepEqual(db.purgeDeleted(), [a]);
   assert.equal(db.getMeeting(a), null);
   assert.equal(Number(db.raw.prepare("SELECT COUNT(*) AS n FROM meetings").get()?.n), 1);

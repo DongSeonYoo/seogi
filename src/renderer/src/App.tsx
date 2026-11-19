@@ -288,6 +288,8 @@ export function App() {
     if (a.enabled !== false) void a.run();
   };
   useEffect(() => api.onMenuAction(perform), []);
+  const disabledActions = (Object.keys(actions) as ActionId[]).filter((id) => actions[id].enabled === false).join(",");
+  useEffect(() => api.setMenuState(disabledActions ? (disabledActions.split(",") as ActionId[]) : []), [disabledActions]);
 
   /** The right-click menu for a meeting: the same actions plus "move to folder". */
   async function meetingMenu(m: MeetingRow) {

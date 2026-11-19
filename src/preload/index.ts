@@ -15,6 +15,7 @@ const api: Api = {
   undo: () => ipcRenderer.invoke("undo"),
   redo: () => ipcRenderer.invoke("redo"),
   showMenu: (items) => ipcRenderer.invoke("showMenu", items),
+  setMenuState: (disabled) => ipcRenderer.send("menuState", disabled),
   onMenuAction: (listener) => on("menu-action", listener),
   openSettings: () => ipcRenderer.send("openSettings"),
   accentColor: () => ipcRenderer.invoke("accentColor"),

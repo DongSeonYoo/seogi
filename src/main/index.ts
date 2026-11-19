@@ -66,10 +66,19 @@ app.whenReady().then(async () => {
   const db = openDb(path.join(dataDir, "seogi.db"), tr()("error.appQuit"));
   const history = new History();
   const notify = (id: number) => broadcast("meeting-changed", id);
+  let disabledActions = new Set<string>();
+  const rebuildMenu = () =>
+    Menu.setApplicationMenu(appMenu(history, sendAction, openSettingsWindow, tr(), disabledActions));
+  ipcMain.on("menuState", (_e, disabled: string[]) => {
+    const next = new Set(disabled);
+    if (next.size === disabledActions.size && [...next].every((id) => disabledActions.has(id))) return;
+    disabledActions = next;
+    rebuildMenu();
+  });
   /** -1: a library change (folders, stars, deletes) that any list may show. */
   const libraryChanged = () => {
     notify(-1);
-    Menu.setApplicationMenu(appMenu(history, sendAction, openSettingsWindow, tr()));
+    rebuildMenu();
   };
 
   // Deleted meetings stay restorable (⌘Z) until quit; then rows and audio go for good.
@@ -186,7 +195,7 @@ app.whenReady().then(async () => {
   });
   for (const kind of ["undo", "redo"] as const)
     ipcMain.handle(kind, () => {
-      const label = history[kind]();
+      const label = history[kind](tr());
       if (label) libraryChanged();
       return label;
     });
@@ -367,7 +376,7 @@ app.whenReady().then(async () => {
     const before: Locale = settings.get().locale;
     const view = settings.patch(patch);
     if (view.locale !== before) {
-      Menu.setApplicationMenu(appMenu(history, sendAction, openSettingsWindow, tr()));
+      rebuildMenu();
       broadcast("locale", view.locale);
     }
     return view;
@@ -412,7 +421,7 @@ app.whenReady().then(async () => {
     broadcast("accent-color", accentColor()),
   );
 
-  Menu.setApplicationMenu(appMenu(history, sendAction, openSettingsWindow, tr()));
+  rebuildMenu();
   win = new BrowserWindow({
     width: 1280,
     height: 820,

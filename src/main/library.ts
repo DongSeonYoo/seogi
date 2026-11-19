@@ -2,8 +2,8 @@ import type { Translate } from "../shared/i18n";
 import type { LibraryOp, LibraryResult } from "../shared/types";
 import type { Db } from "./db";
 
-/** One undoable change: `redo` repeats it after an undo. */
-type Step = { label: string; undo(): void; redo(): void };
+/** One undoable change: `redo` repeats it after an undo. The label is worded when shown, in the UI language of that moment. */
+type Step = { label: (t: Translate) => string; undo(): void; redo(): void };
 
 /** The app-level undo stack behind ⌘Z / ⇧⌘Z (text fields keep their own). */
 export class History {
@@ -17,28 +17,28 @@ export class History {
   }
 
   /** Returns the label of what was undone, or null when there is nothing to undo. */
-  undo(): string | null {
+  undo(t: Translate): string | null {
     const step = this.done.pop();
     if (!step) return null;
     step.undo();
     this.undone.push(step);
-    return step.label;
+    return step.label(t);
   }
 
-  redo(): string | null {
+  redo(t: Translate): string | null {
     const step = this.undone.pop();
     if (!step) return null;
     step.redo();
     this.done.push(step);
-    return step.label;
+    return step.label(t);
   }
 
-  get undoLabel() {
-    return this.done.at(-1)?.label ?? null;
+  undoLabel(t: Translate) {
+    return this.done.at(-1)?.label(t) ?? null;
   }
 
-  get redoLabel() {
-    return this.undone.at(-1)?.label ?? null;
+  redoLabel(t: Translate) {
+    return this.undone.at(-1)?.label(t) ?? null;
   }
 }
 
@@ -60,7 +60,7 @@ export function perform(db: Db, history: History, op: LibraryOp, t: Translate): 
       const before = fields(op.id);
       const redo = () => db.setTitle(op.id, title, true);
       redo();
-      history.push({ label: t("undo.rename"), redo, undo: () => db.setTitle(op.id, before.title, before.titleEdited) });
+      history.push({ label: (t) => t("undo.rename"), redo, undo: () => db.setTitle(op.id, before.title, before.titleEdited) });
       return { ok: true };
     }
     case "move": {
@@ -68,7 +68,7 @@ export function perform(db: Db, history: History, op: LibraryOp, t: Translate): 
       const redo = () => op.ids.forEach((id) => db.setFolder(id, op.folderId));
       redo();
       history.push({
-        label: t("undo.move"),
+        label: (t) => t("undo.move"),
         redo,
         undo: () => before.forEach(([id, folderId]) => db.setFolder(id, folderId)),
       });
@@ -79,7 +79,7 @@ export function perform(db: Db, history: History, op: LibraryOp, t: Translate): 
       const redo = () => op.ids.forEach((id) => db.setStarred(id, op.starred));
       redo();
       history.push({
-        label: op.starred ? t("undo.star") : t("undo.unstar"),
+        label: (t) => op.starred ? t("undo.star") : t("undo.unstar"),
         redo,
         undo: () => before.forEach(([id, starred]) => db.setStarred(id, starred)),
       });
@@ -91,7 +91,7 @@ export function perform(db: Db, history: History, op: LibraryOp, t: Translate): 
       const redo = () => op.ids.forEach((id) => db.setMeetingDeleted(id, true));
       redo();
       history.push({
-        label: op.ids.length > 1 ? t("undo.deleteMany", { n: op.ids.length }) : t("undo.delete"),
+        label: (t) => op.ids.length > 1 ? t("undo.deleteMany", { n: op.ids.length }) : t("undo.delete"),
         redo,
         undo: () => op.ids.forEach((id) => db.setMeetingDeleted(id, false)),
       });
@@ -100,7 +100,7 @@ export function perform(db: Db, history: History, op: LibraryOp, t: Translate): 
     case "createFolder": {
       const id = db.createFolder(op.name.trim() || t("folder.new"));
       history.push({
-        label: t("undo.newFolder"),
+        label: (t) => t("undo.newFolder"),
         redo: () => db.setFolderDeleted(id, false),
         undo: () => db.setFolderDeleted(id, true),
       });
@@ -112,14 +112,14 @@ export function perform(db: Db, history: History, op: LibraryOp, t: Translate): 
       if (!name || before === null) return { ok: false, error: t("error.emptyFolderName") };
       const redo = () => db.renameFolder(op.id, name);
       redo();
-      history.push({ label: t("undo.renameFolder"), redo, undo: () => db.renameFolder(op.id, before) });
+      history.push({ label: (t) => t("undo.renameFolder"), redo, undo: () => db.renameFolder(op.id, before) });
       return { ok: true };
     }
     case "deleteFolder": {
       // Its meetings stay; they show as unfiled until the folder is restored or purged.
       const redo = () => db.setFolderDeleted(op.id, true);
       redo();
-      history.push({ label: t("undo.deleteFolder"), redo, undo: () => db.setFolderDeleted(op.id, false) });
+      history.push({ label: (t) => t("undo.deleteFolder"), redo, undo: () => db.setFolderDeleted(op.id, false) });
       return { ok: true };
     }
   }

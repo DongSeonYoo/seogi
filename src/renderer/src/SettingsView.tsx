@@ -187,11 +187,7 @@ function General({ s, patch }: SectionProps) {
   );
 }
 
-const PROVIDER_LABEL: Record<string, string> = {
-  qgrid: "qgrid",
-  openai: "OpenAI · API key",
-  anthropic: "Anthropic · API key",
-};
+const PROVIDER_NAME: Record<string, string> = { qgrid: "qgrid", openai: "OpenAI", anthropic: "Anthropic" };
 
 /** One role's provider, model and (for summary) reasoning effort, with the provider's live model list. */
 function ModelGroup({
@@ -241,7 +237,7 @@ function ModelGroup({
         >
           {providers.map((p) => (
             <option key={p} value={p}>
-              {PROVIDER_LABEL[p]}
+              {p === "qgrid" ? PROVIDER_NAME[p] : t("settings.apiKeyProvider", { name: PROVIDER_NAME[p] })}
             </option>
           ))}
         </Select>
