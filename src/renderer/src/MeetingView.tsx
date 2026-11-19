@@ -5,6 +5,7 @@ import { speakerName } from "../../shared/summary";
 import { joinSplitSentences } from "../../shared/transcript";
 import { clock, duration, fullDate, groupUtterances, insertDrafts } from "./format";
 import { useI18n, useT } from "./i18n";
+import { showStored } from "../../shared/i18n";
 import { Elapsed, type Recording } from "./Toolbar";
 import { IMPORT_EXTENSIONS, importAudio, readAudioFile, useImportProgress, type AudioFile } from "./importAudio";
 import { Splitter } from "./Splitter";
@@ -199,7 +200,7 @@ export function MeetingView({
         {m.error && (
           <p className="notice" role="alert">
             <AlertCircle aria-hidden />
-            <span>{m.error}</span>
+            <span>{showStored(m.error, t)}</span>
           </p>
         )}
         {recording && systemSilent && (

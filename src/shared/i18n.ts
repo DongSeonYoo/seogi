@@ -231,6 +231,13 @@ const en = {
   "settings.meetingLanguageDesc": "The language spoken in your meetings. Choose Detect automatically if they mix.",
   "settings.detect": "Detect automatically",
   "settings.glossary": "Glossary",
+  "effort.minimal": "Minimal",
+  "effort.low": "Low",
+  "effort.medium": "Medium",
+  "effort.high": "High",
+  "effort.xhigh": "Extra high",
+  "effort.ultra": "Ultra",
+  "effort.max": "Max",
   "settings.apiKeyProvider": "{name} · API key",
   "settings.glossaryDesc": "Shared by every session: names and product terms, separated by commas, keep their spelling in captions and summaries. A session can set its own instead. ⌘↵ saves.",
   "settings.glossaryPlaceholder": "Dongseon, qgrid, Seogi",
@@ -494,6 +501,13 @@ const ko: Record<MessageKey, string> = {
   "settings.meetingLanguageDesc": "회의에서 주로 쓰는 언어입니다. 섞여 있으면 자동 감지를 고르세요.",
   "settings.detect": "자동 감지",
   "settings.glossary": "용어집",
+  "effort.minimal": "최소",
+  "effort.low": "낮음",
+  "effort.medium": "보통",
+  "effort.high": "높음",
+  "effort.xhigh": "매우 높음",
+  "effort.ultra": "울트라",
+  "effort.max": "최대",
   "settings.apiKeyProvider": "{name} · API 키",
   "settings.glossaryDesc": "모든 세션이 함께 쓰는 용어집입니다. 사람 이름, 제품명을 쉼표로 구분해 적으면 자막과 요약의 표기를 맞춥니다. 세션마다 따로 정할 수도 있습니다. ⌘↵로 저장합니다.",
   "settings.glossaryPlaceholder": "동선, 큐그리드, 회의록 앱",
@@ -550,6 +564,24 @@ const MESSAGES: Record<Locale, Record<MessageKey, string>> = { en, ko };
 export const INTL_LOCALE: Record<Locale, string> = { en: "en-US", ko: "ko-KR" };
 
 export type Translate = (key: MessageKey, vars?: Record<string, string | number>) => string;
+
+/**
+ * A message saved for later (a meeting's error) as its key and values, so it is worded in the UI
+ * language of whenever it is shown, not of when it was saved.
+ */
+export const storedMessage = (key: MessageKey, vars: Record<string, string | number> = {}) =>
+  `i18n:${JSON.stringify([key, vars])}`;
+
+/** Words a saved message; plain text (older rows, provider errors) is shown as it is. */
+export function showStored(text: string, t: Translate): string {
+  if (!text.startsWith("i18n:")) return text;
+  try {
+    const [key, vars] = JSON.parse(text.slice(5)) as [MessageKey, Record<string, string | number>];
+    return key in en ? t(key, vars) : text;
+  } catch {
+    return text;
+  }
+}
 
 export function translator(locale: Locale): Translate {
   const table = MESSAGES[locale] ?? en;

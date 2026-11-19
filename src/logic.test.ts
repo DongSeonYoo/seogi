@@ -432,3 +432,11 @@ test("unavailable Opus encoding selects the PCM fallback", async () => {
   // The Node test environment has no AudioEncoder.
   assert.equal(await encodeOpus(new Int16Array(320)), null);
 });
+
+test("stored messages are worded in the language current when shown; plain text passes through", async () => {
+  const { storedMessage, showStored, translator } = await import("./shared/i18n.ts");
+  const saved = storedMessage("error.captionsDropped", { n: 2 });
+  assert.equal(showStored(saved, translator("en")), translator("en")("error.captionsDropped", { n: 2 }));
+  assert.equal(showStored(saved, translator("ko")), translator("ko")("error.captionsDropped", { n: 2 }));
+  assert.equal(showStored("qgrid 502: bad gateway", translator("ko")), "qgrid 502: bad gateway");
+});

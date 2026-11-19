@@ -19,7 +19,7 @@ import type {
   StoredSettings,
   Track,
 } from "../shared/types";
-import { INTL_LOCALE, translator, type Locale } from "../shared/i18n";
+import { INTL_LOCALE, storedMessage, translator, type Locale } from "../shared/i18n";
 import { meetingDocument, summaryMarkdown } from "../shared/summary";
 import { joinSplitSentences } from "../shared/transcript";
 import { glossaryPrompt, isPromptEcho, splitUtterances, summarize, testConnection, transcribeFile } from "./ai";
@@ -63,7 +63,7 @@ app.whenReady().then(async () => {
   const settings = await openSettings(dataDir);
   /** Messages in the UI language the user picked; read each time so a change applies at once. */
   const tr = () => translator(settings.get().locale);
-  const db = openDb(path.join(dataDir, "seogi.db"), tr()("error.appQuit"));
+  const db = openDb(path.join(dataDir, "seogi.db"), storedMessage("error.appQuit"));
   const history = new History();
   const notify = (id: number) => broadcast("meeting-changed", id);
   function storeUtterances(id: number, track: Track, segments: Parameters<typeof db.addUtterances>[2]) {
@@ -166,8 +166,8 @@ app.whenReady().then(async () => {
     notify(id);
     const drops = await stopLive(id);
     if (db.hasUtterances(id))
-      db.setStatus(id, "done", drops ? tr()("error.captionsDropped", { n: drops }) : null);
-    else db.setStatus(id, "error", tr()("error.nothingTranscribed"));
+      db.setStatus(id, "done", drops ? storedMessage("error.captionsDropped", { n: drops }) : null);
+    else db.setStatus(id, "error", storedMessage("error.nothingTranscribed"));
     notify(id);
   }
 

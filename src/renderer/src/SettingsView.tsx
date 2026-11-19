@@ -21,7 +21,7 @@ import {
 import { liveCaptionHooks } from "./gptLive";
 import { startRecording } from "./recorder";
 import { useT } from "./i18n";
-import { LOCALES, type Locale } from "../../shared/i18n";
+import { LOCALES, type Locale, type MessageKey } from "../../shared/i18n";
 import { Button, CommitInput, Kbd, Segmented, Select, Switch } from "./ui";
 
 const SECTIONS = [
@@ -189,6 +189,17 @@ function General({ s, patch }: SectionProps) {
 
 const PROVIDER_NAME: Record<string, string> = { qgrid: "qgrid", openai: "OpenAI", anthropic: "Anthropic" };
 
+/** Reasoning effort names as qgrid lists them; an unknown one shows as it is. */
+const EFFORT_LABEL: Record<string, MessageKey> = {
+  minimal: "effort.minimal",
+  low: "effort.low",
+  medium: "effort.medium",
+  high: "effort.high",
+  xhigh: "effort.xhigh",
+  ultra: "effort.ultra",
+  max: "effort.max",
+};
+
 /** One role's provider, model and (for summary) reasoning effort, with the provider's live model list. */
 function ModelGroup({
   role,
@@ -280,7 +291,7 @@ function ModelGroup({
             <option value="">{t("settings.effortDefault")}</option>
             {selected.efforts.map((e) => (
               <option key={e} value={e}>
-                {e}
+                {e in EFFORT_LABEL ? t(EFFORT_LABEL[e]) : e}
               </option>
             ))}
           </Select>
