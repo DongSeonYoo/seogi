@@ -91,6 +91,8 @@ export async function summarize(store: SettingsStore, transcript: string): Promi
   const s = store.get();
   const { output } = await generateText({
     model: summaryModel(store, s),
+    ...(s.summary.provider === "qgrid" &&
+      s.summary.effort && { providerOptions: { qgrid: { effort: s.summary.effort } } }),
     output: Output.object({ schema: SummarySchema }),
     system: [
       "너는 회의록 작성자다. 전사본을 읽고 한국어로 구조화된 회의록을 만든다.",

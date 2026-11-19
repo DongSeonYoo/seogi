@@ -5,7 +5,6 @@ import type { LiveLine, LiveView, Track } from "../shared/types";
 const IN_RATE = 16_000;
 const OPENAI_RATE = 24_000;
 const OPENAI_URL = "wss://api.openai.com/v1/realtime?intent=transcription";
-export const LIVE_MODEL = "gpt-live-transcribe";
 const PROJECT_NAME = "seogi";
 // The chunk transcripts of the same audio are already logged; drafts would only duplicate them.
 const QGRID_LOGGER = false;
@@ -18,7 +17,7 @@ export type LiveEvent =
 /** One track's stream. Input is mono PCM16 at 16 kHz, every frame from the track's first sample. */
 export type LiveStream = { audio(pcm: Int16Array): void; stop(): void };
 
-export type LiveConfig = { language?: string; prompt?: string } & (
+export type LiveConfig = { model: string; language?: string; prompt?: string } & (
   | { provider: "qgrid"; url: string }
   | { provider: "openai"; apiKey: string }
 );
@@ -44,6 +43,7 @@ function qgridStream(
   ws.onopen = () =>
     send("start", {
       sampleRate: IN_RATE,
+      model: config.model,
       language: config.language,
       prompt: config.prompt,
       logger: QGRID_LOGGER,
@@ -125,8 +125,12 @@ function openaiStream(
             input: {
               format: { type: "audio/pcm", rate: OPENAI_RATE },
               transcription: {
-                model: LIVE_MODEL,
-                ...(config.language && { languages: [config.language] }),
+                model: config.model,
+                // gpt-transcribe and gpt-live-transcribe take a list; sending both fields is an error.
+                ...(config.language &&
+                  (/^gpt-(live-)?transcribe/.test(config.model)
+                    ? { languages: [config.language] }
+                    : { language: config.language })),
                 ...(config.prompt && { prompt: config.prompt }),
               },
               turn_detection: null,

@@ -1,11 +1,12 @@
 import { app, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, protocol, session, shell } from "electron";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { AppInfo, AudioRef, Chunk, ConnectionRole, KeyName, StorageInfo, StoredSettings, Track } from "../shared/types";
+import type { AppInfo, AudioRef, Chunk, ConnectionRole, KeyName, ModelRole, StorageInfo, StoredSettings, Track } from "../shared/types";
 import { joinSplitSentences } from "../shared/transcript";
 import { splitUtterances, summarize, testConnection, transcribeWav } from "./ai";
 import { openDb } from "./db";
 import { LiveCaptions, openLiveStream } from "./live";
+import { listModels } from "./models";
 import { openSettings } from "./settings";
 import { toWav, SAMPLE_RATE } from "./wav";
 
@@ -36,14 +37,16 @@ app.whenReady().then(async () => {
 
   function startLive(id: number) {
     const s = settings.get();
+    const { provider, model } = s.live;
     const language = s.language === "auto" ? undefined : s.language;
-    const prompt = s.glossary.trim() ? `용어: ${s.glossary}` : undefined;
+    // Whisper models take no prompt (qgrid rejects it for gpt-realtime-whisper).
+    const prompt = s.glossary.trim() && !model.includes("whisper") ? `용어: ${s.glossary}` : undefined;
     const captions = new LiveCaptions(
       (onEvent) =>
         openLiveStream(
-          s.transcription.provider === "qgrid"
-            ? { provider: "qgrid", url: s.qgridUrl, language, prompt }
-            : { provider: "openai", apiKey: settings.key("openai"), language, prompt },
+          provider === "qgrid"
+            ? { provider: "qgrid", url: s.qgridUrl, model, language, prompt }
+            : { provider: "openai", apiKey: settings.key("openai"), model, language, prompt },
           onEvent,
         ),
       () => sendLive(id),
@@ -168,6 +171,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("patchSettings", (_e, patch: Partial<StoredSettings>) => settings.patch(patch));
   ipcMain.handle("setKey", (_e, name: KeyName, value: string) => settings.setKey(name, value));
   ipcMain.handle("testConnection", (_e, role: ConnectionRole) => testConnection(settings, role));
+  ipcMain.handle("listModels", (_e, role: ModelRole, provider: string) => listModels(settings, role, provider));
   ipcMain.handle("storageInfo", (): StorageInfo => {
     const db = readdirSync(dataDir).filter((f) => f.startsWith("seogi.db"));
     const bytes = dirSize(audioDir) + db.reduce((n, f) => n + statSync(path.join(dataDir, f)).size, 0);

@@ -105,3 +105,32 @@ test("live drafts leave only once successful chunks cover their whole span", asy
   c.settle("system", 60, 90); // a delta that never got its segment leaves once a segment's span is covered
   assert.deepEqual(keys(), []);
 });
+
+test("listModels maps qgrid's catalog per role and filters OpenAI's list by task", async () => {
+  const { listModels } = await import("./main/models.ts");
+  const store = { get: () => ({ qgridUrl: "http://q" }), key: () => "sk-test" } as never;
+  const catalog = {
+    text: [{ id: "openai/gpt-6-luna", available: true, pricing: { input: 0.1, output: 0.5, cachedInput: 0.01 }, efforts: ["low", "high"] }],
+    transcription: [{ id: "openai/gpt-transcribe", available: true, usdPerMinute: 0.0045, prompt: true, liveDraft: false }],
+    transcriptionStream: [{ id: "openai/gpt-live-transcribe", available: false, usdPerMinute: 0.017, prompt: true, liveDraft: true }],
+  };
+  const openaiIds = ["gpt-6-luna", "gpt-4o-transcribe", "gpt-realtime-whisper", "whisper-1", "tts-1", "gpt-image-2"];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string) =>
+    Response.json(String(url).startsWith("http://q") ? catalog : { data: openaiIds.map((id) => ({ id })) })) as typeof fetch;
+  try {
+    const ids = async (role: "live" | "transcription" | "summary", provider: string) => {
+      const r = await listModels(store, role, provider);
+      assert.ok(r.ok);
+      return r.models;
+    };
+    const [live] = await ids("live", "qgrid");
+    assert.deepEqual(live, { id: "openai/gpt-live-transcribe", available: false, detail: "분당 $0.017 · 용어집 지원 · 말하는 중에 바로 표시" });
+    assert.deepEqual((await ids("summary", "qgrid"))[0].efforts, ["low", "high"]);
+    assert.deepEqual((await ids("transcription", "openai")).map((m) => m.id), ["gpt-4o-transcribe", "whisper-1"]);
+    assert.deepEqual((await ids("live", "openai")).map((m) => m.id), ["gpt-4o-transcribe", "gpt-realtime-whisper", "whisper-1"]);
+    assert.deepEqual((await ids("summary", "openai")).map((m) => m.id), ["gpt-6-luna"]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

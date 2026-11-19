@@ -6,6 +6,9 @@ import {
   type ConnectionResult,
   type ConnectionRole,
   type KeyName,
+  type LiveProvider,
+  type ModelList,
+  type ModelRole,
   type Settings,
   type StorageInfo,
   type StoredSettings,
@@ -181,64 +184,149 @@ function General({ s, patch }: SectionProps) {
   );
 }
 
+const PROVIDER_LABEL: Record<string, string> = {
+  qgrid: "qgrid",
+  openai: "OpenAI · API key",
+  anthropic: "Anthropic · API key",
+};
+
+/** One role's provider, model and (for summary) reasoning effort, with the provider's live model list. */
+function ModelGroup({
+  role,
+  title,
+  description,
+  providers,
+  value,
+  onChange,
+  test,
+  reloadKey,
+}: {
+  role: ModelRole;
+  title: string;
+  description: string;
+  providers: string[];
+  value: { provider: string; model: string; effort?: string };
+  onChange: (v: { provider: string; model: string; effort?: string }) => void;
+  test?: ConnectionRole;
+  /** Changes when something the list depends on changes (qgrid URL, stored keys). */
+  reloadKey: string;
+}) {
+  const [list, setList] = useState<ModelList | null>(null);
+  useEffect(() => {
+    setList(null);
+    void window.api.listModels(role, value.provider).then(setList);
+  }, [role, value.provider, reloadKey]);
+
+  const models = list?.ok ? list.models : [];
+  const selected = models.find((m) => m.id === value.model);
+  const known = !!selected || !list?.ok;
+  const id = `${role}-model`;
+
+  return (
+    <Group title={title}>
+      <Row label="공급자" description={description} htmlFor={`${role}-provider`}>
+        <Select
+          id={`${role}-provider`}
+          value={value.provider}
+          onChange={(e) => {
+            const provider = e.target.value;
+            onChange({ provider, model: DEFAULT_MODELS[role][provider as keyof (typeof DEFAULT_MODELS)[typeof role]] });
+          }}
+        >
+          {providers.map((p) => (
+            <option key={p} value={p}>
+              {PROVIDER_LABEL[p]}
+            </option>
+          ))}
+        </Select>
+      </Row>
+      <Row
+        label="모델"
+        htmlFor={id}
+        description={
+          list === null
+            ? "모델 목록을 불러오는 중…"
+            : !list.ok
+              ? `목록을 불러오지 못했습니다: ${list.error}`
+              : selected?.detail ?? (known ? undefined : "목록에 없는 모델입니다.")
+        }
+      >
+        {list?.ok ? (
+          <Select id={id} value={value.model} onChange={(e) => onChange({ ...value, model: e.target.value, effort: undefined })}>
+            {!selected && <option value={value.model}>{value.model}</option>}
+            {Object.entries(Object.groupBy(models, (m) => m.id.split("/")[0])).map(([group, items]) => (
+              <optgroup key={group} label={group}>
+                {items?.map((m) => (
+                  <option key={m.id} value={m.id} disabled={!m.available}>
+                    {m.available ? m.id : `${m.id} (사용 불가)`}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </Select>
+        ) : (
+          <CommitInput id={id} value={value.model} onCommit={(model) => onChange({ ...value, model })} />
+        )}
+      </Row>
+      {!!selected?.efforts?.length && (
+        <Row label="추론 강도" description="높을수록 꼼꼼하지만 느리고 비쌉니다." htmlFor={`${role}-effort`}>
+          <Select
+            id={`${role}-effort`}
+            value={value.effort ?? ""}
+            onChange={(e) => onChange({ ...value, effort: e.target.value || undefined })}
+          >
+            <option value="">모델 기본값</option>
+            {selected.efforts.map((e) => (
+              <option key={e} value={e}>
+                {e}
+              </option>
+            ))}
+          </Select>
+        </Row>
+      )}
+      {test && (
+        <Row label="연결 확인" description="짧은 요청 하나를 실제로 보내 봅니다.">
+          <ConnectionTest role={test} />
+        </Row>
+      )}
+    </Group>
+  );
+}
+
 function Models({ s, patch, setS }: SectionProps & { setS: (s: Settings) => void }) {
-  const usesQgrid = s.transcription.provider === "qgrid" || s.summary.provider === "qgrid";
+  const usesQgrid = [s.live, s.transcription, s.summary].some((x) => x.provider === "qgrid");
+  const reloadKey = `${s.qgridUrl}|${s.hasKey.openai}|${s.hasKey.anthropic}`;
   return (
     <>
-      <Group title="전사">
-        <Row label="공급자" description="회의 중 말을 글로 옮기는 모델입니다." htmlFor="tx-provider">
-          <Select
-            id="tx-provider"
-            value={s.transcription.provider}
-            onChange={(e) => {
-              const provider = e.target.value as TranscriptionProvider;
-              void patch({ transcription: { provider, model: DEFAULT_MODELS.transcription[provider] } });
-            }}
-          >
-            <option value="openai">OpenAI · API key</option>
-            <option value="qgrid">qgrid</option>
-          </Select>
-        </Row>
-        <Row label="모델" htmlFor="tx-model">
-          <CommitInput
-            id="tx-model"
-            value={s.transcription.model}
-            placeholder={DEFAULT_MODELS.transcription[s.transcription.provider]}
-            onCommit={(model) => patch({ transcription: { ...s.transcription, model } })}
-          />
-        </Row>
-        <Row label="연결 확인" description="1초짜리 무음을 실제로 보내 봅니다.">
-          <ConnectionTest role="transcription" />
-        </Row>
-      </Group>
-
-      <Group title="요약">
-        <Row label="공급자" description="회의가 끝난 뒤 요약과 액션아이템을 만드는 모델입니다." htmlFor="sum-provider">
-          <Select
-            id="sum-provider"
-            value={s.summary.provider}
-            onChange={(e) => {
-              const provider = e.target.value as SummaryProvider;
-              void patch({ summary: { provider, model: DEFAULT_MODELS.summary[provider] } });
-            }}
-          >
-            <option value="openai">OpenAI · API key</option>
-            <option value="anthropic">Anthropic · API key</option>
-            <option value="qgrid">qgrid</option>
-          </Select>
-        </Row>
-        <Row label="모델" htmlFor="sum-model">
-          <CommitInput
-            id="sum-model"
-            value={s.summary.model}
-            placeholder={DEFAULT_MODELS.summary[s.summary.provider]}
-            onCommit={(model) => patch({ summary: { ...s.summary, model } })}
-          />
-        </Row>
-        <Row label="연결 확인" description="짧은 요청 하나를 실제로 보내 봅니다.">
-          <ConnectionTest role="summary" />
-        </Row>
-      </Group>
+      <ModelGroup
+        role="live"
+        title="실시간 자막"
+        description="녹음하는 동안 흐린 글씨로 바로 보여 주는 초안입니다."
+        providers={["qgrid", "openai"]}
+        value={s.live}
+        onChange={(v) => patch({ live: { provider: v.provider as LiveProvider, model: v.model } })}
+        reloadKey={reloadKey}
+      />
+      <ModelGroup
+        role="transcription"
+        title="받아쓰기"
+        description="30초 안팎마다 확정하는 받아쓰기입니다. 회의록과 요약은 이 결과로 만듭니다."
+        providers={["qgrid", "openai"]}
+        value={s.transcription}
+        onChange={(v) => patch({ transcription: { provider: v.provider as TranscriptionProvider, model: v.model } })}
+        test="transcription"
+        reloadKey={reloadKey}
+      />
+      <ModelGroup
+        role="summary"
+        title="요약"
+        description="회의가 끝난 뒤 요약과 액션아이템을 만드는 모델입니다."
+        providers={["qgrid", "openai", "anthropic"]}
+        value={s.summary}
+        onChange={(v) => patch({ summary: { provider: v.provider as SummaryProvider, model: v.model, effort: v.effort } })}
+        test="summary"
+        reloadKey={reloadKey}
+      />
 
       {usesQgrid && (
         <Group title="qgrid">

@@ -7,6 +7,7 @@ const DEFAULTS: StoredSettings = {
   theme: "system",
   qgridUrl: "http://localhost:44900",
   transcription: { provider: "openai", model: DEFAULT_MODELS.transcription.openai },
+  live: { provider: "openai", model: DEFAULT_MODELS.live.openai },
   summary: { provider: "openai", model: DEFAULT_MODELS.summary.openai },
   language: "ko",
   glossary: "",
@@ -20,9 +21,15 @@ export async function openSettings(dir: string) {
   const settingsFile = path.join(dir, "settings.json");
   const keysFile = path.join(dir, "keys.bin");
 
-  let settings: StoredSettings = existsSync(settingsFile)
-    ? { ...DEFAULTS, ...JSON.parse(readFileSync(settingsFile, "utf8")) }
-    : DEFAULTS;
+  const stored: Partial<StoredSettings> = existsSync(settingsFile)
+    ? JSON.parse(readFileSync(settingsFile, "utf8"))
+    : {};
+  let settings: StoredSettings = { ...DEFAULTS, ...stored };
+  // Settings from before live captions had a model: follow the transcription provider.
+  if (!stored.live) {
+    const provider = settings.transcription.provider;
+    settings.live = { provider, model: DEFAULT_MODELS.live[provider] };
+  }
   const keys = await readKeys(keysFile);
 
   // CSS prefers-color-scheme follows themeSource, so one switch re-themes every window.

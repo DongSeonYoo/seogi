@@ -15,6 +15,7 @@ const api: Api = {
   patchSettings: (patch) => ipcRenderer.invoke("patchSettings", patch),
   setKey: (name, value) => ipcRenderer.invoke("setKey", name, value),
   testConnection: (role) => ipcRenderer.invoke("testConnection", role),
+  listModels: (role, provider) => ipcRenderer.invoke("listModels", role, provider),
   storageInfo: () => ipcRenderer.invoke("storageInfo"),
   openDataFolder: () => ipcRenderer.invoke("openDataFolder"),
   appInfo: () => ipcRenderer.invoke("appInfo"),
