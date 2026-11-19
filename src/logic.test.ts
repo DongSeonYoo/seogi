@@ -6,6 +6,25 @@ import { Chunker } from "./renderer/src/recorder.ts";
 const RATE = 16000;
 const frame = (amp: number) => new Float32Array(1600).fill(amp); // 0.1 s
 
+test("diarization and transcription preserve the selected PCM interval", async () => {
+  const { toFloat32, toWav } = await import("./main/wav.ts");
+  const pcm = Int16Array.of(8, -32768, 0, 32767, 8).subarray(1, 4);
+  assert.deepEqual([...toFloat32(pcm)], [-1, 0, 32767 / 32768]);
+  const wav = Buffer.from(toWav(pcm));
+  assert.equal(wav.readUInt32LE(40), 6);
+  assert.deepEqual([...wav.subarray(44)], [0, 128, 0, 0, 255, 127]);
+});
+
+test("a failed import turn rolls back every utterance in that turn", async () => {
+  const { openDb } = await import("./main/db.ts");
+  const db = openDb(":memory:");
+  const id = db.createMeeting("Import", null);
+  db.raw.exec("CREATE TRIGGER fail BEFORE INSERT ON utterances WHEN NEW.text = 'fail' BEGIN SELECT RAISE(ABORT, 'test'); END");
+  assert.throws(() => db.addUtterances(id, "system", [{ startSec: 0, text: "first" }, { startSec: 1, text: "fail" }]));
+  assert.deepEqual(db.getMeeting(id)?.utterances, []);
+  db.raw.close();
+});
+
 test("Chunker cuts at a pause after 25 s, forces a cut at 35 s, and drops silence", () => {
   const out: { start: number; sec: number }[] = [];
   const c = new Chunker((start, pcm) => out.push({ start, sec: pcm.length / RATE }));

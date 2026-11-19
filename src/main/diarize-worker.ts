@@ -10,8 +10,8 @@ const { samples, models, threshold } = workerData as {
 try {
   const sherpa = createRequire(import.meta.url)("sherpa-onnx-node");
   const sd = new sherpa.OfflineSpeakerDiarization({
-    segmentation: { pyannote: { model: models.segmentation } },
-    embedding: { model: models.embedding },
+    segmentation: { pyannote: { model: models.segmentation }, numThreads: 2 },
+    embedding: { model: models.embedding, numThreads: 2 },
     // -1: the number of speakers is not known; the threshold decides.
     clustering: { numClusters: -1, threshold },
     minDurationOn: 0.2,

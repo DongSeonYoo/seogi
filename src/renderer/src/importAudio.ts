@@ -15,26 +15,35 @@ export type AudioFile = {
 
 /**
  * Decodes a dropped file and mixes it down to 16 kHz mono, the format every transcriber here takes.
- * ponytail: decodes the whole file in memory (an hour of 48 kHz stereo is about 1.4 GB while
- * decoding); stream it through a MediaElementSource if long files run out of memory.
+ * Decoding at the target rate avoids holding a full hardware-rate multichannel buffer.
  */
 export async function readAudioFile(file: File): Promise<AudioFile> {
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
   if (!IMPORT_EXTENSIONS.includes(ext)) throw new Error("unsupported");
-  const ctx = new AudioContext();
-  const decoded = await ctx.decodeAudioData(await file.arrayBuffer()).finally(() => ctx.close());
-  const mono = new OfflineAudioContext(1, Math.ceil(decoded.duration * RATE), RATE);
-  const source = mono.createBufferSource();
-  source.buffer = decoded;
-  source.connect(mono.destination);
-  source.start();
-  const rendered = await mono.startRendering();
+  const bytes = await file.arrayBuffer();
+  let ctx: AudioContext;
+  try {
+    ctx = new AudioContext({ sampleRate: RATE });
+  } catch (e) {
+    if (!(e instanceof DOMException && e.name === "NotSupportedError")) throw e;
+    ctx = new AudioContext();
+  }
+  const decoded = await ctx.decodeAudioData(bytes).finally(() => ctx.close());
+  let mono = decoded;
+  if (decoded.numberOfChannels !== 1 || decoded.sampleRate !== RATE) {
+    const mix = new OfflineAudioContext(1, Math.ceil(decoded.duration * RATE), RATE);
+    const source = mix.createBufferSource();
+    source.buffer = decoded;
+    source.connect(mix.destination);
+    source.start();
+    mono = await mix.startRendering();
+  }
   return {
     name: file.name,
     bytes: file.size,
     durationSec: decoded.duration,
     channels: decoded.numberOfChannels,
-    samples: rendered.getChannelData(0),
+    samples: mono.getChannelData(0),
   };
 }
 

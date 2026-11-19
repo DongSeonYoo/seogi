@@ -43,9 +43,12 @@ async function download(url: string, to: string) {
 }
 
 /** Runs in a worker thread: an hour of audio takes minutes of CPU, which must not stall the app. */
-export function diarize(samples: Float32Array, models: { segmentation: string; embedding: string }) {
+export function diarize(samples: Float32Array<ArrayBuffer>, models: { segmentation: string; embedding: string }) {
   return new Promise<SpeakerSegment[]>((resolve, reject) => {
-    const worker = new Worker(workerPath, { workerData: { samples, models, threshold: THRESHOLD } });
+    const worker = new Worker(workerPath, {
+      workerData: { samples, models, threshold: THRESHOLD },
+      transferList: [samples.buffer],
+    });
     worker.once("message", (r: { segments?: SpeakerSegment[]; error?: string }) =>
       r.segments ? resolve(r.segments) : reject(new Error(r.error)),
     );

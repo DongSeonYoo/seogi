@@ -31,7 +31,7 @@ import { LiveCaptions, openLiveStream } from "./live";
 import { appMenu } from "./menu";
 import { listModels } from "./models";
 import { openSettings } from "./settings";
-import { SAMPLE_RATE, toWav } from "./wav";
+import { SAMPLE_RATE, toFloat32, toWav } from "./wav";
 
 // Pinned to the original name so meetings and keys survive any change to the display name.
 // Unpackaged runs (pnpm dev) get their own folder so they never touch the installed app's data.
@@ -235,8 +235,7 @@ app.whenReady().then(async () => {
       importProgress(id, { phase: "models" });
       const models = await ensureModels(path.join(dataDir, "models"));
       importProgress(id, { phase: "speakers" });
-      const samples = Float32Array.from(pcm, (v) => v / 0x8000);
-      turns = speakerTurns(await diarize(samples, models));
+      turns = speakerTurns(await diarize(toFloat32(pcm), models));
     } catch (e) {
       console.warn("[seogi] diarization unavailable, importing without speakers:", e);
       turns = [];

@@ -1,5 +1,11 @@
 export const SAMPLE_RATE = 16000;
 
+export function toFloat32(pcm: Int16Array) {
+  const samples = new Float32Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) samples[i] = pcm[i] / 0x8000;
+  return samples;
+}
+
 /** 16 kHz mono PCM16 RIFF/WAVE: the one format every transcription provider here accepts. */
 export function toWav(pcm: Int16Array): Uint8Array {
   const buf = Buffer.alloc(44 + pcm.byteLength);
@@ -16,5 +22,5 @@ export function toWav(pcm: Int16Array): Uint8Array {
   buf.write("data", 36);
   buf.writeUInt32LE(pcm.byteLength, 40);
   Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).copy(buf, 44);
-  return new Uint8Array(buf);
+  return buf;
 }

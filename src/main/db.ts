@@ -173,7 +173,14 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       const insert = db.prepare(
         "INSERT INTO utterances (meeting_id, track, start_sec, text, speaker) VALUES (?, ?, ?, ?, ?)",
       );
-      for (const u of rows) insert.run(meetingId, track, u.startSec, u.text, u.speaker ?? null);
+      db.exec("BEGIN");
+      try {
+        for (const u of rows) insert.run(meetingId, track, u.startSec, u.text, u.speaker ?? null);
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
     },
 
     // ponytail: LIKE scan over all text; add an FTS5 trigram table if search gets slow.
