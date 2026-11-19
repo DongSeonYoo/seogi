@@ -1,0 +1,3 @@
+allowBuilds:
+  # Windows installer only; not needed for the macOS build.
+  electron-winstaller: false

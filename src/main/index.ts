@@ -9,7 +9,9 @@ import { LiveCaptions, openLiveStream } from "./live";
 import { openSettings } from "./settings";
 import { toWav, SAMPLE_RATE } from "./wav";
 
-const dataDir = app.getPath("userData");
+// Pinned: the packaged app is named 서기, but meetings and keys live under the original name.
+const dataDir = path.join(app.getPath("appData"), "Seogi");
+app.setPath("userData", dataDir);
 const audioDir = path.join(dataDir, "meetings");
 let win: BrowserWindow | null = null;
 

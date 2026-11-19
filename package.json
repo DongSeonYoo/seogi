@@ -11,6 +11,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
     "electron": "45.3.3",
+    "electron-builder": "^26.18.0",
     "electron-vite": "6.0.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -32,6 +33,38 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc",
-    "test": "node --test src/"
+    "test": "node --test src/",
+    "dist": "electron-vite build && electron-builder --mac --dir"
+  },
+  "build": {
+    "appId": "io.github.dongseonyoo.seogi",
+    "productName": "Seogi",
+    "files": [
+      "out/**"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": "dir",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "회의에서 내 목소리를 받아 적으려면 마이크가 필요합니다.",
+        "NSAudioCaptureUsageDescription": "상대방 목소리를 받아 적으려면 시스템 오디오가 필요합니다.",
+        "LSHasLocalizedDisplayName": true
+      },
+      "identity": "-",
+      "hardenedRuntime": false,
+      "extraResources": [
+        {
+          "from": "build/ko.lproj",
+          "to": "ko.lproj"
+        },
+        {
+          "from": "build/en.lproj",
+          "to": "en.lproj"
+        }
+      ]
+    }
   }
 }
