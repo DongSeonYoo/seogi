@@ -14,10 +14,16 @@ type Row = { label: string; text: string; ids: number[] };
 type Stage = "transcript" | "merge";
 type Generate = (stage: Stage, prompt: string) => Promise<CitedNotes>;
 
-// The catalog has no context sizes. Reserve 4K for output and 2K for schema, framing and uncertainty.
 export const SUMMARY_OUTPUT = 4096;
-export const SUMMARY_INPUT = 16_384 - SUMMARY_OUTPUT - 2048;
-// Count up to one token per UTF-8 byte, including ids, speaker labels and newlines.
+/**
+ * Transcript bytes per call. The catalog reports no context sizes, and the summary models in use
+ * take 128K+ tokens; Korean runs about 4–5 UTF-8 bytes per token (English about 4), so 400 KB is
+ * roughly 90–130K tokens: a few hours of meeting in one call. A provider that still reports the
+ * input as too long gets that part split smaller (contextError below), so this only has to be a
+ * good first guess. ponytail: read real limits once qgrid's catalog reports them.
+ */
+export const SUMMARY_INPUT = 400_000;
+// Sizes are counted in UTF-8 bytes, including ids, speaker labels and newlines.
 const cost = (text: string) => Buffer.byteLength(text, "utf8");
 const render = (row: Row) => `${row.label}: ${row.text}`;
 const promptFor = (rows: Row[]) => rows.map(render).join("\n");
