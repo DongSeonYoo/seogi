@@ -49,7 +49,8 @@ function summaryModel(store: SettingsStore, s: ReturnType<SettingsStore["get"]>)
   return createAnthropic({ apiKey: store.key("anthropic") })(model);
 }
 
-export async function summarize(store: SettingsStore, transcript: string): Promise<Summary> {
+/** `glossary` is the meeting's: its own, or the shared one from Settings. */
+export async function summarize(store: SettingsStore, transcript: string, glossary = store.get().glossary): Promise<Summary> {
   const s = store.get();
   const { output } = await generateText({
     model: summaryModel(store, s),
@@ -65,7 +66,7 @@ export async function summarize(store: SettingsStore, transcript: string): Promi
       "'Me' is the person recording; 'Others' is everyone on the other end of the call, possibly several people.",
       "Fix words that look like transcription errors, using the context and the glossary.",
       "Do not add anything the transcript does not say.",
-      s.glossary.trim() && `Glossary: ${s.glossary}`,
+      glossary.trim() && `Glossary: ${glossary}`,
     ]
       .filter(Boolean)
       .join("\n"),

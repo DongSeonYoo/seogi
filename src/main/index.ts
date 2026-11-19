@@ -79,10 +79,11 @@ app.whenReady().then(async () => {
    */
   function startLive(id: number, override?: Settings["live"]) {
     const s = settings.get();
-    const { provider, model } = override ?? s.live;
+    const { provider, model } = override ?? { provider: s.live.provider, model: liveModelFor(id) };
+    const glossary = glossaryFor(id);
     const language = s.language === "auto" ? undefined : s.language;
     // Whisper models take no prompt (qgrid rejects it for gpt-realtime-whisper).
-    const prompt = s.glossary.trim() && !model.includes("whisper") ? glossaryPrompt(s.language, s.glossary) : undefined;
+    const prompt = glossary.trim() && !model.includes("whisper") ? glossaryPrompt(s.language, glossary) : undefined;
     // GPT-Live runs over WebRTC in the renderer, which sends its events here (liveEvent).
     const rendererDriven = provider === "qgrid" && model === GPT_LIVE_MODEL;
     const captions = new LiveCaptions(
@@ -104,6 +105,14 @@ app.whenReady().then(async () => {
           },
     );
     live.set(id, { captions, tailMs: rendererDriven ? GPT_LIVE_TAIL_MS + 1000 : 0 });
+  }
+
+  /** A session's glossary overrides the shared one; the settings test uses the shared one. */
+  function glossaryFor(id: number) {
+    return (id !== LIVE_TEST_ID && db.sessionOptions(id).glossary) || settings.get().glossary;
+  }
+  function liveModelFor(id: number) {
+    return (id !== LIVE_TEST_ID && db.sessionOptions(id).liveModel) || settings.get().live.model;
   }
 
   /** Audio is kept for playback only; the transcript comes from the live captions. */
@@ -133,7 +142,7 @@ app.whenReady().then(async () => {
       const transcript = joinSplitSentences(m.utterances)
         .map((u) => `[${clock(u.startSec)}] ${u.track === "mic" ? "Me" : "Others"}: ${u.text}`)
         .join("\n");
-      db.setSummary(id, await summarize(settings, transcript));
+      db.setSummary(id, await summarize(settings, transcript, glossaryFor(id)));
       db.setOpened(id, false);
       db.setStatus(id, "done", drops ? tr()("error.captionsDropped", { n: drops }) : null);
     } catch (e) {
@@ -184,7 +193,11 @@ app.whenReady().then(async () => {
   });
   ipcMain.on("liveAudio", (_e, id: number, track: Track, pcm: Int16Array) => live.get(id)?.captions.audio(track, pcm));
   ipcMain.on("liveEvent", (_e, id: number, track: Track, event: LiveEvent) => live.get(id)?.captions.onEvent(track, event));
-  ipcMain.handle("liveCall", async (_e, sdp: string) => {
+  ipcMain.handle("setSessionOptions", (_e, id: number, o: { liveModel?: string | null; glossary?: string }) => {
+    db.setSessionOptions(id, o);
+    notify(id);
+  });
+  ipcMain.handle("liveCall", async (_e, sdp: string, meetingId: number) => {
     try {
       const res = await fetch(`${settings.get().qgridUrl.replace(/\/$/, "")}/api/qgrid/liveCall`, {
         method: "POST",
@@ -192,7 +205,7 @@ app.whenReady().then(async () => {
         body: JSON.stringify({
           params: {
             sdp,
-            instructions: gptLiveInstructions(settings.get().language, settings.get().glossary),
+            instructions: gptLiveInstructions(settings.get().language, glossaryFor(meetingId)),
             projectName: "seogi",
             // ponytail: not logged in qgrid, like the other caption streams; turn on to see usage there.
             logger: false,
@@ -268,9 +281,17 @@ app.whenReady().then(async () => {
 
   // getDisplayMedia in the renderer gets system audio through Core Audio tap (Electron 39+,
   // macOS 14.2+). Chromium requires a video source too; the renderer stops it immediately.
+  // Without Screen & System Audio Recording permission getSources fails; answering with nothing
+  // rejects getDisplayMedia, where an unanswered request would leave recording waiting forever.
   session.defaultSession.setDisplayMediaRequestHandler(async (_req, callback) => {
-    const [screen] = await desktopCapturer.getSources({ types: ["screen"] });
-    callback({ video: screen, audio: "loopback" });
+    try {
+      const [screen] = await desktopCapturer.getSources({ types: ["screen"] });
+      if (!screen) throw new Error("no screen source");
+      callback({ video: screen, audio: "loopback" });
+    } catch (e) {
+      console.warn("[seogi] system audio unavailable:", e);
+      callback({});
+    }
   });
 
   // macOS accent colour (System Settings › Appearance) drives selection and default buttons.

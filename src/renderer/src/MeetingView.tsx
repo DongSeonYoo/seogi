@@ -1,12 +1,12 @@
 import { AlertCircle, Check, Copy, Info, Mic, Pause, Play, Square } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { LiveView, MeetingDetail, Utterance } from "../../shared/types";
+import type { LiveView, MeetingDetail, ModelOption, Settings, Utterance } from "../../shared/types";
 import { joinSplitSentences } from "../../shared/transcript";
 import { clock, duration, fullDate, groupUtterances } from "./format";
 import { useI18n, useT } from "./i18n";
 import { Elapsed, type Recording } from "./Toolbar";
 import { Splitter } from "./Splitter";
-import { IconButton } from "./ui";
+import { CommitInput, IconButton, Select } from "./ui";
 
 /** The summary side pane's state, owned by the window layout. */
 export type SummaryPane = {
@@ -43,6 +43,7 @@ export function MeetingView({
       <div className="session__main">
         {(m.status === "new" || recording) && (
           <div className="detail__head">
+            {m.status === "new" && !recording && <SessionOptions meeting={m} />}
             <div className="capsule">
               <button
                 type="button"
@@ -122,6 +123,48 @@ export function MeetingView({
           </aside>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Before a session is recorded: its live caption model and glossary. Both start from Settings;
+ * a glossary typed here replaces the shared one for this session (captions and summary).
+ */
+function SessionOptions({ meeting: m }: { meeting: MeetingDetail }) {
+  const t = useT();
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [models, setModels] = useState<ModelOption[]>([]);
+  useEffect(() => {
+    void window.api.getSettings().then(async (s) => {
+      setSettings(s);
+      const r = await window.api.listModels("live", s.live.provider);
+      setModels(r.ok ? r.models.filter((x) => x.available) : []);
+    });
+  }, []);
+  if (!settings) return null;
+  const saved = settings.live.model;
+  const model = m.liveModel ?? saved;
+  return (
+    <div className="session-options">
+      <Select
+        aria-label={t("session.model")}
+        value={model}
+        onChange={(e) => void window.api.setSessionOptions(m.id, { liveModel: e.target.value === saved ? null : e.target.value })}
+      >
+        {!models.some((x) => x.id === model) && <option value={model}>{model}</option>}
+        {models.map((x) => (
+          <option key={x.id} value={x.id}>
+            {x.id === saved ? t("session.modelDefault", { model: x.id }) : x.id}
+          </option>
+        ))}
+      </Select>
+      <CommitInput
+        aria-label={t("session.glossary")}
+        value={m.glossary}
+        placeholder={settings.glossary.trim() ? t("session.glossaryShared", { glossary: settings.glossary }) : t("session.glossaryEmpty")}
+        onCommit={(glossary) => void window.api.setSessionOptions(m.id, { glossary })}
+      />
     </div>
   );
 }

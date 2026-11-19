@@ -46,7 +46,10 @@ export async function startRecording(
     },
   });
   const display = systemAudio
-    ? await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+    ? await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }).catch(() => {
+        mic.getTracks().forEach((t) => t.stop());
+        throw new Error(NO_SYSTEM_AUDIO);
+      })
     : null;
   display?.getVideoTracks().forEach((t) => t.stop());
   if (display && !display.getAudioTracks().length) {

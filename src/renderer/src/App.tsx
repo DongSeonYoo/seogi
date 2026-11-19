@@ -50,6 +50,8 @@ export function App() {
   /** The live recording and a start in progress, read by handlers that may run before a re-render. */
   const recordingRef = useRef<Recording | null>(null);
   const startingRef = useRef<Promise<void> | null>(null);
+  /** Set when Stop is pressed before the start has a meeting to stop. */
+  const cancelRef = useRef(false);
 
   const refreshList = useCallback(async () => {
     const [rows, lib] = await Promise.all([api.listMeetings(view), api.library()]);
@@ -115,9 +117,10 @@ export function App() {
     return r;
   }
 
-  /** Starts a meeting; a second press while capture is still being set up stops it instead. */
+  /** Starts a meeting; a second press stops it, even while capture is still being set up. */
   function start() {
     if (startingRef.current || recordingRef.current) return;
+    cancelRef.current = false;
     startingRef.current = begin().finally(() => (startingRef.current = null));
   }
 
@@ -125,7 +128,8 @@ export function App() {
     setNotice(null);
     const { recording: options, live: liveModel } = await api.getSettings();
     // Records into the open session if it has not been recorded yet, else into a new one.
-    const id = current?.status === "new" ? current.id : await api.createMeeting(typeof view === "number" ? view : null);
+    const session = current?.status === "new" ? current : null;
+    const id = session?.id ?? (await api.createMeeting(typeof view === "number" ? view : null));
     if (!(await api.startMeeting(id))) return;
     // Recording from the press on: the toolbar flips to Stop while capture (and its permission
     // prompts) is still being set up.
@@ -135,18 +139,23 @@ export function App() {
     void refreshList();
     setSelected(id);
     setGuide(false);
-    const captions = liveCaptionHooks(id, liveModel);
+    if (cancelRef.current) return void stop(); // pressed again before this point
+    const captions = liveCaptionHooks(id, { provider: liveModel.provider, model: session?.liveModel ?? liveModel.model });
     try {
       const stopRecording = await startRecording(
         (track, startSec, pcm) => api.sendChunk({ meetingId: id, track, startSec, pcm }),
         { ...options, onSystemSilence: setSystemSilent, ...captions.options },
       );
-      stopRef.current = async () => {
+      const stopCapture = async () => {
         captions.stop();
         await stopRecording();
       };
+      // Stopped while capture was starting: the meeting already ended, so end the capture too.
+      if (recordingRef.current !== rec) return void stopCapture();
+      stopRef.current = stopCapture;
     } catch (e) {
       captions.stop();
+      if (recordingRef.current !== rec) return; // already stopped; nothing to report
       recordingRef.current = null;
       setRecording(null);
       await api.stopMeeting(id);
@@ -164,15 +173,19 @@ export function App() {
     setGuide(false);
   }
 
+  /** Ends the recording at once; a capture still starting is ended when it comes up (see begin). */
   async function stop() {
-    await startingRef.current; // a start in progress finishes first, so its capture is not left running
     const rec = recordingRef.current;
-    if (!rec) return;
+    if (!rec) {
+      if (startingRef.current) cancelRef.current = true;
+      return;
+    }
     recordingRef.current = null;
     setRecording(null);
     setSystemSilent(false);
-    await stopRef.current?.();
+    const stopCapture = stopRef.current;
     stopRef.current = null;
+    await stopCapture?.();
     await api.stopMeeting(rec.id);
   }
 

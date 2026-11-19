@@ -52,6 +52,9 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
   // A title the user typed; a later summary keeps it instead of writing its own.
   addColumn("title_edited", "title_edited INTEGER NOT NULL DEFAULT 0");
   addColumn("ended_at", "ended_at TEXT");
+  // Per-session choices; null falls back to the settings (glossary: an override, not an addition).
+  addColumn("live_model", "live_model TEXT");
+  addColumn("glossary", "glossary TEXT");
   // A crash mid-recording leaves rows that no session will ever finish.
   db.prepare("UPDATE meetings SET status = 'error', error = ? WHERE status IN ('recording', 'processing')").run(
     appQuitMessage,
@@ -90,6 +93,21 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
         .prepare("INSERT INTO meetings (title, started_at, status, folder_id) VALUES (?, ?, 'new', ?)")
         .run(title, new Date().toISOString(), folderId);
       return Number(r.lastInsertRowid);
+    },
+
+    /** The session's own live model and glossary; null where it uses the settings. */
+    sessionOptions(id: number): { liveModel: string | null; glossary: string | null } {
+      const r = db.prepare("SELECT live_model, glossary FROM meetings WHERE id = ?").get(id);
+      return {
+        liveModel: r?.live_model ? String(r.live_model) : null,
+        glossary: r?.glossary ? String(r.glossary) : null,
+      };
+    },
+
+    setSessionOptions(id: number, o: { liveModel?: string | null; glossary?: string }) {
+      if (o.liveModel !== undefined) db.prepare("UPDATE meetings SET live_model = ? WHERE id = ?").run(o.liveModel, id);
+      if (o.glossary !== undefined)
+        db.prepare("UPDATE meetings SET glossary = ? WHERE id = ?").run(o.glossary.trim() || null, id);
     },
 
     /** Recording starts the clock, so the length leaves out the time before it. */
@@ -186,6 +204,8 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
         ...toRow(r),
         summary: r.summary ? (JSON.parse(String(r.summary)) as Summary) : null,
         error: r.error ? String(r.error) : null,
+        liveModel: r.live_model ? String(r.live_model) : null,
+        glossary: r.glossary ? String(r.glossary) : "",
         utterances,
       };
     },

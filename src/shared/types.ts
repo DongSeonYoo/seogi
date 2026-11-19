@@ -75,6 +75,10 @@ export type Utterance = { id: number; track: Track; startSec: number; text: stri
 export type MeetingDetail = MeetingRow & {
   summary: Summary | null;
   error: string | null;
+  /** This session's live model; null uses the one in Settings. */
+  liveModel: string | null;
+  /** This session's glossary; empty uses the shared one in Settings. */
+  glossary: string;
   utterances: Utterance[];
 };
 
@@ -171,13 +175,16 @@ export type Api = {
   createMeeting(folderId?: number | null): Promise<number>;
   /** Starts recording a `new` session; false when it is not one. */
   startMeeting(id: number): Promise<boolean>;
+  /** A session's own live model (null: Settings) or glossary (empty: the shared one). */
+  setSessionOptions(id: number, options: { liveModel?: string | null; glossary?: string }): Promise<void>;
   sendChunk(chunk: Chunk): void;
   /** About 100 ms of 16 kHz PCM16 for the live captions, every frame from the track's start. */
   sendLiveAudio(meetingId: number, track: Track, pcm: Int16Array): void;
   /** Caption events the renderer produced itself (GPT-Live over WebRTC). */
   sendLiveEvent(meetingId: number, track: Track, event: LiveEvent): void;
   /** Exchanges a WebRTC offer for a GPT-Live session through qgrid; resolves to the answer. */
-  liveCall(sdp: string): Promise<{ ok: true; sdp: string } | { ok: false; error: string }>;
+  /** Session options for `meetingId` (glossary) shape the GPT-Live instructions. */
+  liveCall(sdp: string, meetingId: number): Promise<{ ok: true; sdp: string } | { ok: false; error: string }>;
   stopMeeting(id: number): Promise<void>;
   /** Live captions for the settings test under LIVE_TEST_ID; nothing is saved. */
   /** `model` overrides the saved live model. */

@@ -24,14 +24,15 @@ const MAX_BACKOFF_SEC = 10;
 export function startGptLive(
   streams: [Track, MediaStream][],
   startedAt: number,
+  meetingId: number,
   onEvent: (track: Track, event: LiveEvent) => void,
 ): () => void {
-  const stops = streams.map(([track, stream]) => keepAlive(stream, startedAt, (e) => onEvent(track, e)));
+  const stops = streams.map(([track, stream]) => keepAlive(stream, startedAt, meetingId, (e) => onEvent(track, e)));
   return () => stops.forEach((stop) => stop());
 }
 
 /** Keeps one track's session open until stopped, reconnecting after a drop. */
-function keepAlive(stream: MediaStream, startedAt: number, emit: (e: LiveEvent) => void) {
+function keepAlive(stream: MediaStream, startedAt: number, meetingId: number, emit: (e: LiveEvent) => void) {
   let stopped = false;
   let failures = 0;
   let generation = 0;
@@ -40,7 +41,7 @@ function keepAlive(stream: MediaStream, startedAt: number, emit: (e: LiveEvent) 
   async function open() {
     const gen = ++generation;
     try {
-      stopSession = await session(stream, startedAt, gen, emit, {
+      stopSession = await session(stream, startedAt, gen, meetingId, emit, {
         working: () => (failures = 0),
         lost: () => {
           if (stopped || gen !== generation) return;
@@ -121,6 +122,7 @@ async function session(
   stream: MediaStream,
   startedAt: number,
   gen: number,
+  meetingId: number,
   emit: (e: LiveEvent) => void,
   on: { working: () => void; lost: () => void },
 ) {
@@ -182,7 +184,7 @@ async function session(
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
-  const answer = await window.api.liveCall(offer.sdp ?? "");
+  const answer = await window.api.liveCall(offer.sdp ?? "", meetingId);
   if (!answer.ok) {
     closing = true;
     pc.close();
@@ -217,7 +219,7 @@ export function liveCaptionHooks(meetingId: number, live: { provider: string; mo
         onStreams: (streams) => {
           if (stopped) return;
           // The recorder's clock starts here, so caption times line up with the saved audio.
-          stopGptLive = startGptLive(streams, Date.now(), (track, e) => window.api.sendLiveEvent(meetingId, track, e));
+          stopGptLive = startGptLive(streams, Date.now(), meetingId, (track, e) => window.api.sendLiveEvent(meetingId, track, e));
         },
       }
     : { onFrame: (track, pcm) => window.api.sendLiveAudio(meetingId, track, pcm) };
