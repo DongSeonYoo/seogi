@@ -6,27 +6,27 @@
   "type": "module",
   "main": "out/main/index.js",
   "devDependencies": {
-    "@types/node": "^26.6.6",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.3.0",
-    "electron": "45.3.3",
-    "electron-builder": "^26.18.0",
-    "electron-vite": "6.0.0",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.8"
-  },
-  "dependencies": {
     "@ai-sdk/anthropic": "^4.0.105",
     "@ai-sdk/openai": "^4.0.118",
     "@ai-sdk/provider": "^4.0.38",
     "@cartanova/qgrid-ai-sdk": "2.22.2",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
     "ai": "7.0.173",
+    "electron": "45.3.3",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "6.0.0",
     "lucide-react": "^1.73.0",
-    "sherpa-onnx-node": "^2.0.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
     "zod": "^4.6.7"
+  },
+  "dependencies": {
+    "sherpa-onnx-node": "^2.0.1"
   },
   "scripts": {
     "dev": "electron-vite dev",
@@ -39,6 +39,7 @@
   "build": {
     "appId": "io.github.dongseonyoo.seogi",
     "productName": "Seogi",
+    "electronLanguages": ["en", "ko"],
     "files": [
       "out/**"
     ],

@@ -29,8 +29,9 @@ const cspInBuild: Plugin = {
 };
 
 export default defineConfig({
-  main: {},
+  // electron-vite externalizes production dependencies. Only sherpa and its native addon ship loose.
+  main: { build: { license: true } },
   // Sandboxed preloads cannot be ES modules.
   preload: { build: { rollupOptions: { output: { format: "cjs", entryFileNames: "[name].cjs" } } } },
-  renderer: { plugins: [react(), cspInBuild] },
+  renderer: { build: { license: true }, plugins: [react(), cspInBuild] },
 });
