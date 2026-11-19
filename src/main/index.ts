@@ -1,6 +1,7 @@
 import { app, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, protocol, session, shell } from "electron";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { LIVE_TEST_ID } from "../shared/types";
 import type { AppInfo, AudioRef, Chunk, ConnectionRole, KeyName, ModelRole, StorageInfo, StoredSettings, Track } from "../shared/types";
 import { joinSplitSentences } from "../shared/transcript";
 import { splitUtterances, summarize, testConnection, transcribeWav } from "./ai";
@@ -131,6 +132,12 @@ app.whenReady().then(async () => {
     startLive(id);
     return id;
   });
+  ipcMain.handle("startLiveTest", () => {
+    live.get(LIVE_TEST_ID)?.stop();
+    startLive(LIVE_TEST_ID);
+    sendLive(LIVE_TEST_ID);
+  });
+  ipcMain.handle("stopLiveTest", () => live.get(LIVE_TEST_ID)?.stop());
   ipcMain.on("liveAudio", (_e, id: number, track: Track, pcm: Int16Array) => live.get(id)?.audio(track, pcm));
   ipcMain.on("sendChunk", (_e, chunk: Chunk) => {
     const set = pending.get(chunk.meetingId) ?? new Set();

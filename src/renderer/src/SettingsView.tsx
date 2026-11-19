@@ -1,7 +1,9 @@
-import { ArrowLeft, Cpu, FolderOpen, HardDrive, Info, Languages, Mic, Plug, SlidersHorizontal } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { ArrowLeft, Cpu, FolderOpen, HardDrive, Info, Languages, Mic, Plug, SlidersHorizontal, Square } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   DEFAULT_MODELS,
+  LIVE_TEST_ID,
+  type LiveView,
   type AppInfo,
   type ConnectionResult,
   type ConnectionRole,
@@ -18,6 +20,7 @@ import {
 } from "../../shared/types";
 import type { Recording } from "./Sidebar";
 import { Elapsed } from "./Sidebar";
+import { startRecording } from "./recorder";
 import { Button, CommitInput, Kbd, Segmented, Select, Switch } from "./ui";
 
 const SECTIONS = [
@@ -200,6 +203,7 @@ function ModelGroup({
   onChange,
   test,
   reloadKey,
+  children,
 }: {
   role: ModelRole;
   title: string;
@@ -210,6 +214,7 @@ function ModelGroup({
   test?: ConnectionRole;
   /** Changes when something the list depends on changes (qgrid URL, stored keys). */
   reloadKey: string;
+  children?: ReactNode;
 }) {
   const [list, setList] = useState<ModelList | null>(null);
   useEffect(() => {
@@ -289,6 +294,7 @@ function ModelGroup({
           <ConnectionTest role={test} />
         </Row>
       )}
+      {children}
     </Group>
   );
 }
@@ -306,7 +312,9 @@ function Models({ s, patch, setS }: SectionProps & { setS: (s: Settings) => void
         value={s.live}
         onChange={(v) => patch({ live: { provider: v.provider as LiveProvider, model: v.model } })}
         reloadKey={reloadKey}
-      />
+      >
+        <LiveTest micDeviceId={s.recording.micDeviceId} />
+      </ModelGroup>
       <ModelGroup
         role="transcription"
         title="받아쓰기"
@@ -407,6 +415,73 @@ function KeyRow({
           </Button>
         </div>
       )}
+    </Row>
+  );
+}
+
+/** Mic-only live captions with the saved live model, so a model can be tried before a meeting. */
+function LiveTest({ micDeviceId }: { micDeviceId: string }) {
+  const [running, setRunning] = useState(false);
+  const [view, setView] = useState<LiveView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const stopRef = useRef<(() => Promise<void>) | null>(null);
+  const textRef = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const el = textRef.current;
+    if (el) el.scrollTop = el.scrollHeight; // follow the newest words
+  }, [view]);
+  useEffect(() => window.api.onLive((id, v) => id === LIVE_TEST_ID && setView(v)), []);
+  useEffect(() => () => void stop(), []);
+
+  async function start() {
+    setError(null);
+    setView(null);
+    try {
+      await window.api.startLiveTest();
+      stopRef.current = await startRecording(() => {}, {
+        micDeviceId,
+        systemAudio: false,
+        onFrame: (track, pcm) => window.api.sendLiveAudio(LIVE_TEST_ID, track, pcm),
+      });
+      setRunning(true);
+    } catch (e) {
+      await window.api.stopLiveTest();
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function stop() {
+    const s = stopRef.current;
+    stopRef.current = null;
+    setRunning(false);
+    await s?.();
+    await window.api.stopLiveTest();
+  }
+
+  const text = view?.lines.map((l) => l.text).join(" ");
+  const problem = error ?? view?.error;
+  return (
+    <Row
+      label="시험해 보기"
+      description="마이크에 대고 말하면 저장된 모델로 자막이 나옵니다. 회의로 저장하지 않습니다."
+      stack={running || !!text || !!problem}
+    >
+      <div className="live-test">
+        <Button icon={running ? <Square aria-hidden /> : <Mic aria-hidden />} onClick={running ? stop : start}>
+          {running ? "멈추기" : "마이크로 시험"}
+        </Button>
+        {(running || text) && (
+          <p className="live-test__text" role="status" ref={textRef}>
+            {text || "듣는 중… 말해 보세요."}
+          </p>
+        )}
+        {problem && (
+          <p className="connection__result" data-tone="error" role="alert">
+            {problem}
+          </p>
+        )}
+      </div>
     </Row>
   );
 }

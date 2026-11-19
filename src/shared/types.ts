@@ -32,6 +32,8 @@ export type MeetingDetail = MeetingRow & {
 
 /** A live caption draft, shown while recording until the chunk transcript replaces it. */
 export type LiveLine = { key: string; track: Track; startSec: number; text: string };
+/** Live caption traffic for the settings test uses this id; meetings start at 1. */
+export const LIVE_TEST_ID = 0;
 export type LiveView = { lines: LiveLine[]; error: string | null };
 
 export type Chunk = { meetingId: number; track: Track; startSec: number; pcm: Int16Array };
@@ -92,6 +94,9 @@ export type Api = {
   /** About 100 ms of 16 kHz PCM16 for the live captions, every frame from the track's start. */
   sendLiveAudio(meetingId: number, track: Track, pcm: Int16Array): void;
   stopMeeting(id: number): Promise<void>;
+  /** Live captions for the settings test under LIVE_TEST_ID; nothing is saved. */
+  startLiveTest(): Promise<void>;
+  stopLiveTest(): Promise<void>;
   resummarize(id: number): Promise<void>;
   markOpened(id: number): Promise<void>;
   audioFor(meetingId: number, track: Track, startSec: number): Promise<AudioRef | null>;
