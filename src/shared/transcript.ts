@@ -16,6 +16,7 @@ export function joinSplitSentences(utterances: Utterance[]): Utterance[] {
     if (
       prev &&
       prev.track === u.track &&
+      prev.speaker === u.speaker &&
       !ENDS_SENTENCE.test(prev.text.trim()) &&
       u.startSec - prev.startSec < MAX_JOIN_GAP_SEC
     ) {

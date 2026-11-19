@@ -46,7 +46,7 @@ export function groupUtterances<T extends Utterance>(utterances: T[], gapSec = 1
   for (const u of utterances) {
     const last = groups.at(-1);
     const prev = last?.at(-1);
-    if (last && prev && prev.track === u.track && u.startSec - prev.startSec < gapSec) last.push(u);
+    if (last && prev && prev.track === u.track && prev.speaker === u.speaker && u.startSec - prev.startSec < gapSec) last.push(u);
     else groups.push([u]);
   }
   return groups;

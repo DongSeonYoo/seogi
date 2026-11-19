@@ -417,8 +417,13 @@
   flex: none;
 }
 
-.notice > span {
+.notice > span:not(.spinner) {
   flex: 1;
+}
+
+/* A spinner in a notice keeps its size and sits on the first line, like the icons. */
+.notice > .spinner {
+  margin-top: 3px;
 }
 
 .notice .icon-btn {

@@ -11,17 +11,19 @@ const FILE_MODEL = { qgrid: "openai/gpt-transcribe", openai: "gpt-4o-transcribe"
 
 export type Transcript = { text: string; words: { startSecond: number }[] };
 
-/** One chunk of an imported file, with the meeting's glossary. */
-export async function transcribeFile(store: SettingsStore, wav: Uint8Array, glossary: string): Promise<Transcript> {
+/** One piece of an imported file, with the meeting's glossary; `lang` "auto" lets the model detect it. */
+export async function transcribeFile(store: SettingsStore, wav: Uint8Array, glossary: string, lang = store.get().language): Promise<Transcript> {
   const s = store.get();
   const id = FILE_MODEL[s.live.provider];
-  const prompt = glossary.trim() ? glossaryPrompt(s.language, glossary) : undefined;
+  // Detecting the language, a hint in another language (Korean names under "용어:") pulls short
+  // lines toward it, so the glossary goes only with a chosen language, prefixed in that language.
+  const prompt = glossary.trim() && lang !== "auto" ? glossaryPrompt(lang, glossary) : undefined;
   const model =
     s.live.provider === "qgrid"
       ? qgrid.transcription(id as Parameters<typeof qgrid.transcription>[0], { serverUrl: s.qgridUrl })
       : createOpenAI({ apiKey: store.key("openai") }).transcription(id);
   // "auto" leaves language detection to the model.
-  const language = s.language === "auto" ? {} : { language: s.language };
+  const language = lang === "auto" ? {} : { language: lang };
   const r = await transcribe({ model, audio: wav, providerOptions: { openai: { ...language, ...(prompt && { prompt }) } }, maxRetries: 2 });
   const text = prompt && isPromptEcho(r.text, prompt) ? "" : r.text.trim();
   return { text, words: r.segments };
@@ -112,7 +114,7 @@ export async function summarize(
       LANGUAGE_NAMES[s.language]
         ? `Write every field in ${LANGUAGE_NAMES[s.language]}.`
         : "Write every field in the language most of the meeting was held in.",
-      "'Me' is the person recording; 'Others' is everyone on the other end of the call, possibly several people.",
+      "'Me' is the person recording; 'Others' is everyone on the other end of the call, possibly several people. 'Speaker 1', 'Speaker 2', … are voices told apart in an imported recording.",
       "Fix words that look like transcription errors, using the context and the glossary.",
       "Do not add anything the transcript does not say.",
       "End each overview sentence, decision, action item and point with the [mm:ss] time of the transcript line it comes from, as written there, e.g. 'Ship on Friday [12:05]'. Use only times that appear in the transcript.",

@@ -1,11 +1,9 @@
 import { useEffect, useState } from "react";
-import { Chunker } from "./recorder";
+import type { ImportProgress } from "../../shared/types";
 
 /** The audio files a session takes; Chromium decodes all of them, so nothing extra ships. */
 export const IMPORT_EXTENSIONS = ["m4a", "mp4", "mp3", "wav"];
 const RATE = 16000;
-/** Chunks transcribed at once. */
-const PARALLEL = 3;
 
 export type AudioFile = {
   name: string;
@@ -43,47 +41,27 @@ export async function readAudioFile(file: File): Promise<AudioFile> {
   };
 }
 
-export type ImportProgress = { done: number; total: number };
+/** Each import's progress, kept here so a view that opens mid-import still shows it. */
 const progress = new Map<number, ImportProgress>();
 const listeners = new Set<() => void>();
-const changed = () => listeners.forEach((l) => l());
+window.api.onImportProgress((id, p) => {
+  if (p) progress.set(id, p);
+  else progress.delete(id);
+  listeners.forEach((l) => l());
+});
 
-/**
- * Transcribes a file into a `new` session: cut at pauses like a recording (silent stretches are
- * skipped), saved for playback and transcribed chunk by chunk. Runs on after its view closes.
- */
-export async function importAudio(meetingId: number, file: AudioFile) {
-  if (!(await window.api.startImport(meetingId))) return;
-  const chunks: { startSec: number; pcm: Int16Array }[] = [];
-  const chunker = new Chunker((startSec, pcm) => chunks.push({ startSec, pcm }));
-  for (let i = 0; i < file.samples.length; i += RATE / 10) chunker.push(file.samples.subarray(i, i + RATE / 10));
-  chunker.flush();
-
-  const p = { done: 0, total: chunks.length };
-  progress.set(meetingId, p);
-  changed();
-  let error: string | null = null;
-  let next = 0;
-  const worker = async () => {
-    while (next < chunks.length) {
-      const c = chunks[next++];
-      const r = await window.api.importChunk(meetingId, c.startSec, c.pcm);
-      if (!r.ok) error = r.error;
-      p.done++;
-      changed();
-    }
-  };
-  await Promise.all(Array.from({ length: PARALLEL }, worker));
-  progress.delete(meetingId);
-  changed();
-  await window.api.finishImport(meetingId, file.durationSec, error);
+/** Hands the decoded file to the app, which tells speakers apart and transcribes each turn. */
+export async function importAudio(meetingId: number, file: AudioFile, language: string) {
+  const pcm = new Int16Array(file.samples.length);
+  for (let i = 0; i < pcm.length; i++) pcm[i] = Math.max(-1, Math.min(1, file.samples[i])) * 0x7fff;
+  await window.api.importFile(meetingId, pcm, language);
 }
 
 /** The progress of a session's import while it runs. */
 export function useImportProgress(meetingId: number) {
   const [p, setP] = useState(() => progress.get(meetingId) ?? null);
   useEffect(() => {
-    const update = () => setP(progress.has(meetingId) ? { ...progress.get(meetingId)! } : null);
+    const update = () => setP(progress.get(meetingId) ?? null);
     update();
     listeners.add(update);
     return () => void listeners.delete(update);

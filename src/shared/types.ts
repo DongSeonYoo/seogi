@@ -72,7 +72,8 @@ export type MenuSpec =
 /** Where an utterance's audio lives: a chunk file URL and the offset into it. */
 export type AudioRef = { url: string; offsetSec: number };
 
-export type Utterance = { id: number; track: Track; startSec: number; text: string };
+/** `speaker`: 1, 2, … when diarization told the voices in a track apart (imported files). */
+export type Utterance = { id: number; track: Track; startSec: number; text: string; speaker: number | null };
 
 export type MeetingDetail = MeetingRow & {
   /** Markdown, written by Summarize and edited by the user. */
@@ -151,6 +152,9 @@ export type Settings = {
 
 export type StoredSettings = Omit<Settings, "hasKey">;
 
+/** Where an import is: fetching the speaker models once, finding speakers, then transcribing turns. */
+export type ImportProgress = { phase: "models" | "speakers" } | { phase: "transcribe"; done: number; total: number };
+
 export type ConnectionResult = { ok: true; ms: number } | { ok: false; error: string };
 
 export type StorageInfo = { path: string; bytes: number; meetings: number };
@@ -180,11 +184,14 @@ export type Api = {
   startMeeting(id: number): Promise<boolean>;
   /** Capture never started: the session goes back to `new`, ready for another try. */
   abortMeeting(id: number): Promise<void>;
-  /** Imports an audio file into a `new` session: start, then each 16 kHz chunk, then finish. */
-  startImport(id: number): Promise<boolean>;
-  importChunk(id: number, startSec: number, pcm: Int16Array): Promise<{ ok: true } | { ok: false; error: string }>;
-  /** `error`: the last failed chunk, if any; the session errors only when nothing was transcribed. */
-  finishImport(id: number, durationSec: number, error: string | null): Promise<void>;
+  /**
+   * Imports an audio file (16 kHz mono) into a `new` session: speakers are told apart, then each
+   * speaker turn is transcribed. Resolves once it has started; progress comes via onImportProgress.
+   */
+  /** `language`: the file's spoken language, or "auto" to let the transcriber detect it. */
+  importFile(id: number, pcm: Int16Array, language: string): Promise<boolean>;
+  /** null: the import of `id` ended. */
+  onImportProgress(listener: (id: number, progress: ImportProgress | null) => void): () => void;
   /** A session's own live model (null: Settings) or glossary (empty: the shared one). */
   setSessionOptions(id: number, options: { liveModel?: string | null; glossary?: string }): Promise<void>;
   sendChunk(chunk: Chunk): void;

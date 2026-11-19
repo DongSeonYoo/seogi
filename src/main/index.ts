@@ -12,6 +12,7 @@ import type {
   LibraryView,
   MenuSpec,
   ModelRole,
+  ImportProgress,
   StorageInfo,
   Summary,
   Settings,
@@ -24,11 +25,13 @@ import { joinSplitSentences } from "../shared/transcript";
 import { glossaryPrompt, isPromptEcho, splitUtterances, summarize, testConnection, transcribeFile } from "./ai";
 import { openDb } from "./db";
 import { History, perform } from "./library";
+import { diarize, ensureModels } from "./diarize";
+import { speakerTurns } from "./speakers";
 import { LiveCaptions, openLiveStream } from "./live";
 import { appMenu } from "./menu";
 import { listModels } from "./models";
 import { openSettings } from "./settings";
-import { toWav } from "./wav";
+import { SAMPLE_RATE, toWav } from "./wav";
 
 // Pinned to the original name so meetings and keys survive any change to the display name.
 // Unpackaged runs (pnpm dev) get their own folder so they never touch the installed app's data.
@@ -44,6 +47,11 @@ const broadcast = (channel: string, ...args: unknown[]) =>
 
 // Chunk WAVs are served to the renderer as seogi-audio://audio/<meetingId>/<file>.
 const AUDIO_SCHEME = "seogi-audio";
+/** Imported files: saved for playback in pieces this long, transcribed this many turns at once. */
+const IMPORT_CHUNK_SEC = 30;
+const IMPORT_PARALLEL = 5;
+/** Audio added either side of a speaker turn before it is transcribed. */
+const TURN_PAD_SEC = 0.2;
 /** How far before a line's time its playback starts. */
 const PLAYBACK_LEAD_SEC = 1;
 const CHUNK_FILE = /^(mic|system)-(\d+(?:\.\d+)?)\.wav$/;
@@ -151,7 +159,7 @@ app.whenReady().then(async () => {
       const m = db.getMeeting(id);
       if (!m?.utterances.length) throw new Error(tr()("error.nothingTranscribed"));
       const transcript = joinSplitSentences(m.utterances)
-        .map((u) => `[${clock(u.startSec)}] ${u.track === "mic" ? "Me" : "Others"}: ${u.text}`)
+        .map((u) => `[${clock(u.startSec)}] ${u.speaker ? `Speaker ${u.speaker}` : u.track === "mic" ? "Me" : "Others"}: ${u.text}`)
         .join("\n");
       const s = await summarize(settings, transcript, glossaryFor(id), model);
       db.setSummary(id, s.title, summaryMarkdown(s, tr()));
@@ -199,29 +207,65 @@ app.whenReady().then(async () => {
     notify(id);
     return true;
   });
-  // An audio file dropped on an unrecorded session: the renderer decodes it and sends it in
-  // pause-cut chunks, each saved for playback and transcribed here. It is one mixed track, kept as
-  // "system" (the other side), since nobody in it is the person at this Mac.
-  ipcMain.handle("startImport", (_e, id: number) => {
-    const ok = db.startImport(id);
-    notify(id);
-    return ok;
-  });
-  ipcMain.handle("importChunk", async (_e, id: number, startSec: number, pcm: Int16Array) => {
-    saveChunk({ meetingId: id, track: "system", startSec, pcm });
+  // An audio file dropped on an unrecorded session, decoded by the renderer to 16 kHz mono. It is
+  // one mixed track, kept as "system" (the other side), since nobody in it is the person at this
+  // Mac. Speakers are told apart first and each speaker turn is transcribed on its own, so every
+  // line gets its voice and the time that voice started; without diarization (no models, no
+  // network) it falls back to plain 30 s windows with no speakers.
+  const importProgress = (id: number, p: ImportProgress | null) => broadcast("import-progress", id, p);
+  async function importFile(id: number, pcm: Int16Array, language: string) {
+    const durationSec = pcm.length / SAMPLE_RATE;
+    for (let at = 0; at < pcm.length; at += IMPORT_CHUNK_SEC * SAMPLE_RATE)
+      saveChunk({ meetingId: id, track: "system", startSec: at / SAMPLE_RATE, pcm: pcm.subarray(at, at + IMPORT_CHUNK_SEC * SAMPLE_RATE) });
+
+    let turns: { start: number; end: number; speaker?: number }[];
     try {
-      const t = await transcribeFile(settings, toWav(pcm), glossaryFor(id));
-      if (t.text) db.addUtterances(id, "system", splitUtterances(t, startSec, pcm.length / 16000));
-      return { ok: true };
+      importProgress(id, { phase: "models" });
+      const models = await ensureModels(path.join(dataDir, "models"));
+      importProgress(id, { phase: "speakers" });
+      const samples = Float32Array.from(pcm, (v) => v / 0x8000);
+      turns = speakerTurns(await diarize(samples, models));
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
-    } finally {
-      notify(id);
+      console.warn("[seogi] diarization unavailable, importing without speakers:", e);
+      turns = [];
+      for (let t = 0; t < durationSec; t += IMPORT_CHUNK_SEC) turns.push({ start: t, end: Math.min(durationSec, t + IMPORT_CHUNK_SEC) });
     }
-  });
-  ipcMain.handle("finishImport", (_e, id: number, durationSec: number, error: string | null) => {
+
+    let done = 0;
+    let error: string | null = null;
+    const glossary = glossaryFor(id);
+    const worker = async () => {
+      for (let turn = turns.shift(); turn; turn = turns.shift()) {
+        // A little audio either side, so the first and last words are not clipped.
+        const from = Math.max(0, Math.floor((turn.start - TURN_PAD_SEC) * SAMPLE_RATE));
+        const to = Math.min(pcm.length, Math.ceil((turn.end + TURN_PAD_SEC) * SAMPLE_RATE));
+        try {
+          const t = await transcribeFile(settings, toWav(pcm.subarray(from, to)), glossary, language);
+          if (t.text)
+            db.addUtterances(
+              id,
+              "system",
+              splitUtterances(t, from / SAMPLE_RATE, (to - from) / SAMPLE_RATE).map((u) => ({ ...u, speaker: turn.speaker })),
+            );
+        } catch (e) {
+          error = e instanceof Error ? e.message : String(e);
+        }
+        importProgress(id, { phase: "transcribe", done: ++done, total });
+        notify(id);
+      }
+    };
+    const total = turns.length;
+    importProgress(id, { phase: "transcribe", done, total });
+    await Promise.all(Array.from({ length: IMPORT_PARALLEL }, worker));
     db.finishImport(id, durationSec, error);
+    importProgress(id, null);
     notify(id);
+  }
+  ipcMain.handle("importFile", (_e, id: number, pcm: Int16Array, language: string) => {
+    if (!db.startImport(id)) return false;
+    notify(id);
+    void importFile(id, pcm, language);
+    return true;
   });
   ipcMain.handle("abortMeeting", async (_e, id: number) => {
     await stopLive(id);

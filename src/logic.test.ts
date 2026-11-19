@@ -36,7 +36,7 @@ test("isPromptEcho drops a transcript that only repeats the glossary prompt", ()
 
 test("joinSplitSentences rejoins a sentence cut at a chunk boundary, and nothing else", async () => {
   const { joinSplitSentences } = await import("./shared/transcript.ts");
-  const u = (id: number, track: "mic" | "system", startSec: number, text: string) => ({ id, track, startSec, text });
+  const u = (id: number, track: "mic" | "system", startSec: number, text: string, speaker: number | null = null) => ({ id, track, startSec, text, speaker });
 
   const joined = joinSplitSentences([
     u(1, "system", 32, "쿠폰 문제는 동선님이 이번 주 수요일까지"),
@@ -49,6 +49,7 @@ test("joinSplitSentences rejoins a sentence cut at a chunk boundary, and nothing
 
   // A different speaker in between, finished sentences, and a long gap all stay separate.
   assert.equal(joinSplitSentences([u(1, "system", 32, "말이 끊겼는데"), u(2, "mic", 33, "네.")]).length, 2);
+  assert.equal(joinSplitSentences([u(1, "system", 32, "말이 끊겼는데", 1), u(2, "system", 33, "네.", 2)]).length, 2);
   assert.equal(joinSplitSentences([u(1, "system", 32, "끝난 문장입니다."), u(2, "system", 35, "새 문장.")]).length, 2);
   assert.equal(joinSplitSentences([u(1, "system", 32, "끝맺음 없음"), u(2, "system", 90, "한참 뒤.")]).length, 2);
 });
@@ -225,7 +226,7 @@ test("summaries become editable Markdown, export as Markdown or plain text", asy
   assert.equal(md, "## Overview\n\nWe shipped.\n\n## Decisions\n\n- Ship Friday\n\n## Action Items\n\n- [ ] Tag release — Lee, Fri\n\n## Topics\n\n### Infra\n- Load test");
   assert.equal(summaryPreview(md), "We shipped.");
   assert.equal(summaryPreview("## Overview\n\nWe shipped [01:05]. Then left [1:02:03]."), "We shipped. Then left.");
-  const m = { title: "Sync", startedAt: "", summary: md, utterances: [{ id: 1, track: "mic" as const, startSec: 65, text: "Hello." }] };
+  const m = { title: "Sync", startedAt: "", summary: md, utterances: [{ id: 1, track: "mic" as const, startSec: 65, text: "Hello.", speaker: null }] };
   const doc = meetingDocument(m, "md", t, "Nov 19");
   assert.ok(doc.startsWith("# Sync\n\nNov 19\n\n## Summary\n\n### Overview"));
   assert.ok(doc.includes("- `01:05` **Me**: Hello."));
@@ -233,4 +234,20 @@ test("summaries become editable Markdown, export as Markdown or plain text", asy
   assert.ok(txt.startsWith("Sync\n\nNov 19\n\nSummary\n\nOverview"));
   assert.ok(txt.includes("☐ Tag release — Lee, Fri"));
   assert.ok(txt.includes("• 01:05 Me: Hello."));
+});
+
+test("speaker turns join a voice's close segments, cap their length, and number voices by first appearance", async () => {
+  const { speakerTurns } = await import("./main/speakers.ts");
+  const turns = speakerTurns([
+    { start: 5, end: 7, speaker: 4 },
+    { start: 0, end: 2, speaker: 7 },
+    { start: 2.5, end: 4, speaker: 7 }, // 0.5 s pause: same turn
+    { start: 7.2, end: 20, speaker: 4 },
+    { start: 20.5, end: 40, speaker: 4 }, // would make a 35 s turn: a new one
+  ]);
+  assert.deepEqual(turns, [
+    { start: 0, end: 4, speaker: 1 },
+    { start: 5, end: 20, speaker: 2 },
+    { start: 20.5, end: 40, speaker: 2 },
+  ]);
 });

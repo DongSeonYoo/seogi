@@ -432,3 +432,19 @@ select.control {
     background: rgb(255 255 255 / 0.2);
   }
 }
+
+/* Told-apart voices in an imported recording: five hues, readable in both themes. */
+[data-speaker="s0"] { --speaker: #2f7de1; }
+[data-speaker="s1"] { --speaker: #c2700a; }
+[data-speaker="s2"] { --speaker: #12915e; }
+[data-speaker="s3"] { --speaker: #d1437f; }
+[data-speaker="s4"] { --speaker: #7b5bd6; }
+
+.avatar[data-speaker^="s"] {
+  background: color-mix(in oklch, var(--speaker) 20%, transparent);
+  color: var(--speaker);
+}
+
+.msg__name[data-speaker^="s"] {
+  color: var(--speaker);
+}

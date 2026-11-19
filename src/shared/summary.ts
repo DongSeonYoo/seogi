@@ -1,6 +1,11 @@
 import type { Translate } from "./i18n";
 import type { Summary, Track, Utterance } from "./types";
 
+/** "Speaker 2" when diarization told voices apart, else the track: "Me" or "Others". */
+export function speakerName(u: { track: Track; speaker: number | null }, t: Translate) {
+  return u.speaker ? t("speaker.n", { n: u.speaker }) : t(u.track === "mic" ? "speaker.mic" : "speaker.system");
+}
+
 /**
  * Summaries are kept as Markdown the user edits freely; the model's structured answer is turned
  * into this text once, when it arrives.
@@ -65,14 +70,13 @@ export function meetingDocument(
   t: Translate,
   date: string,
 ): string {
-  const speaker = (track: Track) => t(track === "mic" ? "speaker.mic" : "speaker.system");
   const md = [
     `# ${m.title}`,
     date,
     // The summary's own headings sit one level below its section.
     ...(m.summary?.trim() ? [`## ${t("detail.summary")}`, m.summary.trim().replace(/^(#{1,5})(?=\s)/gm, "#$1")] : []),
     `## ${t("export.transcript")}`,
-    m.utterances.map((u) => `- \`${clock(u.startSec)}\` **${speaker(u.track)}**: ${u.text}`).join("\n"),
+    m.utterances.map((u) => `- \`${clock(u.startSec)}\` **${speakerName(u, t)}**: ${u.text}`).join("\n"),
   ].join("\n\n");
   return `${format === "md" ? md : markdownToText(md)}\n`;
 }

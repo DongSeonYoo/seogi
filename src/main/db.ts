@@ -55,6 +55,9 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
   // Per-session choices; null falls back to the settings (glossary: an override, not an addition).
   addColumn("live_model", "live_model TEXT");
   addColumn("glossary", "glossary TEXT");
+  // Speaker 1, 2, … within a track, when diarization told voices apart; null otherwise.
+  const utteranceColumns = db.prepare("PRAGMA table_info(utterances)").all().map((c) => c.name);
+  if (!utteranceColumns.includes("speaker")) db.exec("ALTER TABLE utterances ADD COLUMN speaker INTEGER");
   // A crash mid-recording leaves rows that no session will ever finish.
   db.prepare("UPDATE meetings SET status = 'error', error = ? WHERE status IN ('recording', 'processing')").run(
     appQuitMessage,
@@ -166,11 +169,11 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
         .map((r) => ({ id: Number(r.id), json: String(r.summary) }));
     },
 
-    addUtterances(meetingId: number, track: Track, rows: { startSec: number; text: string }[]) {
+    addUtterances(meetingId: number, track: Track, rows: { startSec: number; text: string; speaker?: number }[]) {
       const insert = db.prepare(
-        "INSERT INTO utterances (meeting_id, track, start_sec, text) VALUES (?, ?, ?, ?)",
+        "INSERT INTO utterances (meeting_id, track, start_sec, text, speaker) VALUES (?, ?, ?, ?, ?)",
       );
-      for (const u of rows) insert.run(meetingId, track, u.startSec, u.text);
+      for (const u of rows) insert.run(meetingId, track, u.startSec, u.text, u.speaker ?? null);
     },
 
     // ponytail: LIKE scan over all text; add an FTS5 trigram table if search gets slow.
@@ -214,7 +217,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       if (!r) return null;
       const utterances = db
         .prepare(
-          "SELECT id, track, start_sec, text FROM utterances WHERE meeting_id = ? ORDER BY start_sec",
+          "SELECT id, track, start_sec, text, speaker FROM utterances WHERE meeting_id = ? ORDER BY start_sec",
         )
         .all(id)
         .map(
@@ -223,6 +226,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
             track: u.track as Track,
             startSec: Number(u.start_sec),
             text: String(u.text),
+            speaker: u.speaker === null ? null : Number(u.speaker),
           }),
         );
       return {

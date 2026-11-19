@@ -1,6 +1,7 @@
 import { AlertCircle, BookmarkPlus, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { LiveView, MeetingDetail, ModelOption, Settings, Utterance } from "../../shared/types";
+import { speakerName } from "../../shared/summary";
 import { joinSplitSentences } from "../../shared/transcript";
 import { clock, duration, fullDate, groupUtterances } from "./format";
 import { useI18n, useT } from "./i18n";
@@ -46,13 +47,15 @@ export function MeetingView({
 }) {
   const i18n = useI18n();
   const { t } = i18n;
-  const speakers = new Set(m.utterances.map((u) => u.track)).size;
+  const speakers = [...new Set(m.utterances.map((u) => speakerName(u, t)))];
   // An unrecorded session also takes an audio file, dropped anywhere on the transcript side.
   const canImport = m.status === "new" && !recording;
   const [file, setFile] = useState<AudioFile | null>(null);
   const [reading, setReading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [over, setOver] = useState(false);
+  // A file is often not in the meeting language set for live captions, so it is asked per file.
+  const [fileLanguage, setFileLanguage] = useState("auto");
   const importing = useImportProgress(m.id);
   // A [mm:ss] clicked in the summary; n makes a second click on the same time scroll again.
   const [focus, setFocus] = useState<{ sec: number; n: number } | null>(null);
@@ -148,6 +151,12 @@ export function MeetingView({
                   </p>
                 </div>
                 <div className="import-card__actions">
+                  <Select aria-label={t("import.language")} value={fileLanguage} onChange={(e) => setFileLanguage(e.target.value)}>
+                    <option value="auto">{t("import.languageAuto")}</option>
+                    <option value="ko">한국어</option>
+                    <option value="en">English</option>
+                    <option value="ja">日本語</option>
+                  </Select>
                   <Button onClick={() => setFile(null)}>{t("import.cancel")}</Button>
                   <Button
                     variant="primary"
@@ -155,7 +164,7 @@ export function MeetingView({
                     onClick={() => {
                       const f = file;
                       setFile(null);
-                      void importAudio(m.id, f);
+                      void importAudio(m.id, f, fileLanguage);
                     }}
                   >
                     {t("import.start")}
@@ -172,7 +181,11 @@ export function MeetingView({
         {importing && (
           <p className="notice notice--info" role="status">
             <span className="spinner" aria-hidden />
-            <span>{t("import.progress", { done: importing.done, total: importing.total })}</span>
+            <span>
+              {importing.phase === "transcribe"
+                ? t("import.progress", { done: importing.done, total: importing.total })
+                : t(importing.phase === "models" ? "import.models" : "import.speakers")}
+            </span>
           </p>
         )}
         {m.error && (
@@ -209,7 +222,7 @@ export function MeetingView({
             {[
               m.durationSec > 0 && duration(m.durationSec, i18n),
               t("detail.utterances", { n: m.utterances.length }),
-              speakers > 1 && `${t("speaker.mic")} · ${t("speaker.system")}`,
+              speakers.length > 1 && speakers.join(" · "),
             ]
               .filter(Boolean)
               .join(" · ")}
@@ -277,6 +290,9 @@ function SessionOptions({ meeting: m }: { meeting: MeetingDetail }) {
   );
 }
 
+/** Colours: the person at this Mac, the other side, or one of up to five told-apart voices. */
+const speakerKey = (u: { track: string; speaker: number | null }) => (u.speaker ? `s${(u.speaker - 1) % 5}` : u.track);
+
 /** A transcript line; drafts are live captions whose sentence is still being spoken. */
 type Line = Utterance & { key: string; draft?: boolean };
 
@@ -320,7 +336,7 @@ function Transcript({
   const busy = m.status === "recording" || m.status === "processing";
   const lines: Line[] = [
     ...joinSplitSentences(m.utterances).map((u) => ({ ...u, key: String(u.id) })),
-    ...(live?.lines ?? []).map((d, i) => ({ ...d, id: -1 - i, draft: true })),
+    ...(live?.lines ?? []).map((d, i) => ({ ...d, id: -1 - i, speaker: null, draft: true })),
   ].sort((a, b) => a.startSec - b.startSec);
   return (
     <div
@@ -377,8 +393,8 @@ function Message({
     >
       <div className="msg__gutter">
         {head ? (
-          <span className="avatar" data-speaker={u.track} aria-hidden>
-            {t(u.track === "mic" ? "speaker.mic" : "speaker.system")}
+          <span className="avatar" data-speaker={speakerKey(u)} aria-hidden>
+            {u.speaker ?? speakerName(u, t).slice(0, 1)}
           </span>
         ) : (
           <span className="msg__gutter-time tnum">{clock(u.startSec)}</span>
@@ -387,8 +403,8 @@ function Message({
       <div>
         {head && (
           <div className="msg__head">
-            <span className="msg__name" data-speaker={u.track}>
-              {t(u.track === "mic" ? "speaker.mic" : "speaker.system")}
+            <span className="msg__name" data-speaker={speakerKey(u)}>
+              {speakerName(u, t)}
             </span>
             <span className="msg__time tnum">{clock(u.startSec)}</span>
           </div>
