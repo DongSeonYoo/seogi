@@ -11,6 +11,7 @@ import type {
   Utterance,
 } from "../../shared/types";
 import { mergeUtterances } from "../../shared/transcript";
+import { showStored } from "../../shared/i18n";
 import { CommandPalette, type PaletteAction } from "./CommandPalette";
 import { summaryPreview } from "../../shared/summary";
 import { MeetingList } from "./MeetingList";
@@ -290,6 +291,8 @@ export function App() {
     stopRef.current = null;
     try {
       await stopCapture?.();
+    } catch (e) {
+      setNotice(showStored(e instanceof Error ? e.message : String(e), t));
     } finally {
       await api.stopMeeting(rec.id);
     }

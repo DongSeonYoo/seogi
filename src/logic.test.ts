@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isPromptEcho } from "./main/ai.ts";
+import { isPromptEcho } from "./main/transcription.ts";
 import { Chunker } from "./renderer/src/recorder.ts";
 
 const RATE = 16000;
@@ -642,4 +642,63 @@ test("provider length errors shrink the failing part with bounded retries; unrel
   attempts = 0;
   await assert.rejects(summarizeParts(lines, 8000, async () => { attempts++; throw tooLarge; }), (e) => e === tooLarge);
   assert.ok(attempts > 1 && attempts <= 5);
+});
+
+test("the worklet transfers thirteen owned blocks and acknowledges the last partial batch in order", async () => {
+  const { TAP_WORKLET } = await import("./renderer/src/tapWorklet.ts");
+  const { runInNewContext } = await import("node:vm");
+  type Batch = { samples: Float32Array; blockSize: number };
+  const sent: (Batch | string)[] = [];
+  const port = {
+    onmessage: (_e: { data: string }) => {},
+    postMessage(value: Batch | string, transfer: ArrayBuffer[] = []) {
+      if (typeof value !== "string") assert.equal(transfer[0], value.samples.buffer);
+      sent.push(structuredClone(value, { transfer }));
+    },
+  };
+  const tap = runInNewContext(TAP_WORKLET, {
+    AudioWorkletProcessor: class { port = port; },
+    registerProcessor: (_name: string, Processor: new () => object) => new Processor(),
+  }) as { process(inputs: Float32Array[][]): boolean };
+  const block = new Float32Array(128);
+  for (let i = 0; i < 14; i++) tap.process([[block.fill(i)]]);
+  tap.process([[new Float32Array(64).fill(14)]]);
+  port.onmessage({ data: "drain" });
+  assert.equal(tap.process([[block]]), false);
+  assert.deepEqual(sent.map((x) => typeof x === "string" ? x : [x.blockSize, x.samples.length]), [
+    [128, 1664], [128, 128], [64, 64], "drained",
+  ]);
+  const first = (sent[0] as Batch).samples;
+  for (let i = 0; i < 13; i++) assert.ok(first.subarray(i * 128, (i + 1) * 128).every((n) => n === i));
+});
+
+test("GPT-Live waits for the opening boundary and stops converting at that boundary or 30 seconds", async () => {
+  const { OpeningAudio } = await import("./renderer/src/gptLive.ts");
+  const received: number[] = [];
+  const collect = () => new OpeningAudio((pcm) => received.push(pcm.length));
+  const block = new Int16Array(1664).fill(4096);
+  let reads = 0;
+  const read = () => { reads++; return block; };
+  const beforeDelivery = collect();
+  beforeDelivery.push(read);
+  beforeDelivery.opened(0.125); // 2,000 samples; the second batch is still on the port.
+  assert.deepEqual(received, []);
+  beforeDelivery.push(read);
+  beforeDelivery.push(read);
+  beforeDelivery.stop();
+  assert.deepEqual(received, [2000]);
+  assert.equal(reads, 2);
+
+  const late = collect();
+  for (let i = 0; i < 310; i++) late.push(read);
+  late.opened(40);
+  late.stop();
+  assert.deepEqual(received, [2000, 480000]);
+  assert.equal(reads, 2 + Math.ceil(480000 / block.length));
+
+  const stoppedEarly = collect();
+  stoppedEarly.opened(1);
+  stoppedEarly.push(read);
+  stoppedEarly.stop();
+  assert.deepEqual(received, [2000, 480000, 1664]);
 });

@@ -1,4 +1,6 @@
 import type { Track } from "../../shared/types";
+import { storedMessage } from "../../shared/i18n.ts";
+import { TAP_WORKLET, type AudioBatch } from "./tapWorklet.ts";
 
 const RATE = 16000;
 const MIN_SEC = 25; // start looking for a pause
@@ -7,10 +9,6 @@ const PAUSE_SEC = 0.4;
 const SILENCE_RMS = 0.01;
 /** How long the system track may stay digitally silent before the dock shows a permission hint. */
 const SYSTEM_SILENCE_HINT_SEC = 45;
-
-const WORKLET = `registerProcessor("tap", class extends AudioWorkletProcessor {
-  process(inputs) { const ch = inputs[0][0]; if (ch) this.port.postMessage(ch.slice()); return true; }
-});`;
 
 /** Thrown when screen & system audio capture yields no audio track; the UI shows its own message. */
 export const NO_SYSTEM_AUDIO = "NO_SYSTEM_AUDIO";
@@ -23,8 +21,8 @@ export type RecordingOptions = {
   signal?: AbortSignal;
   /** Called with true once the system track has been all zeros for a while, false when sound returns. */
   onSystemSilence?: (silent: boolean) => void;
-  /** Every ~100 ms of each track as 16 kHz PCM16, for live captions. */
-  onFrame?: (track: Track, pcm: Int16Array) => void;
+  /** Read this batch as 16 kHz PCM16 only while the caption provider needs it. */
+  onFrame?: (track: Track, readPcm: () => Int16Array) => void;
   /** The captured streams per track, for consumers that take a MediaStream (WebRTC). */
   onStreams?: (streams: [Track, MediaStream][]) => void;
 };
@@ -68,7 +66,7 @@ export async function startRecording(
 
     const ctx = new AudioContext({ sampleRate: RATE });
     context = ctx;
-    const url = URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" }));
+    const url = URL.createObjectURL(new Blob([TAP_WORKLET], { type: "text/javascript" }));
     try {
       await ctx.audioWorklet.addModule(url);
     } finally {
@@ -86,35 +84,45 @@ export async function startRecording(
         track === "system" && onSystemSilence
           ? new SilenceWatch(SYSTEM_SILENCE_HINT_SEC * RATE, onSystemSilence)
           : null;
-      let batch: Float32Array[] = [];
-      let batched = 0;
-      node.port.onmessage = (e: MessageEvent<Float32Array>) => {
-        chunker.push(e.data);
-        watch?.push(e.data);
-        if (!onFrame) return;
-        batch.push(e.data);
-        batched += e.data.length;
-        if (batched < RATE / 10) return;
-        onFrame(track, toPcm16(batch, batched));
-        batch = [];
-        batched = 0;
+      // Never reject here: the processor may fail long before the user presses Stop.
+      const drained = Promise.withResolvers<boolean>();
+      node.onprocessorerror = () => drained.resolve(false);
+      node.port.onmessage = ({ data }: MessageEvent<AudioBatch | "drained">) => {
+        if (data === "drained") return drained.resolve(true);
+        const { samples, blockSize } = data;
+        for (let i = 0; i < samples.length; i += blockSize) {
+          const block = samples.subarray(i, i + blockSize);
+          chunker.push(block);
+          watch?.push(block);
+        }
+        onFrame?.(track, () => toPcm16([samples], samples.length));
       };
-      return () => {
-        node.port.onmessage = null;
-        if (batched) onFrame?.(track, toPcm16(batch, batched));
-        chunker.flush();
+      return async () => {
+        const deadline = setTimeout(() => drained.resolve(false), 2000);
+        try {
+          node.port.postMessage("drain");
+          if (!(await drained.promise)) throw new Error(storedMessage("error.audioDrain"));
+        } finally {
+          clearTimeout(deadline);
+          node.port.close();
+          chunker.flush();
+        }
       };
     });
     onStreams?.(tracks);
 
-    return async () => {
-      stopDevices();
+    async function stop() {
       try {
-        flushers.forEach((flush) => flush());
+        const results = await Promise.allSettled(flushers.map((flush) => flush()));
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed) throw failed.reason;
       } finally {
+        stopDevices();
         await ctx.close();
       }
-    };
+    }
+    let stopping: Promise<void> | undefined;
+    return () => (stopping ??= stop());
   } catch (e) {
     stopDevices();
     await context?.close();

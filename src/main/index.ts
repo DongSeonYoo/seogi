@@ -21,7 +21,7 @@ import type {
 import { INTL_LOCALE, showStored, storedMessage, translator, type Locale } from "../shared/i18n";
 import { meetingDocument, summaryMarkdown } from "../shared/summary";
 import { joinSplitSentences } from "../shared/transcript";
-import { glossaryPrompt, isPromptEcho, splitUtterances, summarize, testConnection, transcribeFile } from "./ai";
+import { glossaryPrompt, isPromptEcho, splitUtterances } from "./transcription";
 import { openDb } from "./db";
 import { History, perform } from "./library";
 import { diarize, ensureModels } from "./diarize";
@@ -39,6 +39,8 @@ const dataDir = path.join(app.getPath("appData"), app.isPackaged ? "Seogi" : "Se
 app.setPath("userData", dataDir);
 const audioDir = path.join(dataDir, "meetings");
 const modelsDir = path.join(dataDir, "models");
+let aiModule: Promise<typeof import("./ai")> | undefined;
+const loadAI = () => aiModule ??= import("./ai");
 let win: BrowserWindow | null = null;
 let settingsWin: BrowserWindow | null = null;
 
@@ -222,6 +224,7 @@ app.whenReady().then(async () => {
       const m = db.getMeeting(id);
       if (!m?.utterances.length) throw new Error(tr()("error.nothingTranscribed"));
       const transcript = joinSplitSentences(m.utterances);
+      const { summarize } = await loadAI();
       const s = await summarize(settings, transcript, glossaryFor(id), model);
       db.setSummary(id, s.title, summaryMarkdown(s, tr()));
       return { ok: true };
@@ -301,6 +304,7 @@ app.whenReady().then(async () => {
         const from = Math.max(0, Math.floor((turn.start - TURN_PAD_SEC) * SAMPLE_RATE));
         const to = Math.min(pcm.length, Math.ceil((turn.end + TURN_PAD_SEC) * SAMPLE_RATE));
         try {
+          const { transcribeFile } = await loadAI();
           const t = await transcribeFile(settings, toWav(pcm.subarray(from, to)), glossary, language);
           if (t.text)
             storeUtterances(
@@ -330,7 +334,8 @@ app.whenReady().then(async () => {
   ipcMain.handle("transcribeOpening", async (_e, id: number, track: Track, pcm: Int16Array, token?: number) => {
     const entry = sessionFor(id, token);
     if (!entry || entry.stopping) return;
-    const work = transcribeFile(settings, toWav(pcm), glossaryFor(id), undefined, entry.abort.signal)
+    const work = loadAI().then(({ transcribeFile }) =>
+      transcribeFile(settings, toWav(pcm), glossaryFor(id), undefined, entry.abort.signal))
       .then((t) => {
         if (!t.text || live.get(id) !== entry || entry.abort.signal.aborted) return;
         const lines = splitUtterances(t, 0, pcm.length / SAMPLE_RATE);
@@ -455,7 +460,7 @@ app.whenReady().then(async () => {
     return view;
   });
   ipcMain.handle("setKey", (_e, name: KeyName, value: string) => settings.setKey(name, value));
-  ipcMain.handle("testConnection", (_e, role: ConnectionRole) => testConnection(settings, role));
+  ipcMain.handle("testConnection", async (_e, role: ConnectionRole) => (await loadAI()).testConnection(settings, role));
   ipcMain.handle("listModels", (_e, role: ModelRole, provider: string) => listModels(settings, role, provider));
   ipcMain.handle("storageInfo", (): StorageInfo => {
     const dbFiles = readdirSync(dataDir).filter((f) => f.startsWith("seogi.db"));

@@ -21,7 +21,7 @@ import {
 import { liveCaptionHooks } from "./gptLive";
 import { startRecording } from "./recorder";
 import { useT } from "./i18n";
-import { LOCALES, type Locale, type MessageKey } from "../../shared/i18n";
+import { LOCALES, showStored, type Locale, type MessageKey } from "../../shared/i18n";
 import { Button, CommitInput, Kbd, Segmented, Select, Switch } from "./ui";
 
 const SECTIONS = [
@@ -641,7 +641,7 @@ function TranscriptionTest({ s }: { s: Settings }) {
     stopRef.current = () => {
       controller.abort();
       void finish().catch((e) => {
-        if (token !== undefined && viewToken.current === token) setError(e instanceof Error ? e.message : String(e));
+        if (token !== undefined && viewToken.current === token) setError(showStored(e instanceof Error ? e.message : String(e), t));
       });
     };
     try {

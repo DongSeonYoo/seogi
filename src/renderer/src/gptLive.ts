@@ -274,48 +274,73 @@ export function liveCaptionHooks(meetingId: number, live: { provider: string; mo
   // A GPT-Live session takes a second or two to connect, and what is said before then never
   // reaches it. Each track's audio is kept until its session is up; that opening stretch is then
   // transcribed on its own (as a file) so the first words are not lost.
-  const opening = new Map<Track, Int16Array[]>();
-  const sendOpening = (track: Track, untilSec = Infinity) => {
-    const frames = opening.get(track);
-    opening.delete(track);
-    if (!frames?.length) return;
-    const pcm = concat(frames).subarray(0, Math.round(untilSec * 16000));
-    if (hasSpeech(pcm)) void window.api.transcribeOpening(meetingId, track, pcm, testToken);
-  };
+  const opening = new Map<Track, OpeningAudio>();
   const options: Pick<RecordingOptions, "onFrame" | "onStreams"> = gpt
     ? {
         onStreams: (streams) => {
           if (stopped) return;
-          for (const [track] of streams) opening.set(track, []);
+          for (const [track] of streams) {
+            opening.set(track, new OpeningAudio((pcm) => void window.api.transcribeOpening(meetingId, track, pcm, testToken)));
+          }
           // The recorder's clock starts here, so caption times line up with the saved audio.
           stopGptLive = startGptLive(
             streams,
             Date.now(),
             meetingId,
             (track, e) => window.api.sendLiveEvent(meetingId, track, e, testToken),
-            sendOpening,
+            (track, atSec) => opening.get(track)?.opened(atSec),
             testToken,
           );
         },
-        onFrame: (track, pcm) => {
-          const frames = opening.get(track);
-          if (frames && frames.length < OPENING_MAX_FRAMES) frames.push(pcm);
-        },
+        onFrame: (track, readPcm) => opening.get(track)?.push(readPcm),
       }
-    : { onFrame: (track, pcm) => window.api.sendLiveAudio(meetingId, track, pcm, testToken) };
+    : { onFrame: (track, readPcm) => window.api.sendLiveAudio(meetingId, track, readPcm(), testToken) };
   return {
     options,
     stop() {
       stopped = true;
       // A recording stopped before its session connected: all of it is opening audio.
-      for (const track of opening.keys()) sendOpening(track);
+      for (const audio of opening.values()) audio.stop();
+      opening.clear();
       stopGptLive?.();
     },
   };
 }
 
-/** At most 30 s of 100 ms frames are kept while a session connects. */
-const OPENING_MAX_FRAMES = 300;
+const OPENING_MAX_SAMPLES = 30 * 16000;
+
+/** The connection clock can reach the opening boundary before its final worklet batch arrives. */
+export class OpeningAudio {
+  private frames: Int16Array[] | null = [];
+  private samples = 0;
+  private endSample: number | null = null;
+  private readonly send: (pcm: Int16Array) => void;
+
+  constructor(send: (pcm: Int16Array) => void) {
+    this.send = send;
+  }
+
+  opened(atSec: number) {
+    this.endSample = Math.min(OPENING_MAX_SAMPLES, Math.max(0, Math.round(atSec * 16000)));
+    if (this.samples >= this.endSample) this.stop();
+  }
+
+  push(readPcm: () => Int16Array) {
+    const remaining = (this.endSample ?? OPENING_MAX_SAMPLES) - this.samples;
+    if (!this.frames || remaining <= 0) return;
+    const frame = readPcm().subarray(0, remaining);
+    this.frames.push(frame);
+    this.samples += frame.length;
+    if (this.samples === this.endSample) this.stop();
+  }
+
+  stop() {
+    if (!this.frames) return;
+    const pcm = concat(this.frames).subarray(0, this.endSample ?? this.samples);
+    this.frames = null;
+    if (hasSpeech(pcm)) this.send(pcm);
+  }
+}
 
 function concat(frames: Int16Array[]) {
   const out = new Int16Array(frames.reduce((n, f) => n + f.length, 0));
