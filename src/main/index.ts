@@ -39,6 +39,7 @@ import { SAMPLE_RATE, toFloat32, toWav } from "./wav";
 const dataDir = path.join(app.getPath("appData"), app.isPackaged ? "Seogi" : "Seogi-dev");
 app.setPath("userData", dataDir);
 const audioDir = path.join(dataDir, "meetings");
+const modelsDir = path.join(dataDir, "models");
 let win: BrowserWindow | null = null;
 let settingsWin: BrowserWindow | null = null;
 
@@ -164,7 +165,7 @@ app.whenReady().then(async () => {
     db.setStatus(id, "processing");
     notify(id);
     const drops = await stopLive(id);
-    if (db.getMeeting(id)?.utterances.length)
+    if (db.hasUtterances(id))
       db.setStatus(id, "done", drops ? tr()("error.captionsDropped", { n: drops }) : null);
     else db.setStatus(id, "error", tr()("error.nothingTranscribed"));
     notify(id);
@@ -230,6 +231,7 @@ app.whenReady().then(async () => {
   // line gets its voice and the time that voice started; without diarization (no models, no
   // network) it falls back to plain 30 s windows with no speakers.
   const importProgress = (id: number, p: ImportProgress | null) => broadcast("import-progress", id, p);
+  let loadingModels: ReturnType<typeof ensureModels> | undefined;
   async function importFile(id: number, pcm: Int16Array, language: string, ogg: (Uint8Array | null)[]) {
     const durationSec = pcm.length / SAMPLE_RATE;
     const chunkSamples = IMPORT_CHUNK_SEC * SAMPLE_RATE;
@@ -242,7 +244,7 @@ app.whenReady().then(async () => {
     let turns: { start: number; end: number; speaker?: number }[];
     try {
       importProgress(id, { phase: "models" });
-      const models = await ensureModels(path.join(dataDir, "models"));
+      const models = await (loadingModels ??= ensureModels(modelsDir).finally(() => { loadingModels = undefined; }));
       importProgress(id, { phase: "speakers" });
       turns = speakerTurns(await diarize(toFloat32(pcm), models));
     } catch (e) {
@@ -337,10 +339,7 @@ app.whenReady().then(async () => {
     return finish(id);
   });
   ipcMain.handle("summarize", (_e, id: number, model?: string) => summarizeMeeting(id, model));
-  ipcMain.handle("setSummaryText", (_e, id: number, markdown: string) => {
-    db.setSummaryText(id, markdown);
-    notify(-1); // the list preview follows the edit
-  });
+  ipcMain.handle("setSummaryText", (_e, id: number, markdown: string) => db.setSummaryText(id, markdown));
   ipcMain.handle("exportMeeting", async (_e, id: number, format: "md" | "txt") => {
     const m = db.getMeeting(id);
     if (!m || !win) return false;
@@ -397,8 +396,10 @@ app.whenReady().then(async () => {
   ipcMain.handle("listModels", (_e, role: ModelRole, provider: string) => listModels(settings, role, provider));
   ipcMain.handle("storageInfo", (): StorageInfo => {
     const dbFiles = readdirSync(dataDir).filter((f) => f.startsWith("seogi.db"));
-    const bytes = dirSize(audioDir) + dbFiles.reduce((n, f) => n + statSync(path.join(dataDir, f)).size, 0);
-    return { path: dataDir, bytes, meetings: db.counts().all };
+    const database = dbFiles.reduce((n, f) => n + statSync(path.join(dataDir, f)).size, 0);
+    const audio = dirSize(audioDir);
+    const models = dirSize(modelsDir);
+    return { path: dataDir, bytes: audio + database + models, audio, database, models, meetings: db.counts().all };
   });
   ipcMain.handle("openDataFolder", () => shell.openPath(dataDir).then(() => undefined));
   ipcMain.handle("appInfo", (): AppInfo => ({

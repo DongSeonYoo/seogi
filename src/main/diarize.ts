@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { Worker } from "node:worker_threads";
 import workerPath from "./diarize-worker?modulePath";
@@ -24,22 +25,34 @@ export async function ensureModels(dir: string) {
   const segmentation = path.join(dir, SEGMENTATION.file);
   const embedding = path.join(dir, EMBEDDING.file);
   mkdirSync(dir, { recursive: true });
-  if (!existsSync(segmentation)) {
-    const archive = path.join(dir, "segmentation.tar.bz2");
-    await download(SEGMENTATION.archive, archive);
-    await promisify(execFile)("tar", ["xjf", archive, "-C", dir]);
-    rmSync(archive);
+  if (!existsSync(segmentation) || !existsSync(embedding)) {
+    const temp = mkdtempSync(path.join(dir, "download-"));
+    try {
+      if (!existsSync(segmentation)) {
+        const archive = path.join(temp, "segmentation.tar.bz2");
+        const license = path.join(path.dirname(SEGMENTATION.file), "LICENSE");
+        await download(SEGMENTATION.archive, archive);
+        await promisify(execFile)("tar", ["xjf", archive, "-C", temp, SEGMENTATION.file, license]);
+        mkdirSync(path.dirname(segmentation), { recursive: true });
+        renameSync(path.join(temp, license), path.join(dir, license));
+        renameSync(path.join(temp, SEGMENTATION.file), segmentation);
+      }
+      if (!existsSync(embedding)) {
+        const part = path.join(temp, `${EMBEDDING.file}.part`);
+        await download(EMBEDDING.url, part);
+        renameSync(part, embedding);
+      }
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
   }
-  if (!existsSync(embedding)) await download(EMBEDDING.url, embedding);
   return { segmentation, embedding };
 }
 
 async function download(url: string, to: string) {
   const res = await fetch(url, { signal: AbortSignal.timeout(300_000) });
-  if (!res.ok) throw new Error(`model download failed: ${res.status} ${url}`);
-  // Written beside the target first, so an interrupted download never looks finished.
-  writeFileSync(`${to}.part`, Buffer.from(await res.arrayBuffer()));
-  renameSync(`${to}.part`, to);
+  if (!res.ok || !res.body) throw new Error(`model download failed: ${res.status} ${url}`);
+  await pipeline(res.body, createWriteStream(to));
 }
 
 /** Runs in a worker thread: an hour of audio takes minutes of CPU, which must not stall the app. */

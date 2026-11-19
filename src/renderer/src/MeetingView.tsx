@@ -23,6 +23,7 @@ export type SummaryPane = {
   busy: boolean;
   error: string | null;
   onSummarize: () => void;
+  onSave: (id: number, markdown: string) => void;
   onExport: (format: "md" | "txt") => void;
 };
 
@@ -69,8 +70,8 @@ export function MeetingView({
   /** Appends a transcript line, with its time, to the end of the summary. */
   const stamp = useCallback((u: Utterance) => {
     const line = `- ${u.text} [${clock(u.startSec)}]`;
-    void window.api.setSummaryText(m.id, m.summary?.trim() ? `${m.summary.trimEnd()}\n${line}` : line);
-  }, [m.id, m.summary]);
+    summary.onSave(m.id, m.summary?.trim() ? `${m.summary.trimEnd()}\n${line}` : line);
+  }, [m.id, m.summary, summary.onSave]);
   useEffect(() => {
     setFile(null);
     setFileError(null);
@@ -581,7 +582,7 @@ function SummaryView({ meeting: m, pane, onTime }: { meeting: MeetingDetail; pan
       )}
       {editing ? (
         // Also with no summary yet: write one by hand, or keep typing after clearing it.
-        <SummaryEditor key={m.id} meetingId={m.id} value={m.summary ?? ""} />
+        <SummaryEditor key={m.id} meetingId={m.id} value={m.summary ?? ""} onSave={pane.onSave} />
       ) : m.summary !== null ? (
         <div className="summary-read" onDoubleClick={() => setEditing(true)}>
           <SummaryDoc markdown={m.summary} onTime={onTime} />
@@ -608,13 +609,13 @@ async function exportMenu(pane: SummaryPane, t: ReturnType<typeof useT>) {
 }
 
 /** The summary as editable Markdown; saved half a second after typing stops, and on leaving. */
-function SummaryEditor({ meetingId, value }: { meetingId: number; value: string }) {
+function SummaryEditor({ meetingId, value, onSave }: { meetingId: number; value: string; onSave: SummaryPane["onSave"] }) {
   const t = useT();
   const [draft, setDraft] = useState(value);
   const pending = useRef<string | null>(null);
   const save = () => {
     if (pending.current === null) return;
-    void window.api.setSummaryText(meetingId, pending.current);
+    onSave(meetingId, pending.current);
     pending.current = null;
   };
   // A new summary from Summarize replaces the text, unless an edit is still unsaved.

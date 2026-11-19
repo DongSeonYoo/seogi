@@ -110,12 +110,21 @@ export class Segmenter {
 
   /** Finishes the sentence in progress of `turnId`, or of every turn. */
   cut(turnId?: string) {
-    for (const [id, turn] of this.turns) {
-      if (turnId !== undefined && id !== turnId) continue;
-      if (turn.text.trim())
-        this.emit({ type: "segment", id: this.id(id, turn.n), text: turn.text.trim(), startSec: turn.startSec, endSec: turn.endSec });
-      this.turns.set(id, { ...turn, n: turn.n + 1, text: "" });
+    if (turnId === undefined) {
+      for (const id of this.turns.keys()) this.finish(id);
+      return;
     }
+    const turn = this.turns.get(turnId);
+    if (!turn) return;
+    if (turn.text.trim())
+      this.emit({ type: "segment", id: this.id(turnId, turn.n), text: turn.text.trim(), startSec: turn.startSec, endSec: turn.endSec });
+    turn.n++;
+    turn.text = "";
+  }
+
+  finish(turnId: string) {
+    this.cut(turnId);
+    this.turns.delete(turnId);
   }
 
   private id(turnId: string, n: number) {
@@ -175,7 +184,7 @@ async function session(
       userTurns.add(turn.id);
       if (turn.transcript) add(turn.id, turn.transcript, turn);
     } else if (e.type === "turn.delta" && e.turn_id && e.delta && userTurns.has(e.turn_id)) add(e.turn_id, e.delta, e);
-    else if ((e.type === "turn.done" || e.type === "turn.completed") && turn && userTurns.has(turn.id)) segments.cut(turn.id);
+    else if ((e.type === "turn.done" || e.type === "turn.completed") && turn && userTurns.delete(turn.id)) segments.finish(turn.id);
     else if (e.type === "session.closed") lost();
   });
   channel.addEventListener("close", lost);

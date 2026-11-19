@@ -47,22 +47,24 @@ function PaletteBody({
   const i18n = useI18n();
   const { t } = i18n;
   const [query, setQuery] = useState("");
-  const [meetings, setMeetings] = useState<MeetingRow[]>([]);
+  const [results, setResults] = useState<{ query: string; rows: MeetingRow[] } | null>(null);
   const [active, setActive] = useState(0);
 
   useEffect(() => {
     let stale = false;
-    window.api.listMeetings("all", query).then((r) => {
-      if (stale) return;
-      setMeetings(r.slice(0, 50));
-      setActive(0);
-    });
+    const timer = setTimeout(() => {
+      void window.api.listMeetings("all", query).then((rows) => {
+        if (!stale) setResults({ query, rows });
+      });
+    }, query ? 150 : 0);
     return () => {
       stale = true;
+      clearTimeout(timer);
     };
   }, [query]);
 
   const q = query.trim().toLowerCase();
+  const meetings = results?.query === query ? results.rows : [];
   const items: Item[] = [
     ...actions
       .filter((a) => a.enabled !== false && (!q || a.label.toLowerCase().includes(q)))
@@ -90,9 +92,12 @@ function PaletteBody({
         aria-expanded
         aria-controls="palette-list"
         aria-activedescendant={items[active] ? `palette-${active}` : undefined}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setActive(0);
+        }}
         onKeyDown={(e) => {
-          if (e.key === "ArrowDown") setActive((i) => Math.min(i + 1, items.length - 1));
+          if (e.key === "ArrowDown") setActive((i) => Math.max(0, Math.min(i + 1, items.length - 1)));
           else if (e.key === "ArrowUp") setActive((i) => Math.max(i - 1, 0));
           else if (e.key === "Enter") pick(items[active]);
           else return;

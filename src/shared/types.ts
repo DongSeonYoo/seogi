@@ -159,11 +159,12 @@ export type ImportProgress = { phase: "audio" | "models" | "speakers" } | { phas
 
 export type ConnectionResult = { ok: true; ms: number } | { ok: false; error: string };
 
-export type StorageInfo = { path: string; bytes: number; meetings: number };
+export type StorageInfo = { path: string; bytes: number; audio: number; database: number; models: number; meetings: number };
 
 export type AppInfo = { version: string; electron: string; platform: string };
 
 export type Api = {
+  /** A query (even empty) searches for up to 50 palette results. Omit it to list the whole view. */
   listMeetings(view: LibraryView, query?: string): Promise<MeetingRow[]>;
   library(): Promise<Library>;
   perform(op: LibraryOp): Promise<LibraryResult>;

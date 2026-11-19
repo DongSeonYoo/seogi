@@ -11,12 +11,30 @@ export function clock(sec: number) {
 
 type Fmt = { t: Translate; intl: string };
 
+function dateFormat(options: Intl.DateTimeFormatOptions) {
+  const locales = new Map<string, Intl.DateTimeFormat>();
+  return (date: Date, locale: string) => {
+    if (Number.isNaN(date.getTime())) return date.toString();
+    let formatter = locales.get(locale);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat(locale, options);
+      locales.set(locale, formatter);
+    }
+    return formatter.format(date);
+  };
+}
+
+const time = dateFormat({ hour: "numeric", minute: "2-digit" });
+const dateAndTime = dateFormat({ dateStyle: "long", timeStyle: "short" });
+const weekday = dateFormat({ weekday: "long" });
+const shortDate = dateFormat({ year: "2-digit", month: "numeric", day: "numeric" });
+
 export function timeOfDay(iso: string, { intl }: Fmt) {
-  return new Date(iso).toLocaleTimeString(intl, { hour: "numeric", minute: "2-digit" });
+  return time(new Date(iso), intl);
 }
 
 export function fullDate(iso: string, { intl }: Fmt) {
-  return new Date(iso).toLocaleString(intl, { dateStyle: "long", timeStyle: "short" });
+  return dateAndTime(new Date(iso), intl);
 }
 
 /** Meeting length in words: "45 s", "32 min", "1 hr 5 min". */
@@ -36,8 +54,8 @@ export function listDate(iso: string, f: Fmt, now = new Date()) {
   const days = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
   if (days <= 0) return timeOfDay(iso, f);
   if (days === 1) return f.t("time.yesterday");
-  if (days < 7) return d.toLocaleDateString(f.intl, { weekday: "long" });
-  return d.toLocaleDateString(f.intl, { year: "2-digit", month: "numeric", day: "numeric" });
+  if (days < 7) return weekday(d, f.intl);
+  return shortDate(d, f.intl);
 }
 
 function sameGroup(a: Utterance, b: Utterance, gapSec = 120) {

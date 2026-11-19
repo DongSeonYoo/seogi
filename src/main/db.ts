@@ -49,6 +49,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
   addColumn("starred", "starred INTEGER NOT NULL DEFAULT 0");
   // Set by delete; purged for real at quit and launch. Until then ⌘Z restores the meeting.
   addColumn("deleted_at", "deleted_at TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS meetings_live_folder ON meetings(folder_id) WHERE deleted_at IS NULL");
   // A title the user typed; a later summary keeps it instead of writing its own.
   addColumn("title_edited", "title_edited INTEGER NOT NULL DEFAULT 0");
   addColumn("ended_at", "ended_at TEXT");
@@ -121,7 +122,11 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
     finishImport(id: number, durationSec: number, error: string | null) {
       const r = db.prepare("SELECT started_at FROM meetings WHERE id = ?").get(id);
       const ended = new Date(Date.parse(String(r?.started_at)) + durationSec * 1000).toISOString();
-      db.prepare("UPDATE meetings SET status = ?, error = ?, ended_at = ? WHERE id = ?").run(error && !this.getMeeting(id)?.utterances.length ? "error" : "done", error, ended, id);
+      db.prepare("UPDATE meetings SET status = ?, error = ?, ended_at = ? WHERE id = ?").run(error && !this.hasUtterances(id) ? "error" : "done", error, ended, id);
+    },
+
+    hasUtterances(id: number): boolean {
+      return !!db.prepare("SELECT 1 FROM utterances WHERE meeting_id = ? LIMIT 1").get(id);
     },
 
     /** Recording starts the clock, so the length leaves out the time before it. */
@@ -188,7 +193,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
     },
 
     // ponytail: LIKE scan over all text; add an FTS5 trigram table if search gets slow.
-    listMeetings(view: LibraryView = "all", query = ""): MeetingRow[] {
+    listMeetings(view: LibraryView = "all", query?: string): MeetingRow[] {
       const folder = typeof view === "number";
       // Both parameters are always bound, so the clauses that do not apply test them as no-ops.
       return db
@@ -197,9 +202,9 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
            AND (?2 IS NULL OR f.id = ?2)
            AND (?1 = '%%' OR m.title LIKE ?1 OR m.summary LIKE ?1
              OR EXISTS (SELECT 1 FROM utterances u WHERE u.meeting_id = m.id AND u.text LIKE ?1))
-           ORDER BY m.started_at DESC`,
+           ORDER BY m.started_at DESC ${query === undefined ? "" : "LIMIT 50"}`,
         )
-        .all(`%${query.trim()}%`, folder ? view : null)
+        .all(`%${query?.trim() ?? ""}%`, folder ? view : null)
         .map(toRow);
     },
 

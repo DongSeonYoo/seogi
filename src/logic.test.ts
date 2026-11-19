@@ -157,6 +157,69 @@ test("GPT-Live turns are cut into segments at sentence ends, pauses and on deman
   assert.deepEqual(out, ["g1:t:0@0:오늘은 큐그리드 2.23을 봅니다.", "g1:t:1@3.2:서기 앱", "g1:t:2@7:시험합니다.", "g1:t:3@8:회의는"]);
 });
 
+test("finishing one turn releases its sequence and preserves the other turn's draft", async () => {
+  const { Segmenter } = await import("./renderer/src/gptLive.ts");
+  const out: string[] = [];
+  const s = new Segmenter("g", (e) => e.type === "segment" && out.push(`${e.id} ${e.text}`));
+  s.add("a", "First.", 0, 1);
+  s.add("b", "Another", 0, 1);
+  s.add("a", "Second", 1, 2);
+  s.finish("a");
+  s.finish("a");
+  s.add("a", "Fresh", 3, 4);
+  s.add("b", " voice", 1, 2);
+  s.cut();
+  assert.deepEqual(out, ["g:a:0 First.", "g:a:1 Second", "g:b:0 Another voice", "g:a:0 Fresh"]);
+});
+
+test("a palette query limits matching meetings while a library view lists every meeting", async () => {
+  const { openDb } = await import("./main/db.ts");
+  const db = openDb(":memory:");
+  try {
+    for (let i = 0; i < 54; i++) db.createMeeting(`회의 ${i}`);
+    db.createMeeting("Other");
+    assert.equal(db.listMeetings("all").length, 55);
+    assert.equal(db.listMeetings("all", "").length, 50);
+    const matches = db.listMeetings("all", "회의");
+    assert.equal(matches.length, 50);
+    assert.ok(matches.every((m) => m.title.includes("회의")));
+  } finally {
+    db.raw.close();
+  }
+});
+
+test("a failed import is usable only if some utterances were stored", async () => {
+  const { openDb } = await import("./main/db.ts");
+  const db = openDb(":memory:");
+  try {
+    const id = db.createMeeting("Import");
+    db.startImport(id);
+    assert.equal(db.hasUtterances(id), false);
+    db.finishImport(id, 20, "failed turn");
+    assert.equal(db.getMeeting(id)?.status, "error");
+    db.addUtterances(id, "system", [{ startSec: 0, text: "One turn" }]);
+    assert.equal(db.hasUtterances(id), true);
+    db.finishImport(id, 20, "failed turn");
+    assert.equal(db.getMeeting(id)?.status, "done");
+  } finally {
+    db.raw.close();
+  }
+});
+
+test("meeting date formatters keep the locale and date style of each field", async () => {
+  const { fullDate, listDate, timeOfDay } = await import("./renderer/src/format.ts");
+  const { translator } = await import("./shared/i18n.ts");
+  const d = new Date(2026, 10, 1, 13, 23);
+  const iso = d.toISOString();
+  for (const intl of ["en-US", "ko-KR"]) {
+    const f = { intl, t: translator(intl === "en-US" ? "en" : "ko") };
+    assert.equal(timeOfDay(iso, f), d.toLocaleTimeString(intl, { hour: "numeric", minute: "2-digit" }));
+    assert.equal(fullDate(iso, f), d.toLocaleString(intl, { dateStyle: "long", timeStyle: "short" }));
+    assert.equal(listDate(iso, f, new Date(2026, 10, 5)), d.toLocaleDateString(intl, { weekday: "long" }));
+    assert.equal(listDate(iso, f, new Date(2026, 10, 9)), d.toLocaleDateString(intl, { year: "2-digit", month: "numeric", day: "numeric" }));
+  }
+});
+
 test("listModels maps qgrid's catalog per role and filters OpenAI's list by task", async () => {
   const { listModels } = await import("./main/models.ts");
   const store = { get: () => ({ qgridUrl: "http://q", locale: "en" }), key: () => "sk-test" } as never;

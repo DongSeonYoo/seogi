@@ -86,7 +86,11 @@ export async function startRecording(
       batch = [];
       batched = 0;
     };
-    return () => chunker.flush();
+    return () => {
+      node.port.onmessage = null;
+      if (batched) onFrame?.(track, toPcm16(batch, batched));
+      chunker.flush();
+    };
   });
 
   return async () => {

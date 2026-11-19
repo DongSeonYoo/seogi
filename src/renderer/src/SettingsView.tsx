@@ -521,9 +521,14 @@ function Storage() {
           {t("settings.showInFinder")}
         </Button>
       </Row>
-      <Row label={t("settings.usage")} description={t("settings.usageDesc")}>
+      <Row label={t("settings.usage")}>
         <span className="setting-value tnum">{info ? t("settings.usageValue", { size: formatBytes(info.bytes), n: info.meetings }) : "…"}</span>
       </Row>
+      {(["models", "audio", "database"] as const).map((part) => (
+        <Row key={part} label={t(`storage.${part}`)}>
+          <span className="setting-value tnum">{info ? formatBytes(info[part]) : "…"}</span>
+        </Row>
+      ))}
     </Group>
   );
 }
@@ -567,6 +572,7 @@ function About() {
 }
 
 function formatBytes(n: number) {
+  if (!n) return "0 KB";
   if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
   if (n < 1024 ** 3) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   return `${(n / 1024 ** 3).toFixed(2)} GB`;

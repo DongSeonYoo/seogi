@@ -12,6 +12,7 @@ import type {
 } from "../../shared/types";
 import { mergeUtterances } from "../../shared/transcript";
 import { CommandPalette, type PaletteAction } from "./CommandPalette";
+import { summaryPreview } from "../../shared/summary";
 import { MeetingList } from "./MeetingList";
 import { MeetingView } from "./MeetingView";
 import { useT } from "./i18n";
@@ -70,31 +71,56 @@ export function App() {
   /** Set when Stop is pressed before the start has a meeting to stop. */
   const cancelRef = useRef(false);
 
+  // A list or detail read already in flight must keep edits made after its snapshot.
+  type ListEdit = Partial<Pick<MeetingRow, "preview" | "durationSec">>;
+  const listEdits = useRef<Map<number, ListEdit> | null>(null);
+  type DetailRead = { id: number; rows: Utterance[]; edit?: Pick<MeetingDetail, "summary" | "preview"> };
+  const detailRead = useRef<DetailRead | null>(null);
+  const saveSummary = useCallback((id: number, markdown: string) => {
+    void api.setSummaryText(id, markdown);
+    const edit = { summary: markdown.trim() ? markdown : null, preview: summaryPreview(markdown) };
+    listEdits.current?.set(id, { ...listEdits.current.get(id), preview: edit.preview });
+    if (detailRead.current?.id === id) detailRead.current.edit = edit;
+    setMeetings((rows) => {
+      const index = rows.findIndex((m) => m.id === id);
+      if (index < 0 || rows[index].preview === edit.preview) return rows;
+      return rows.with(index, { ...rows[index], preview: edit.preview });
+    });
+    setDetail((m) => m?.id === id ? { ...m, ...edit } : m);
+  }, []);
+
   const refreshList = useCallback(async () => {
+    const edits = new Map<number, ListEdit>();
+    listEdits.current = edits;
     const [rows, lib] = await Promise.all([api.listMeetings(view), api.library()]);
-    setMeetings(rows);
+    if (listEdits.current !== edits) return;
+    listEdits.current = null;
+    setMeetings(edits.size ? rows.map((m) => {
+      const edit = edits.get(m.id);
+      return edit ? { ...m, ...edit, durationSec: Math.max(m.durationSec, edit.durationSec ?? 0) } : m;
+    }) : rows);
     setLibrary(lib);
   }, [view]);
   useEffect(() => void refreshList(), [refreshList]);
   useEffect(() => api.onMeetingChanged(() => void refreshList()), [refreshList]);
   useEffect(() => {
-    let pending: Utterance[] | null = null;
     async function reload() {
       if (selected === null) return setDetail(null);
-      // Keep inserts delivered after the snapshot was taken, even on the first selection.
-      const added: Utterance[] = [];
-      pending = added;
+      const request: DetailRead = { id: selected, rows: [] };
+      detailRead.current = request;
       const d = await api.getMeeting(selected);
-      if (pending !== added) return;
-      pending = null;
-      setDetail(d && addToDetail(d, added));
+      if (detailRead.current !== request) return;
+      detailRead.current = null;
+      setDetail(d && addToDetail(request.edit ? { ...d, ...request.edit } : d, request.rows));
       if (!d) setSelected((id) => id === selected ? null : id);
     }
     const offRows = api.onUtterancesAdded((id, rows) => {
       const lastSec = rows.reduce((last, u) => Math.max(last, u.startSec), 0);
+      const edit = listEdits.current?.get(id);
+      listEdits.current?.set(id, { ...edit, durationSec: Math.max(edit?.durationSec ?? 0, lastSec) });
       setMeetings((list) => list.map((m) => m.id === id && m.durationSec < lastSec ? { ...m, durationSec: lastSec } : m));
       if (id !== selected) return;
-      pending?.push(...rows);
+      detailRead.current?.rows.push(...rows);
       setDetail((d) => d?.id === id ? addToDetail(d, rows) : d);
     });
     const offChange = api.onMeetingChanged((id) => {
@@ -102,7 +128,7 @@ export function App() {
     });
     void reload();
     return () => {
-      pending = null;
+      detailRead.current = null;
       offRows();
       offChange();
     };
@@ -468,6 +494,7 @@ export function App() {
             recording={recording?.id === current.id ? recording : null}
             systemSilent={systemSilent}
             summary={{
+              onSave: saveSummary,
               open: panes.layout.summary,
               width: panes.layout.summaryW,
               onResize: panes.resizeSummary,
