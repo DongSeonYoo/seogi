@@ -1,6 +1,6 @@
 # Seogi
 
-Electron + React meeting recorder for macOS: records mic and system audio, transcribes in ~30 s chunks, summarizes when the meeting ends. Providers go through the AI SDK (OpenAI, Anthropic, or a qgrid server).
+Electron + React meeting recorder for macOS: records mic and system audio, writes the transcript from live captions as people speak, summarizes when the meeting ends. Providers go through the AI SDK (OpenAI, Anthropic, or a qgrid server).
 
 # Toolchain
 
@@ -10,9 +10,9 @@ Electron + React meeting recorder for macOS: records mic and system audio, trans
 
 # Layout
 
-- `src/main/`: main process (recording sessions, transcription queue, SQLite via `node:sqlite`, settings and keychain-encrypted API keys).
+- `src/main/`: main process (recording sessions, live caption streams, SQLite via `node:sqlite`, settings and keychain-encrypted API keys).
 - `src/preload/`: the `window.api` bridge; its contract is `Api` in `src/shared/types.ts`.
-- `src/renderer/`: React UI. `src/renderer/src/recorder.ts` captures audio and cuts chunks.
+- `src/renderer/`: React UI. `src/renderer/src/recorder.ts` captures audio and cuts the chunks saved for playback; `src/renderer/src/gptLive.ts` runs GPT-Live captions.
 
 # Design system
 

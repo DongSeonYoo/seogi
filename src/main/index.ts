@@ -1,7 +1,7 @@
 import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, protocol, session, shell, systemPreferences } from "electron";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { GPT_LIVE_MODEL, LIVE_TEST_ID, type LiveEvent } from "../shared/types";
+import { GPT_LIVE_MODEL, GPT_LIVE_TAIL_MS, LIVE_TEST_ID, type LiveEvent } from "../shared/types";
 import type {
   AppInfo,
   AudioRef,
@@ -13,19 +13,20 @@ import type {
   MenuSpec,
   ModelRole,
   StorageInfo,
+  Settings,
   StoredSettings,
   Track,
 } from "../shared/types";
 import { INTL_LOCALE, translator, type Locale } from "../shared/i18n";
 import { joinSplitSentences } from "../shared/transcript";
-import { glossaryPrompt, splitUtterances, summarize, testConnection, transcribeWav } from "./ai";
+import { glossaryPrompt, isPromptEcho, summarize, testConnection } from "./ai";
 import { openDb } from "./db";
 import { History, perform } from "./library";
 import { LiveCaptions, openLiveStream } from "./live";
 import { appMenu } from "./menu";
 import { listModels } from "./models";
 import { openSettings } from "./settings";
-import { toWav, SAMPLE_RATE } from "./wav";
+import { toWav } from "./wav";
 
 // Pinned to the original name so meetings and keys survive any change to the display name.
 // Unpackaged runs (pnpm dev) get their own folder so they never touch the installed app's data.
@@ -41,6 +42,8 @@ const broadcast = (channel: string, ...args: unknown[]) =>
 
 // Chunk WAVs are served to the renderer as seogi-audio://audio/<meetingId>/<file>.
 const AUDIO_SCHEME = "seogi-audio";
+/** How far before a line's time its playback starts. */
+const PLAYBACK_LEAD_SEC = 1;
 const CHUNK_FILE = /^(mic|system)-(\d+(?:\.\d+)?)\.wav$/;
 protocol.registerSchemesAsPrivileged([
   { scheme: AUDIO_SCHEME, privileges: { stream: true, supportFetchAPI: true } },
@@ -66,15 +69,17 @@ app.whenReady().then(async () => {
   purge();
   app.on("before-quit", purge);
 
-  // Transcription requests in flight per meeting; stop waits for them before summarizing.
-  const pending = new Map<number, Set<Promise<void>>>();
-  const failures = new Map<number, { count: number; last: string }>();
-  const live = new Map<number, LiveCaptions>();
-  const sendLive = (id: number) => broadcast("live", id, live.get(id)?.view() ?? { lines: [], error: null });
+  /** `tailMs`: how long a stop waits for captions the renderer still sends (GPT-Live). */
+  const live = new Map<number, { captions: LiveCaptions; tailMs: number }>();
+  const sendLive = (id: number) => broadcast("live", id, live.get(id)?.captions.view() ?? { lines: [], error: null });
 
-  function startLive(id: number) {
+  /**
+   * Live captions are the meeting record: each finished segment is stored as it comes. The settings
+   * test (LIVE_TEST_ID) stores nothing. `override` picks another live model for that test.
+   */
+  function startLive(id: number, override?: Settings["live"]) {
     const s = settings.get();
-    const { provider, model } = s.live;
+    const { provider, model } = override ?? s.live;
     const language = s.language === "auto" ? undefined : s.language;
     // Whisper models take no prompt (qgrid rejects it for gpt-realtime-whisper).
     const prompt = s.glossary.trim() && !model.includes("whisper") ? glossaryPrompt(s.language, s.glossary) : undefined;
@@ -82,79 +87,55 @@ app.whenReady().then(async () => {
     const rendererDriven = provider === "qgrid" && model === GPT_LIVE_MODEL;
     const captions = new LiveCaptions(
       (onEvent) =>
-        rendererDriven
-          ? { audio() {}, stop() {} }
-          : openLiveStream(
+        openLiveStream(
           provider === "qgrid"
             ? { provider: "qgrid", url: s.qgridUrl, model, language, prompt, t: tr() }
             : { provider: "openai", apiKey: settings.key("openai"), model, language, prompt, t: tr() },
           onEvent,
         ),
       () => sendLive(id),
+      id === LIVE_TEST_ID
+        ? null
+        : (track, segment) => {
+            // GPT-Live gets no transcription prompt, so it has nothing to echo.
+            if (prompt && !rendererDriven && isPromptEcho(segment.text, prompt)) return;
+            db.addUtterances(id, track, [segment]);
+            notify(id);
+          },
     );
-    live.set(id, captions);
+    live.set(id, { captions, tailMs: rendererDriven ? GPT_LIVE_TAIL_MS + 1000 : 0 });
   }
 
-  // ponytail: one global limit of 3 concurrent transcriptions; per-provider limits if needed.
-  let running = 0;
-  const waiters: (() => void)[] = [];
-  async function limited<T>(fn: () => Promise<T>): Promise<T> {
-    while (running >= 3) await new Promise<void>((r) => waiters.push(r));
-    running++;
-    try {
-      return await fn();
-    } finally {
-      running--;
-      waiters.shift()?.();
-    }
-  }
-
-  async function handleChunk({ meetingId, track, startSec, pcm }: Chunk) {
-    const wav = toWav(pcm);
+  /** Audio is kept for playback only; the transcript comes from the live captions. */
+  function saveChunk({ meetingId, track, startSec, pcm }: Chunk) {
     const dir = path.join(audioDir, String(meetingId));
     mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, `${track}-${startSec.toFixed(1)}.wav`), wav);
-    try {
-      const t = await limited(() => transcribeWav(settings, wav));
-      const chunkSec = pcm.length / SAMPLE_RATE;
-      if (t.text) db.addUtterances(meetingId, track, splitUtterances(t, startSec, chunkSec));
-      live.get(meetingId)?.settle(track, startSec, startSec + chunkSec);
-    } catch (e) {
-      const last = e instanceof Error ? e.message : String(e);
-      const count = (failures.get(meetingId)?.count ?? 0) + 1;
-      failures.set(meetingId, { count, last });
-      // Shown while still recording, so a wrong key or model surfaces before the meeting ends.
-      db.setError(meetingId, tr()("error.transcriptionFailed", { n: count, error: last }));
-      console.error(`[seogi] transcription failed (${track} @${startSec}s):`, e);
-    }
-    notify(meetingId);
+    writeFileSync(path.join(dir, `${track}-${startSec.toFixed(1)}.wav`), toWav(pcm));
+  }
+
+  /** Stops a meeting's captions once they have stored the last words; resolves the drops seen. */
+  async function stopLive(id: number) {
+    const entry = live.get(id);
+    if (!entry) return 0;
+    await entry.captions.stop(entry.tailMs);
+    live.delete(id);
+    sendLive(id);
+    return entry.captions.drops;
   }
 
   async function finish(id: number) {
     db.setStatus(id, "processing");
     notify(id);
-    live.get(id)?.stop();
-    await Promise.allSettled(pending.get(id) ?? []);
-    pending.delete(id);
-    // Every chunk has its final transcript now; drafts that never settled belong to failed chunks.
-    live.delete(id);
-    sendLive(id);
-    const failed = failures.get(id);
-    failures.delete(id);
+    const drops = await stopLive(id);
     try {
       const m = db.getMeeting(id);
-      if (!m?.utterances.length)
-        throw new Error(`${tr()("error.nothingTranscribed")}${failed ? ` (${failed.last})` : ""}`);
+      if (!m?.utterances.length) throw new Error(tr()("error.nothingTranscribed"));
       const transcript = joinSplitSentences(m.utterances)
         .map((u) => `[${clock(u.startSec)}] ${u.track === "mic" ? "Me" : "Others"}: ${u.text}`)
         .join("\n");
       db.setSummary(id, await summarize(settings, transcript));
       db.setOpened(id, false);
-      db.setStatus(
-        id,
-        "done",
-        failed ? tr()("error.someChunksFailed", { n: failed.count, error: failed.last }) : null,
-      );
+      db.setStatus(id, "done", drops ? tr()("error.captionsDropped", { n: drops }) : null);
     } catch (e) {
       db.setStatus(id, "error", e instanceof Error ? e.message : String(e));
     }
@@ -177,27 +158,32 @@ app.whenReady().then(async () => {
   ipcMain.handle("showMenu", (e, items: MenuSpec[]) => popupMenu(e.sender, items));
   ipcMain.on("openSettings", () => openSettingsWindow());
   ipcMain.handle("accentColor", accentColor);
-  ipcMain.handle("getMeeting", (_e, id: number) => {
-    const m = db.getMeeting(id);
-    return m && { ...m, pendingChunks: pending.get(id)?.size ?? 0 };
-  });
-  ipcMain.handle("startMeeting", (_e, folderId?: number | null) => {
+  ipcMain.handle("getMeeting", (_e, id: number) => db.getMeeting(id));
+  ipcMain.handle("createMeeting", (_e, folderId?: number | null) => {
     const { locale } = settings.get();
     const date = new Date().toLocaleString(INTL_LOCALE[locale], { dateStyle: "short", timeStyle: "short" });
-    const title = translator(locale)("meeting.defaultTitle", { date });
-    const id = db.createMeeting(title, folderId ?? null);
-    startLive(id);
+    const id = db.createMeeting(translator(locale)("meeting.defaultTitle", { date }), folderId ?? null);
     notify(id);
     return id;
   });
-  ipcMain.handle("startLiveTest", () => {
-    live.get(LIVE_TEST_ID)?.stop();
-    startLive(LIVE_TEST_ID);
+  ipcMain.handle("startMeeting", (_e, id: number) => {
+    if (!db.startRecording(id)) return false;
+    startLive(id);
+    notify(id);
+    return true;
+  });
+  ipcMain.handle("startLiveTest", (_e, model?: Settings["live"]) => {
+    void live.get(LIVE_TEST_ID)?.captions.stop();
+    startLive(LIVE_TEST_ID, model);
     sendLive(LIVE_TEST_ID);
   });
-  ipcMain.handle("stopLiveTest", () => live.get(LIVE_TEST_ID)?.stop());
-  ipcMain.on("liveAudio", (_e, id: number, track: Track, pcm: Int16Array) => live.get(id)?.audio(track, pcm));
-  ipcMain.on("liveEvent", (_e, id: number, track: Track, event: LiveEvent) => live.get(id)?.onEvent(track, event));
+  // The test's lines stay on screen after it stops, so its captions are not dropped here.
+  ipcMain.handle("stopLiveTest", async () => {
+    const entry = live.get(LIVE_TEST_ID);
+    await entry?.captions.stop(entry.tailMs);
+  });
+  ipcMain.on("liveAudio", (_e, id: number, track: Track, pcm: Int16Array) => live.get(id)?.captions.audio(track, pcm));
+  ipcMain.on("liveEvent", (_e, id: number, track: Track, event: LiveEvent) => live.get(id)?.captions.onEvent(track, event));
   ipcMain.handle("liveCall", async (_e, sdp: string) => {
     try {
       const res = await fetch(`${settings.get().qgridUrl.replace(/\/$/, "")}/api/qgrid/liveCall`, {
@@ -208,7 +194,7 @@ app.whenReady().then(async () => {
             sdp,
             instructions: gptLiveInstructions(settings.get().language, settings.get().glossary),
             projectName: "seogi",
-            // Same as the other live captions: the chunk transcripts are what gets logged.
+            // ponytail: not logged in qgrid, like the other caption streams; turn on to see usage there.
             logger: false,
           },
         }),
@@ -221,13 +207,7 @@ app.whenReady().then(async () => {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   });
-  ipcMain.on("sendChunk", (_e, chunk: Chunk) => {
-    const set = pending.get(chunk.meetingId) ?? new Set();
-    pending.set(chunk.meetingId, set);
-    const p = handleChunk(chunk).finally(() => set.delete(p));
-    set.add(p);
-    notify(chunk.meetingId);
-  });
+  ipcMain.on("sendChunk", (_e, chunk: Chunk) => saveChunk(chunk));
   ipcMain.handle("stopMeeting", (_e, id: number) => {
     // Only a real stop fixes the length; a resummary of an older meeting must not stamp "now".
     db.setEnded(id);
@@ -246,7 +226,8 @@ app.whenReady().then(async () => {
       const start = Number(m[2]);
       if (start <= startSec + 0.05 && (!best || start > best.start)) best = { file, start };
     }
-    return best && { url: `${AUDIO_SCHEME}://audio/${id}/${best.file}`, offsetSec: Math.max(0, startSec - best.start) };
+    // Caption times run up to a second behind the speech, so playback starts a little early.
+    return best && { url: `${AUDIO_SCHEME}://audio/${id}/${best.file}`, offsetSec: Math.max(0, startSec - PLAYBACK_LEAD_SEC - best.start) };
   });
   protocol.handle(AUDIO_SCHEME, (req) => {
     const [, id, file] = new URL(req.url).pathname.split("/");

@@ -8,7 +8,6 @@ const DEFAULTS: StoredSettings = {
   locale: "en",
   theme: "system",
   qgridUrl: "http://localhost:44900",
-  transcription: { provider: "openai", model: DEFAULT_MODELS.transcription.openai },
   live: { provider: "openai", model: DEFAULT_MODELS.live.openai },
   summary: { provider: "openai", model: DEFAULT_MODELS.summary.openai },
   language: "ko",
@@ -23,14 +22,15 @@ export async function openSettings(dir: string) {
   const settingsFile = path.join(dir, "settings.json");
   const keysFile = path.join(dir, "keys.bin");
 
-  const stored: Partial<StoredSettings> = existsSync(settingsFile)
-    ? JSON.parse(readFileSync(settingsFile, "utf8"))
-    : {};
+  const { transcription, ...stored }: Partial<StoredSettings> & { transcription?: { provider: "qgrid" | "openai" } } =
+    existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, "utf8")) : {};
   let settings: StoredSettings = { ...DEFAULTS, ...stored };
-  // Settings from before live captions had a model: follow the transcription provider.
-  if (!stored.live) {
-    const provider = settings.transcription.provider;
+  // Settings from when chunk transcription wrote the record: live captions write it now, and on
+  // qgrid that means GPT-Live, the default. Saved once, so a later choice is never overridden.
+  if (transcription) {
+    const provider = stored.live?.provider ?? transcription.provider;
     settings.live = { provider, model: DEFAULT_MODELS.live[provider] };
+    writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
   }
   const keys = await readKeys(keysFile);
 

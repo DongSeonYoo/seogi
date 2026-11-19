@@ -1,38 +1,147 @@
-import { GPT_LIVE_MODEL, type LiveEvent, type Track } from "../../shared/types";
+import { appendDelta } from "../../shared/text.ts";
+import { GPT_LIVE_MODEL, GPT_LIVE_TAIL_MS, type LiveEvent, type Track } from "../../shared/types.ts";
 import type { RecordingOptions } from "./recorder";
+
+/** A pause this long between pieces of a turn ends the sentence in progress. */
+const PAUSE_SEC = 2;
+/** A run-on without punctuation is cut here, so no utterance grows without bound. */
+const MAX_CHARS = 280;
+/**
+ * A sentence end followed by more text or by the end of what has arrived. A period right after a
+ * digit is not one: it may be a decimal still arriving ("2." then "23").
+ */
+const SENTENCE_END = /(?:(?<!\d)\.|[?!…。])(?=\s|$|[^\s\d.,?!…。])/;
+/** The longest wait between reconnect attempts; captions are the meeting record, so they never give up. */
+const MAX_BACKOFF_SEC = 10;
 
 /**
  * Live captions from GPT-Live: one WebRTC session per track through qgrid's liveCall. Only the
  * transcript of what people say (user turns) is used; the model's replies are never played and
- * their turns are ignored. Times are seconds since `startedAt`, the recording clock's origin.
+ * their turns are ignored. A user turn can run for the whole meeting when the model stays silent,
+ * so its text is cut into segments at sentence ends and pauses. A session that drops is reopened.
+ * Times are seconds since `startedAt`, the recording clock's origin.
  */
-export async function startGptLive(
+export function startGptLive(
   streams: [Track, MediaStream][],
   startedAt: number,
   onEvent: (track: Track, event: LiveEvent) => void,
-): Promise<() => void> {
-  const sessions = await Promise.all(
-    streams.map(async ([track, stream]) => {
-      try {
-        return await connect(stream, startedAt, (e) => onEvent(track, e));
-      } catch (e) {
-        onEvent(track, { type: "error", message: e instanceof Error ? e.message : String(e) });
-        return () => {};
-      }
-    }),
-  );
-  return () => sessions.forEach((stop) => stop());
+): () => void {
+  const stops = streams.map(([track, stream]) => keepAlive(stream, startedAt, (e) => onEvent(track, e)));
+  return () => stops.forEach((stop) => stop());
 }
 
-async function connect(stream: MediaStream, startedAt: number, emit: (e: LiveEvent) => void) {
+/** Keeps one track's session open until stopped, reconnecting after a drop. */
+function keepAlive(stream: MediaStream, startedAt: number, emit: (e: LiveEvent) => void) {
+  let stopped = false;
+  let failures = 0;
+  let generation = 0;
+  let stopSession: (() => void) | null = null;
+
+  async function open() {
+    const gen = ++generation;
+    try {
+      stopSession = await session(stream, startedAt, gen, emit, {
+        working: () => (failures = 0),
+        lost: () => {
+          if (stopped || gen !== generation) return;
+          emit({ type: "reconnect" });
+          retry();
+        },
+      });
+      if (stopped) stopSession();
+    } catch (e) {
+      if (stopped) return;
+      failures++;
+      emit({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      retry();
+    }
+  }
+  function retry() {
+    stopSession?.();
+    stopSession = null;
+    setTimeout(() => !stopped && void open(), 1000 * Math.min(MAX_BACKOFF_SEC, Math.max(1, failures)));
+  }
+
+  void open();
+  return () => {
+    stopped = true;
+    stopSession?.();
+  };
+}
+
+/** Turns cut into segments: the text of the sentence in progress and where it started. */
+export class Segmenter {
+  private readonly turns = new Map<string, { n: number; text: string; startSec: number; endSec: number }>();
+  private readonly emit: (e: LiveEvent) => void;
+  private readonly prefix: string;
+
+  constructor(prefix: string, emit: (e: LiveEvent) => void) {
+    this.prefix = prefix;
+    this.emit = emit;
+  }
+
+  add(turnId: string, text: string, startSec: number, endSec: number) {
+    let turn = this.turns.get(turnId);
+    if (turn?.text && startSec - turn.endSec >= PAUSE_SEC) this.cut(turnId);
+    turn = this.turns.get(turnId) ?? { n: 0, text: "", startSec, endSec };
+    if (!turn.text) turn.startSec = startSec;
+    turn.text = appendDelta(turn.text, text);
+    turn.endSec = Math.max(turn.endSec, endSec);
+    this.turns.set(turnId, turn);
+    this.emit({ type: "delta", id: this.id(turnId, turn.n), text, atSec: startSec, endSec });
+
+    // A piece can end one sentence and start the next ("다.서기"): finish each complete sentence.
+    let end: RegExpExecArray | null;
+    while ((end = SENTENCE_END.exec(turn.text))) {
+      const rest = turn.text.slice(end.index + end[0].length).trimStart();
+      this.emit({ type: "segment", id: this.id(turnId, turn.n), text: turn.text.slice(0, end.index + end[0].length).trim(), startSec: turn.startSec, endSec });
+      turn = { n: turn.n + 1, text: rest, startSec, endSec };
+      this.turns.set(turnId, turn);
+      if (rest) this.emit({ type: "delta", id: this.id(turnId, turn.n), text: rest, atSec: startSec, endSec });
+    }
+    if (turn.text.length >= MAX_CHARS) this.cut(turnId);
+  }
+
+  /** Finishes the sentence in progress of `turnId`, or of every turn. */
+  cut(turnId?: string) {
+    for (const [id, turn] of this.turns) {
+      if (turnId !== undefined && id !== turnId) continue;
+      if (turn.text.trim())
+        this.emit({ type: "segment", id: this.id(id, turn.n), text: turn.text.trim(), startSec: turn.startSec, endSec: turn.endSec });
+      this.turns.set(id, { ...turn, n: turn.n + 1, text: "" });
+    }
+  }
+
+  private id(turnId: string, n: number) {
+    return `${this.prefix}:${turnId}:${n}`;
+  }
+}
+
+async function session(
+  stream: MediaStream,
+  startedAt: number,
+  gen: number,
+  emit: (e: LiveEvent) => void,
+  on: { working: () => void; lost: () => void },
+) {
   const pc = new RTCPeerConnection();
   // A copy of the track, so ending the session never stops the recorder's own capture.
   for (const t of stream.getAudioTracks()) pc.addTrack(t.clone());
   const channel = pc.createDataChannel("oai-events");
-  // Event times are milliseconds of session audio; the session starts this many seconds into the recording.
+  // Event times are milliseconds of session audio, which starts flowing once the peer connects;
+  // session.started arrives about a second later, so it only sets the origin if that was missed.
   let offset = (Date.now() - startedAt) / 1000;
+  let anchored = false;
   const userTurns = new Set<string>();
+  const segments = new Segmenter(`g${gen}`, emit);
   let closing = false;
+  const lost = () => {
+    if (closing) return;
+    closing = true;
+    segments.cut();
+    pc.close();
+    on.lost();
+  };
 
   type Timed = { start_ms?: number; end_ms?: number };
   channel.addEventListener("message", (msg) => {
@@ -47,40 +156,51 @@ async function connect(stream: MediaStream, startedAt: number, emit: (e: LiveEve
     } catch {
       return;
     }
-    const timed = (id: string, text: string, t: Timed) =>
-      emit({
-        type: "delta",
-        id,
-        text,
-        atSec: offset + (t.start_ms ?? 0) / 1000,
-        endSec: t.end_ms === undefined ? undefined : offset + t.end_ms / 1000,
-      });
+    const add = (id: string, text: string, t: Timed) => {
+      const start = offset + (t.start_ms ?? 0) / 1000;
+      segments.add(id, text, start, t.end_ms === undefined ? start : offset + t.end_ms / 1000);
+    };
     const turn = e.turn;
-    if (e.type === "session.started") offset = (Date.now() - startedAt) / 1000;
-    // A user turn can run as long as the meeting when the model stays silent, so drafts are built
-    // from its timed deltas and leave as the final transcript covers them; turn.done is not needed.
-    else if (turn && e.type === "turn.created" && turn.role === "user") {
+    if (e.type === "session.started") {
+      if (!anchored) offset = (Date.now() - startedAt) / 1000;
+      on.working();
+    } else if (turn && e.type === "turn.created" && turn.role === "user") {
       userTurns.add(turn.id);
-      if (turn.transcript) timed(turn.id, turn.transcript, turn);
-    } else if (e.type === "turn.delta" && e.turn_id && e.delta && userTurns.has(e.turn_id)) timed(e.turn_id, e.delta, e);
-    else if (e.type === "session.closed" && !closing) emit({ type: "error", message: "GPT-Live session closed" });
+      if (turn.transcript) add(turn.id, turn.transcript, turn);
+    } else if (e.type === "turn.delta" && e.turn_id && e.delta && userTurns.has(e.turn_id)) add(e.turn_id, e.delta, e);
+    else if ((e.type === "turn.done" || e.type === "turn.completed") && turn && userTurns.has(turn.id)) segments.cut(turn.id);
+    else if (e.type === "session.closed") lost();
+  });
+  channel.addEventListener("close", lost);
+  pc.addEventListener("connectionstatechange", () => {
+    if (pc.connectionState === "connected" && !anchored) {
+      offset = (Date.now() - startedAt) / 1000;
+      anchored = true;
+    }
+    if (pc.connectionState === "failed" || pc.connectionState === "closed") lost();
   });
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   const answer = await window.api.liveCall(offer.sdp ?? "");
   if (!answer.ok) {
+    closing = true;
     pc.close();
     throw new Error(answer.error);
   }
   await pc.setRemoteDescription({ type: "answer", sdp: answer.sdp });
 
   return () => {
+    if (closing) return;
     closing = true;
-    // session.close ends billing at once; a peer that only disconnects lingers about 30 s.
-    if (channel.readyState === "open") channel.send(JSON.stringify({ type: "session.close" }));
+    // No more audio, but the transcript of the last words is still on its way.
     pc.getSenders().forEach((s) => s.track?.stop());
-    setTimeout(() => pc.close(), 500);
+    setTimeout(() => {
+      segments.cut();
+      // session.close ends billing at once; a peer that only disconnects lingers about 30 s.
+      if (channel.readyState === "open") channel.send(JSON.stringify({ type: "session.close" }));
+      setTimeout(() => pc.close(), 500);
+    }, GPT_LIVE_TAIL_MS);
   };
 }
 
@@ -91,14 +211,14 @@ async function connect(stream: MediaStream, startedAt: number, emit: (e: LiveEve
 export function liveCaptionHooks(meetingId: number, live: { provider: string; model: string }) {
   let stopGptLive: (() => void) | null = null;
   let stopped = false;
-  const startedAt = Date.now();
   const gpt = live.provider === "qgrid" && live.model === GPT_LIVE_MODEL;
   const options: Pick<RecordingOptions, "onFrame" | "onStreams"> = gpt
     ? {
-        onStreams: (streams) =>
-          void startGptLive(streams, startedAt, (track, e) => window.api.sendLiveEvent(meetingId, track, e)).then(
-            (stop) => (stopped ? stop() : (stopGptLive = stop)),
-          ),
+        onStreams: (streams) => {
+          if (stopped) return;
+          // The recorder's clock starts here, so caption times line up with the saved audio.
+          stopGptLive = startGptLive(streams, Date.now(), (track, e) => window.api.sendLiveEvent(meetingId, track, e));
+        },
       }
     : { onFrame: (track, pcm) => window.api.sendLiveAudio(meetingId, track, pcm) };
   return {

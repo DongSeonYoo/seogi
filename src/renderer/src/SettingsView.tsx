@@ -10,13 +10,13 @@ import {
   type KeyName,
   type LiveProvider,
   type ModelList,
+  type ModelOption,
   type ModelRole,
   type Settings,
   type StorageInfo,
   type StoredSettings,
   type SummaryProvider,
   type ThemeMode,
-  type TranscriptionProvider,
 } from "../../shared/types";
 import { liveCaptionHooks } from "./gptLive";
 import { startRecording } from "./recorder";
@@ -302,7 +302,7 @@ function ModelGroup({
 
 function Models({ s, patch, setS }: SectionProps & { setS: (s: Settings) => void }) {
   const t = useT();
-  const usesQgrid = [s.live, s.transcription, s.summary].some((x) => x.provider === "qgrid");
+  const usesQgrid = [s.live, s.summary].some((x) => x.provider === "qgrid");
   const reloadKey = `${s.qgridUrl}|${s.hasKey.openai}|${s.hasKey.anthropic}`;
   return (
     <>
@@ -313,18 +313,6 @@ function Models({ s, patch, setS }: SectionProps & { setS: (s: Settings) => void
         providers={["qgrid", "openai"]}
         value={s.live}
         onChange={(v) => patch({ live: { provider: v.provider as LiveProvider, model: v.model } })}
-        reloadKey={reloadKey}
-      >
-        <LiveTest micDeviceId={s.recording.micDeviceId} live={s.live} />
-      </ModelGroup>
-      <ModelGroup
-        role="transcription"
-        title={t("settings.transcriptTitle")}
-        description={t("settings.transcriptDesc")}
-        providers={["qgrid", "openai"]}
-        value={s.transcription}
-        onChange={(v) => patch({ transcription: { provider: v.provider as TranscriptionProvider, model: v.model } })}
-        test="transcription"
         reloadKey={reloadKey}
       />
       <ModelGroup
@@ -422,75 +410,6 @@ function KeyRow({
   );
 }
 
-/** Mic-only live captions with the saved live model, so a model can be tried before a meeting. */
-function LiveTest({ micDeviceId, live }: { micDeviceId: string; live: Settings["live"] }) {
-  const t = useT();
-  const [running, setRunning] = useState(false);
-  const [view, setView] = useState<LiveView | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const stopRef = useRef<(() => Promise<void>) | null>(null);
-  const textRef = useRef<HTMLParagraphElement>(null);
-
-  useEffect(() => {
-    const el = textRef.current;
-    if (el) el.scrollTop = el.scrollHeight; // follow the newest words
-  }, [view]);
-  useEffect(() => window.api.onLive((id, v) => id === LIVE_TEST_ID && setView(v)), []);
-  useEffect(() => () => void stop(), []);
-
-  async function start() {
-    setError(null);
-    setView(null);
-    try {
-      await window.api.startLiveTest();
-      const captions = liveCaptionHooks(LIVE_TEST_ID, live);
-      const stopRecording = await startRecording(() => {}, { micDeviceId, systemAudio: false, ...captions.options });
-      stopRef.current = async () => {
-        captions.stop();
-        await stopRecording();
-      };
-      setRunning(true);
-    } catch (e) {
-      await window.api.stopLiveTest();
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }
-
-  async function stop() {
-    const s = stopRef.current;
-    stopRef.current = null;
-    setRunning(false);
-    await s?.();
-    await window.api.stopLiveTest();
-  }
-
-  const text = view?.lines.map((l) => l.text).join(" ");
-  const problem = error ?? view?.error;
-  return (
-    <Row
-      label={t("settings.liveTest")}
-      description={t("settings.liveTestDesc")}
-      stack={running || !!text || !!problem}
-    >
-      <div className="live-test">
-        <Button icon={running ? <Square aria-hidden /> : <Mic aria-hidden />} onClick={running ? stop : start}>
-          {running ? t("settings.liveTestStop") : t("settings.liveTestStart")}
-        </Button>
-        {(running || text) && (
-          <p className="live-test__text" role="status" ref={textRef}>
-            {text || t("settings.liveTestListening")}
-          </p>
-        )}
-        {problem && (
-          <p className="connection__result" data-tone="error" role="alert">
-            {problem}
-          </p>
-        )}
-      </div>
-    </Row>
-  );
-}
-
 function ConnectionTest({ role }: { role: ConnectionRole }) {
   const t = useT();
   const [state, setState] = useState<"loading" | ConnectionResult | null>(null);
@@ -548,6 +467,7 @@ function Transcription({ s, patch }: SectionProps) {
           onCommit={(glossary) => patch({ glossary })}
         />
       </Row>
+      <TranscriptionTest s={s} />
     </Group>
   );
 }
@@ -628,15 +548,16 @@ function About() {
       </Group>
       <Group title={t("settings.shortcuts")}>
         {[
+          [t("action.newSession"), "⌘N"],
           [t("shortcut.record"), "⇧⌘R"],
           [t("shortcut.palette"), "⌘K"],
-          [t("shortcut.tabs"), "⌘1 / ⌘2"],
           [t("shortcut.undo"), "⌘Z / ⇧⌘Z"],
           [t("action.star"), "⌘D"],
           [t("action.resummarize"), "⇧⌘S"],
           [t("action.delete"), "⌘⌫"],
           [t("action.newFolder"), "⇧⌘N"],
           [t("action.toggleSidebar"), "⌘B"],
+          [t("action.toggleSummary"), "⌥⌘S"],
           [t("action.settings"), "⌘,"],
         ].map(([label, key]) => (
           <Row key={label} label={label}>
@@ -652,4 +573,103 @@ function formatBytes(n: number) {
   if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
   if (n < 1024 ** 3) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
+}
+
+/**
+ * Speak-and-see test for any live caption model the provider offers, streamed as in a meeting.
+ * The saved model is preselected; nothing is saved.
+ */
+function TranscriptionTest({ s }: { s: Settings }) {
+  const t = useT();
+  const [model, setModel] = useState(s.live.model);
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [running, setRunning] = useState(false);
+  const [view, setView] = useState<LiveView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const stopRef = useRef<(() => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    void window.api
+      .listModels("live", s.live.provider)
+      .then((r) => setModels(r.ok ? r.models.filter((m) => m.available) : []));
+  }, [s.live.provider, s.qgridUrl]);
+  useEffect(() => setModel(s.live.model), [s.live.model]);
+  useEffect(() => window.api.onLive((id, v) => id === LIVE_TEST_ID && setView(v)), []);
+  useEffect(() => () => void stopRef.current?.(), []);
+
+  async function start() {
+    setError(null);
+    setView(null);
+    const live = { provider: s.live.provider, model };
+    try {
+      await window.api.startLiveTest(live);
+      const captions = liveCaptionHooks(LIVE_TEST_ID, live);
+      const stopRecording = await startRecording(() => {}, { micDeviceId: s.recording.micDeviceId, systemAudio: false, ...captions.options });
+      stopRef.current = async () => {
+        captions.stop();
+        await stopRecording();
+        await window.api.stopLiveTest();
+      };
+      setRunning(true);
+    } catch (e) {
+      await window.api.stopLiveTest();
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function stop() {
+    const stopIt = stopRef.current;
+    stopRef.current = null;
+    setRunning(false);
+    await stopIt?.();
+  }
+
+  const text = view?.lines.map((l) => l.text).join(" ") ?? "";
+  return (
+    <Row label={t("settings.transcribeTest")} description={t("settings.transcribeTestDesc")} stack>
+      <div className="live-test">
+        <div className="live-test__bar">
+          <Select aria-label={t("settings.transcribeTestModel")} value={model} disabled={running} onChange={(e) => setModel(e.target.value)}>
+            {/* The saved model stays selectable while the list loads or if it no longer lists it. */}
+            {!models.some((m) => m.id === s.live.model) && <option value={s.live.model}>{s.live.model}</option>}
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.id}
+              </option>
+            ))}
+          </Select>
+          <Button icon={running ? <Square aria-hidden /> : <Mic aria-hidden />} onClick={running ? stop : start}>
+            {running ? t("settings.liveTestStop") : t("settings.transcribeTestStart")}
+          </Button>
+        </div>
+        {(running || view) && <Column text={text} waiting={running} error={view?.error ?? null} />}
+        {error && (
+          <p className="connection__result" data-tone="error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+    </Row>
+  );
+}
+
+function Column({ text, waiting, error }: { text: string; waiting: boolean; error: string | null }) {
+  const t = useT();
+  const textRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    const el = textRef.current;
+    if (el) el.scrollTop = el.scrollHeight; // follow the newest words
+  }, [text]);
+  return (
+    <>
+      <p className="live-test__text" role="status" ref={textRef} data-done={!waiting || undefined}>
+        {text || (waiting ? t("settings.liveTestListening") : t("settings.transcribeTestEmpty"))}
+      </p>
+      {error && (
+        <p className="connection__result" data-tone="error" role="alert">
+          {error}
+        </p>
+      )}
+    </>
+  );
 }

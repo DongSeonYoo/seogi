@@ -1110,6 +1110,17 @@
   justify-items: start;
 }
 
+.live-test__bar {
+  display: flex;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.live-test__bar > .select {
+  flex: 1;
+  min-width: 0;
+}
+
 .live-test__text {
   width: 100%;
   max-height: 160px;
@@ -1120,6 +1131,22 @@
   color: var(--color-ink-2);
   font-size: var(--text-read);
   line-height: var(--leading-read);
+}
+
+/* Once the test stops, the whole transcript shows instead of a scrolling tail. */
+.live-test__text[data-done] {
+  max-height: none;
+}
+
+.trial {
+  display: grid;
+  gap: var(--space-1);
+  width: 100%;
+}
+
+.trial__label {
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
 }
 
 /* ── Pane dividers ──────────────────────────────────────────────────── */
@@ -1158,4 +1185,49 @@
 .splitter:hover::after,
 .splitter[data-dragging]::after {
   background: var(--color-accent);
+}
+
+/* ── Session: transcript beside the summary pane ───────────────────── */
+.session {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.session__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.session__main > .notice {
+  margin: 0 var(--space-6) var(--space-2);
+}
+
+.session__summary {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  min-height: 0;
+  border-left: var(--rule);
+  background: var(--color-chrome);
+}
+
+.session__summary-title {
+  padding: var(--space-3) var(--space-4) 0;
+  color: var(--color-ink-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-strong);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.session__summary .summary {
+  padding: var(--space-2) var(--space-4) var(--space-8);
+}
+
+.splitter[data-side="right"] {
+  margin-left: 0;
 }

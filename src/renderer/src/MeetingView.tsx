@@ -1,92 +1,132 @@
-import { AlertCircle, Check, Copy, Info, Pause, Play } from "lucide-react";
+import { AlertCircle, Check, Copy, Info, Mic, Pause, Play, Square } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { LiveView, MeetingDetail, Utterance } from "../../shared/types";
 import { joinSplitSentences } from "../../shared/transcript";
 import { clock, duration, fullDate, groupUtterances } from "./format";
 import { useI18n, useT } from "./i18n";
 import { Elapsed, type Recording } from "./Toolbar";
-import { IconButton, Segmented } from "./ui";
+import { Splitter } from "./Splitter";
+import { IconButton } from "./ui";
 
-export type DetailTab = "summary" | "transcript";
+/** The summary side pane's state, owned by the window layout. */
+export type SummaryPane = {
+  open: boolean;
+  width: number;
+  onResize: (width: number) => void;
+  onReset: () => void;
+};
 
-/** The detail pane: summary or transcript (⌘1 / ⌘2) over a status bar. */
+/**
+ * A session: the transcript with its record button and status bar, and the summary in a side pane
+ * on the right that can be resized or closed.
+ */
 export function MeetingView({
   meeting: m,
-  tab,
-  onTab,
   live,
   recording,
   systemSilent,
+  summary,
+  onRecord,
 }: {
   meeting: MeetingDetail;
-  tab: DetailTab;
-  onTab: (t: DetailTab) => void;
   live: LiveView | null;
   recording: Recording | null;
   systemSilent: boolean;
+  summary: SummaryPane;
+  onRecord: () => void;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
   const speakers = new Set(m.utterances.map((u) => u.track)).size;
   return (
-    <>
-      <div className="detail__head">
-        <Segmented<DetailTab>
-          label={t("detail.view")}
-          value={tab}
-          onChange={onTab}
-          options={[
-            { value: "summary", label: t("detail.summary") },
-            { value: "transcript", label: t("detail.transcript") },
-          ]}
-        />
+    <div className="session">
+      <div className="session__main">
+        {(m.status === "new" || recording) && (
+          <div className="detail__head">
+            <div className="capsule">
+              <button
+                type="button"
+                className="capsule__label"
+                data-recording={recording ? true : undefined}
+                onClick={onRecord}
+                title={`${recording ? t("action.stop") : t("action.record")} (⇧⌘R)`}
+              >
+                {recording ? (
+                  <>
+                    <Square aria-hidden />
+                    <Elapsed since={recording.startedAt} />
+                  </>
+                ) : (
+                  <>
+                    <Mic aria-hidden />
+                    {t("toolbar.record")}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+        {m.error && (
+          <p className="notice" role="alert">
+            <AlertCircle aria-hidden />
+            <span>{m.error}</span>
+          </p>
+        )}
+        {recording && systemSilent && (
+          <p className="notice notice--info" role="status">
+            <Info aria-hidden />
+            <span>{t("detail.systemSilent")}</span>
+          </p>
+        )}
+        <Transcript meeting={m} live={live} />
+        <footer className="statusbar tnum" role="status">
+          <span className="statusbar__left">
+            {recording ? (
+              <>
+                <span className="live-dot" aria-hidden />
+                {t("detail.recordingFor")} <Elapsed since={recording.startedAt} />
+                {live?.error && <span className="statusbar__error"> · {t("detail.liveError", { error: live.error })}</span>}
+              </>
+            ) : m.status === "processing" ? (
+              <>
+                <span className="spinner" aria-hidden />
+                {t("detail.processing")}
+              </>
+            ) : (
+              fullDate(m.startedAt, i18n)
+            )}
+          </span>
+          <span>
+            {[
+              m.durationSec > 0 && duration(m.durationSec, i18n),
+              t("detail.utterances", { n: m.utterances.length }),
+              speakers > 1 && `${t("speaker.mic")} · ${t("speaker.system")}`,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
+        </footer>
       </div>
-      {m.error && (
-        <p className="notice" role="alert">
-          <AlertCircle aria-hidden />
-          <span>{m.error}</span>
-        </p>
+      {summary.open && (
+        <>
+          <Splitter
+            side="right"
+            at={summary.width}
+            label={t("detail.resizeSummary")}
+            onResize={summary.onResize}
+            onReset={summary.onReset}
+          />
+          <aside className="session__summary" style={{ width: summary.width }} aria-label={t("detail.summary")}>
+            <h2 className="session__summary-title">{t("detail.summary")}</h2>
+            <SummaryView meeting={m} />
+          </aside>
+        </>
       )}
-      {recording && systemSilent && (
-        <p className="notice notice--info" role="status">
-          <Info aria-hidden />
-          <span>{t("detail.systemSilent")}</span>
-        </p>
-      )}
-      {tab === "summary" ? <SummaryView meeting={m} /> : <Transcript meeting={m} live={live} />}
-      <footer className="statusbar tnum" role="status">
-        <span className="statusbar__left">
-          {recording ? (
-            <>
-              <span className="live-dot" aria-hidden />
-              {t("detail.recordingFor")} <Elapsed since={recording.startedAt} />
-              {m.pendingChunks > 0 && ` · ${t("detail.pending", { n: m.pendingChunks })}`}
-              {live?.error && <span className="statusbar__error"> · {t("detail.liveError", { error: live.error })}</span>}
-            </>
-          ) : m.status === "processing" ? (
-            <>
-              <span className="spinner" aria-hidden />
-              {t("detail.processing")}
-            </>
-          ) : (
-            fullDate(m.startedAt, i18n)
-          )}
-        </span>
-        <span>
-          {[
-            m.durationSec > 0 && duration(m.durationSec, i18n),
-            t("detail.utterances", { n: m.utterances.length }),
-            speakers > 1 && `${t("speaker.mic")} · ${t("speaker.system")}`,
-          ]
-            .filter(Boolean)
-            .join(" · ")}
-        </span>
-      </footer>
-    </>
+    </div>
   );
 }
 
-/** A transcript line; drafts are live captions not yet replaced by a chunk transcript. */
+/** A transcript line; drafts are live captions whose sentence is still being spoken. */
 type Line = Utterance & { key: string; draft?: boolean };
 
 function Transcript({ meeting: m, live }: { meeting: MeetingDetail; live: LiveView | null }) {
@@ -122,7 +162,9 @@ function Transcript({ meeting: m, live }: { meeting: MeetingDetail; live: LiveVi
           ))}
         </ol>
       ))}
-      {!lines.length && !busy && <p className="empty">{t("detail.emptyTranscript")}</p>}
+      {!lines.length && !busy && (
+        <p className="empty">{t(m.status === "new" ? "detail.notRecorded" : "detail.emptyTranscript")}</p>
+      )}
       {m.status === "recording" && (
         <p className="typing" role="status">
           <span className="spinner" aria-hidden />
@@ -222,7 +264,7 @@ function SummaryView({ meeting: m }: { meeting: MeetingDetail }) {
       {!s && (
         <div className="panel__pending">
           {m.status === "processing" && <span className="spinner" aria-hidden />}
-          {m.status === "recording"
+          {m.status === "recording" || m.status === "new"
             ? t("summary.whenStopped")
             : m.status === "processing"
               ? t("summary.writing")

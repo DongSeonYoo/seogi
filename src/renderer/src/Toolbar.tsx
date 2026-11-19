@@ -1,4 +1,4 @@
-import { Mic, PanelLeft, RefreshCw, Search, Square, Star } from "lucide-react";
+import { PanelLeft, PanelRight, Plus, RefreshCw, Search, Star } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { MeetingDetail } from "../../shared/types";
 import { clock, duration, fullDate } from "./format";
@@ -11,35 +11,37 @@ export type Recording = { id: number; startedAt: number };
 /** The unified toolbar over the list and detail: title on the left, capsules of actions on the right. */
 export function Toolbar({
   meeting: m,
-  recording,
   renaming,
   sidebar,
+  summary,
   canResummarize,
   onToggleSidebar,
+  onToggleSummary,
   onRename,
   onStartRename,
-  onRecord,
+  onNewSession,
   onStar,
   onResummarize,
   onPalette,
 }: {
   meeting: MeetingDetail | null;
-  recording: Recording | null;
   renaming: boolean;
   sidebar: boolean;
+  summary: boolean;
   canResummarize: boolean;
   onToggleSidebar: () => void;
+  onToggleSummary: () => void;
   /** null: the edit was cancelled. */
   onRename: (title: string | null) => void;
   onStartRename: () => void;
-  onRecord: () => void;
+  onNewSession: () => void;
   onStar: () => void;
   onResummarize: () => void;
   onPalette: () => void;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
-  const status = { recording: t("status.recording"), processing: t("status.processing"), done: "", error: t("status.error") };
+  const status = { new: "", recording: t("status.recording"), processing: t("status.processing"), done: "", error: t("status.error") };
   const subtitle = m
     ? [fullDate(m.startedAt, i18n), m.durationSec > 0 && duration(m.durationSec, i18n), status[m.status]]
         .filter(Boolean)
@@ -63,24 +65,9 @@ export function Toolbar({
       </div>
       <div className="toolbar__actions">
         <div className="capsule">
-          <button
-            type="button"
-            className="capsule__label"
-            data-recording={recording ? true : undefined}
-            onClick={onRecord}
-            title={`${recording ? t("action.stop") : t("action.record")} (⇧⌘R)`}
-          >
-            {recording ? (
-              <>
-                <Square aria-hidden />
-                <Elapsed since={recording.startedAt} />
-              </>
-            ) : (
-              <>
-                <Mic aria-hidden />
-                {t("toolbar.record")}
-              </>
-            )}
+          <button type="button" className="capsule__label" onClick={onNewSession} title={`${t("action.newSession")} (⌘N)`}>
+            <Plus aria-hidden />
+            {t("toolbar.newSession")}
           </button>
         </div>
         <div className="capsule">
@@ -94,6 +81,9 @@ export function Toolbar({
         <div className="capsule">
           <IconButton label={`${t("action.palette")} (⌘K)`} onClick={onPalette}>
             <Search aria-hidden />
+          </IconButton>
+          <IconButton label={`${t("action.toggleSummary")} (⌥⌘S)`} aria-pressed={summary} onClick={onToggleSummary}>
+            <PanelRight aria-hidden />
           </IconButton>
         </div>
       </div>

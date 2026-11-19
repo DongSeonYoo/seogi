@@ -106,6 +106,7 @@ function preview(m: MeetingRow, t: Translate) {
   if (m.status === "recording") return t("preview.recording");
   if (m.status === "processing") return t("preview.processing");
   if (m.status === "error") return t("preview.error");
+  if (m.status === "new") return t("preview.new");
   return t("preview.none");
 }
 

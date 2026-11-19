@@ -2,7 +2,8 @@ import type { Locale } from "./i18n";
 
 export type Track = "mic" | "system";
 
-export type MeetingStatus = "recording" | "processing" | "done" | "error";
+/** `new`: a session that has not been recorded yet. */
+export type MeetingStatus = "new" | "recording" | "processing" | "done" | "error";
 
 export type Summary = {
   title: string;
@@ -46,6 +47,7 @@ export type LibraryResult = { ok: true; id?: number } | { ok: false; error: stri
 /** Commands shared by the menu bar, toolbar, context menus and ⌘K. */
 export type ActionId =
   | "record"
+  | "newSession"
   | "newFolder"
   | "undo"
   | "redo"
@@ -54,9 +56,8 @@ export type ActionId =
   | "star"
   | "resummarize"
   | "delete"
-  | "tab:summary"
-  | "tab:transcript"
   | "toggleSidebar"
+  | "toggleSummary"
   | "settings"
   | "styleGuide";
 
@@ -74,17 +75,18 @@ export type Utterance = { id: number; track: Track; startSec: number; text: stri
 export type MeetingDetail = MeetingRow & {
   summary: Summary | null;
   error: string | null;
-  pendingChunks: number;
   utterances: Utterance[];
 };
 
-/** A live caption draft, shown while recording until the chunk transcript replaces it. */
+/** Live caption text still being spoken; it becomes an utterance when its segment finishes. */
 export type LiveLine = { key: string; track: Track; startSec: number; text: string };
 /** A live caption event from any provider: text still being spoken, or a finished segment. */
 export type LiveEvent =
   /** Text appended to segment `id`; `endSec`, when known, is where this piece of audio ends. */
   | { type: "delta"; id: string; text: string; atSec: number; endSec?: number }
   | { type: "segment"; id: string; text: string; startSec: number; endSec: number }
+  /** The stream lost its connection and is opening a new one; speech in between has no captions. */
+  | { type: "reconnect" }
   | { type: "error"; message: string };
 
 /**
@@ -92,6 +94,8 @@ export type LiveEvent =
  * what people say; its spoken replies are discarded. Runs over WebRTC in the renderer (qgrid only).
  */
 export const GPT_LIVE_MODEL = "openai/gpt-live-1";
+/** How long a stopped GPT-Live session keeps listening for the transcript of the last words. */
+export const GPT_LIVE_TAIL_MS = 2000;
 
 /** Live caption traffic for the settings test uses this id; meetings start at 1. */
 export const LIVE_TEST_ID = 0;
@@ -99,20 +103,18 @@ export type LiveView = { lines: LiveLine[]; error: string | null };
 
 export type Chunk = { meetingId: number; track: Track; startSec: number; pcm: Int16Array };
 
-export type TranscriptionProvider = "qgrid" | "openai";
 export type LiveProvider = "qgrid" | "openai";
 export type SummaryProvider = "qgrid" | "openai" | "anthropic";
 
 export const DEFAULT_MODELS = {
-  transcription: { openai: "gpt-4o-transcribe", qgrid: "openai/gpt-transcribe" },
-  live: { openai: "gpt-live-transcribe", qgrid: "openai/gpt-live-transcribe" },
+  live: { openai: "gpt-live-transcribe", qgrid: GPT_LIVE_MODEL },
   summary: { openai: "gpt-6-luna", anthropic: "claude-sonnet-5-5", qgrid: "openai/gpt-6-luna" },
 } as const;
 
 export type ThemeMode = "system" | "light" | "dark";
 export type KeyName = "openai" | "anthropic";
-export type ConnectionRole = "transcription" | "summary";
-export type ModelRole = "transcription" | "live" | "summary";
+export type ConnectionRole = "summary";
+export type ModelRole = "live" | "summary";
 
 /** One choice in a model picker; `detail` is a short price and capability line. */
 export type ModelOption = { id: string; available: boolean; detail?: string; efforts?: string[] };
@@ -123,8 +125,7 @@ export type Settings = {
   locale: Locale;
   theme: ThemeMode;
   qgridUrl: string;
-  transcription: { provider: TranscriptionProvider; model: string };
-  /** Live caption drafts while recording; replaced by the transcription model's chunks. */
+  /** Live captions: what the meeting record is written from. */
   live: { provider: LiveProvider; model: string };
   /** `effort` is a reasoning level the model lists (qgrid only); unset uses the model default. */
   summary: { provider: SummaryProvider; model: string; effort?: string };
@@ -166,7 +167,10 @@ export type Api = {
   onAccentColor(listener: (hex: string) => void): () => void;
   getMeeting(id: number): Promise<MeetingDetail | null>;
   /** Starts a meeting in `folderId` (the folder on screen), or unfiled. */
-  startMeeting(folderId?: number | null): Promise<number>;
+  /** A new, unrecorded session; resolves to its id. */
+  createMeeting(folderId?: number | null): Promise<number>;
+  /** Starts recording a `new` session; false when it is not one. */
+  startMeeting(id: number): Promise<boolean>;
   sendChunk(chunk: Chunk): void;
   /** About 100 ms of 16 kHz PCM16 for the live captions, every frame from the track's start. */
   sendLiveAudio(meetingId: number, track: Track, pcm: Int16Array): void;
@@ -176,13 +180,14 @@ export type Api = {
   liveCall(sdp: string): Promise<{ ok: true; sdp: string } | { ok: false; error: string }>;
   stopMeeting(id: number): Promise<void>;
   /** Live captions for the settings test under LIVE_TEST_ID; nothing is saved. */
-  startLiveTest(): Promise<void>;
+  /** `model` overrides the saved live model. */
+  startLiveTest(model?: Settings["live"]): Promise<void>;
   stopLiveTest(): Promise<void>;
   resummarize(id: number): Promise<void>;
   markOpened(id: number): Promise<void>;
   audioFor(meetingId: number, track: Track, startSec: number): Promise<AudioRef | null>;
   getSettings(): Promise<Settings>;
-  /** Applies immediately; nested groups (transcription, summary, recording) are replaced whole. */
+  /** Applies immediately; nested groups (live, summary, recording) are replaced whole. */
   patchSettings(patch: Partial<StoredSettings>): Promise<Settings>;
   /** "" deletes the key. */
   setKey(name: KeyName, value: string): Promise<Settings>;

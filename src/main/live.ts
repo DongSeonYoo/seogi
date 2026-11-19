@@ -1,19 +1,20 @@
 import type { Translate } from "../shared/i18n";
+import { appendDelta } from "../shared/text.ts";
 import type { LiveEvent, LiveLine, LiveView, Track } from "../shared/types";
 
 export type { LiveEvent };
-
-/** Live captions are drafts: kept in memory only and replaced by the chunk transcripts. */
 
 const IN_RATE = 16_000;
 const OPENAI_RATE = 24_000;
 const OPENAI_URL = "wss://api.openai.com/v1/realtime?intent=transcription";
 const PROJECT_NAME = "seogi";
-// The chunk transcripts of the same audio are already logged; drafts would only duplicate them.
+// ponytail: caption streams are not logged in qgrid; turn on to see their usage there.
 const QGRID_LOGGER = false;
+/** Longest a stop waits for the transcripts of the last words before giving up on them. */
+const STOP_WAIT_MS = 12_000;
 
 /** One track's stream. Input is mono PCM16 at 16 kHz, every frame from the track's first sample. */
-export type LiveStream = { audio(pcm: Int16Array): void; stop(): void };
+export type LiveStream = { audio(pcm: Int16Array): void; /** Resolves once the last transcripts are in. */ stop(): Promise<void> };
 
 export type LiveConfig = { model: string; language?: string; prompt?: string; t: Translate } & (
   | { provider: "qgrid"; url: string }
@@ -26,50 +27,71 @@ export function openLiveStream(config: LiveConfig, onEvent: (e: LiveEvent) => vo
 
 const b64 = (pcm: Int16Array) => Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).toString("base64");
 
-/** qgrid's transcribeStream does the segmenting; this is a thin socket client. */
+/**
+ * qgrid's transcribeStream does the segmenting; this is a thin socket client. A socket that drops
+ * mid-meeting is reopened; segment times of the new session count from where it joined.
+ */
 function qgridStream(
   config: LiveConfig & { provider: "qgrid" },
   onEvent: (e: LiveEvent) => void,
 ): LiveStream {
-  const ws = new WebSocket(`${config.url.replace(/^http/, "ws").replace(/\/$/, "")}/api/qgrid/transcribeStream`);
-  const queue: string[] = [];
+  let ws: WebSocket;
+  let queue: string[] = [];
   let ready = false;
   let stopped = false;
-  let samples = 0;
+  let failures = 0;
+  let samples = 0; // input clock, 16 kHz
+  let baseSec = 0; // where the current session joined the input clock
+  let closed: () => void = () => {};
+  const done = new Promise<void>((r) => (closed = r));
   const send = (event: string, data: unknown) => ws.send(JSON.stringify({ event, data }));
 
-  ws.onopen = () =>
-    send("start", {
-      sampleRate: IN_RATE,
-      model: config.model,
-      language: config.language,
-      prompt: config.prompt,
-      logger: QGRID_LOGGER,
-      projectName: PROJECT_NAME,
-    });
-  ws.onmessage = (e) => {
-    const { event, data } = JSON.parse(String(e.data));
-    if (event === "ready") {
-      ready = true;
-      for (const pcm of queue.splice(0)) send("audio", { pcm });
-      if (stopped) send("stop", {});
-    } else if (event === "delta")
-      onEvent({ type: "delta", id: data.segmentId, text: data.text, atSec: samples / IN_RATE });
-    else if (event === "segment")
-      onEvent({
-        type: "segment",
-        id: data.segmentId,
-        text: data.text,
-        startSec: data.startMs / 1000,
-        endSec: data.endMs / 1000,
+  function connect() {
+    ws = new WebSocket(`${config.url.replace(/^http/, "ws").replace(/\/$/, "")}/api/qgrid/transcribeStream`);
+    ready = false;
+    baseSec = samples / IN_RATE;
+    ws.onopen = () =>
+      send("start", {
+        sampleRate: IN_RATE,
+        model: config.model,
+        language: config.language,
+        prompt: config.prompt,
+        logger: QGRID_LOGGER,
+        projectName: PROJECT_NAME,
       });
-    else if (event === "error") onEvent({ type: "error", message: data.message });
-  };
-  ws.onclose = (e) => {
-    if (!stopped) onEvent({ type: "error", message: config.t("error.qgridClosed", { code: e.code }) });
-    stopped = true;
-  };
+    ws.onmessage = (e) => {
+      const { event, data } = JSON.parse(String(e.data));
+      if (event === "ready") {
+        ready = true;
+        failures = 0;
+        for (const pcm of queue.splice(0)) send("audio", { pcm });
+        if (stopped) send("stop", {});
+      } else if (event === "delta")
+        onEvent({ type: "delta", id: `${baseSec}:${data.segmentId}`, text: data.text, atSec: samples / IN_RATE });
+      else if (event === "segment")
+        onEvent({
+          type: "segment",
+          id: `${baseSec}:${data.segmentId}`,
+          text: data.text,
+          startSec: baseSec + data.startMs / 1000,
+          endSec: baseSec + data.endMs / 1000,
+        });
+      else if (event === "error") onEvent({ type: "error", message: data.message });
+    };
+    ws.onclose = (e) => {
+      const lost = ready; // a working session dropped, not just a failed attempt
+      ready = false;
+      if (stopped) return closed();
+      // Captions are the meeting record: keep trying, and say so once it is more than a blip.
+      if (++failures > 2) onEvent({ type: "error", message: config.t("error.qgridClosed", { code: e.code }) });
+      // Audio queued from here on goes to the new session.
+      queue = [];
+      if (lost) onEvent({ type: "reconnect" });
+      setTimeout(connect, backoffMs(failures));
+    };
+  }
 
+  connect();
   return {
     audio(pcm) {
       if (stopped) return;
@@ -78,10 +100,13 @@ function qgridStream(
       else queue.push(b64(pcm));
     },
     stop() {
-      if (stopped) return;
-      stopped = true;
-      if (ready) send("stop", {});
-      else ws.close();
+      if (!stopped) {
+        stopped = true;
+        // qgrid finishes the outstanding segments, sends done and closes.
+        if (ready) send("stop", {});
+        else ws.close();
+      }
+      return Promise.race([done, sleep(STOP_WAIT_MS)]);
     },
   };
 }
@@ -107,6 +132,8 @@ function openaiStream(
   const byItem = new Map<string, Segment>();
   const queue: Int16Array[] = [];
   const send = (msg: unknown) => ws.send(JSON.stringify(msg));
+  let closed: () => void = () => {};
+  const done = new Promise<void>((r) => (closed = r));
 
   function connect() {
     // Node's WebSocket (undici) takes headers; the DOM typing does not know that option.
@@ -174,6 +201,7 @@ function openaiStream(
       }
     };
     ws.onclose = (e) => {
+      const lost = open; // a working session dropped, not just a failed attempt
       open = false;
       if (stopped) return;
       // A new session: audio sent to the old one but not transcribed is lost.
@@ -181,12 +209,10 @@ function openaiStream(
       awaitingAck = [];
       byItem.clear();
       policy.reset();
-      if (++failures > 3) {
-        stopped = true;
+      if (++failures > 2)
         onEvent({ type: "error", message: config.t("error.openaiLiveFailed", { code: e.code, reason: e.reason }) });
-        return;
-      }
-      setTimeout(connect, 1000 * failures);
+      if (lost) onEvent({ type: "reconnect" });
+      setTimeout(connect, backoffMs(failures));
     };
   }
 
@@ -222,11 +248,16 @@ function openaiStream(
       else queue.push(pcm);
     },
     stop() {
-      if (stopped) return;
-      if (open) commit();
-      stopped = true;
-      // Leave time for the last transcript; the meeting drops its drafts when it finishes anyway.
-      setTimeout(() => ws.close(), 5000);
+      if (!stopped) {
+        if (open) commit();
+        stopped = true;
+        // Leave time for the last transcript, then close.
+        setTimeout(() => {
+          ws.close();
+          closed();
+        }, 5000);
+      }
+      return Promise.race([done, sleep(STOP_WAIT_MS)]);
     },
   };
 }
@@ -280,26 +311,41 @@ export class CommitPolicy {
   }
 }
 
-/** `done`: the segment finished; until then `endSec` (if any) is the end of the latest delta. */
-type Draft = LiveLine & { endSec?: number; done?: boolean };
+/** A finished stretch of speech, ready to be stored as an utterance. */
+export type Segment = { startSec: number; text: string };
 
 /**
- * One meeting's drafts for both tracks. A finished draft disappears once the chunk transcripts
- * that succeeded cover its whole time span; a failed chunk never settles, so its drafts stay.
+ * One meeting's live captions for both tracks. Finished segments go to `onSegment` as they come
+ * (the meeting record); `view` shows only the text still being spoken.
  */
 export class LiveCaptions {
-  private readonly drafts = new Map<string, Draft>();
-  private readonly settled: Record<Track, [number, number][]> = { mic: [], system: [] };
+  private readonly drafts = new Map<string, LiveLine>();
+  /** Finished lines, kept in the view only when nothing else shows them (the settings test). */
+  private readonly finished: LiveLine[] = [];
   private readonly streams = new Map<Track, LiveStream>();
   private error: string | null = null;
   private stopped = false;
+  /** Times a stream lost its connection; the meeting notes it once finished. */
+  drops = 0;
 
   private readonly open: (onEvent: (e: LiveEvent) => void) => LiveStream;
   private readonly changed: () => void;
+  private readonly store: ((track: Track, segment: Segment) => void) | null;
 
-  constructor(open: (onEvent: (e: LiveEvent) => void) => LiveStream, changed: () => void) {
+  /** `store` receives each finished segment; without one the view keeps them instead. */
+  constructor(
+    open: (onEvent: (e: LiveEvent) => void) => LiveStream,
+    changed: () => void,
+    store: ((track: Track, segment: Segment) => void) | null,
+  ) {
     this.open = open;
     this.changed = changed;
+    this.store = store;
+  }
+
+  private onSegment(track: Track, key: string, segment: Segment) {
+    if (this.store) this.store(track, segment);
+    else this.finished.push({ key, track, ...segment });
   }
 
   audio(track: Track, pcm: Int16Array) {
@@ -309,7 +355,7 @@ export class LiveCaptions {
       try {
         stream = this.open((e) => this.onEvent(track, e));
       } catch (e) {
-        stream = { audio() {}, stop() {} };
+        stream = { audio() {}, stop: async () => {} };
         this.onEvent(track, { type: "error", message: e instanceof Error ? e.message : String(e) });
       }
       this.streams.set(track, stream);
@@ -319,61 +365,43 @@ export class LiveCaptions {
 
   onEvent(track: Track, e: LiveEvent) {
     if (e.type === "error") this.error = e.message;
+    else if (e.type === "reconnect") this.drops++;
     else {
       this.error = null; // captions are flowing again
       const key = `${track}:${e.id}`;
       const d = this.drafts.get(key);
-      if (e.type === "delta") {
-        if (d?.done) return;
-        // A timed piece the final transcript already covers (a long turn outliving its chunk).
-        if (e.endSec !== undefined && covered(this.settled[track], e.atSec, e.endSec)) return;
-        // After a settle removed the earlier part, a long turn continues as a fresh draft.
-        this.drafts.set(key, {
-          key,
-          track,
-          startSec: d?.startSec ?? e.atSec,
-          endSec: e.endSec ?? d?.endSec,
-          text: (d?.text ?? "") + e.text,
-        });
-      } else if (covered(this.settled[track], e.startSec, e.endSec)) this.drafts.delete(key);
-      else this.drafts.set(key, { key, track, startSec: e.startSec, endSec: e.endSec, text: e.text, done: true });
+      if (e.type === "delta")
+        this.drafts.set(key, { key, track, startSec: d?.startSec ?? e.atSec, text: appendDelta(d?.text ?? "", e.text) });
+      else {
+        this.drafts.delete(key);
+        if (e.text.trim()) this.onSegment(track, key, { startSec: e.startSec, text: e.text.trim() });
+      }
     }
     this.changed();
   }
 
-  /** A chunk of `track` from startSec to endSec now has its final transcript. */
-  settle(track: Track, startSec: number, endSec: number) {
-    this.settled[track].push([startSec, endSec]);
-    let removed = false;
-    for (const [key, d] of this.drafts)
-      // A draft whose segment never finished (empty, failed, lost to a reconnect) is at most one
-      // segment long.
-      if (d.track === track && covered(this.settled[track], d.startSec, d.endSec ?? d.startSec + 20))
-        removed = this.drafts.delete(key);
-    if (removed) this.changed();
-  }
-
-  stop() {
+  /**
+   * Ends the streams, waits for the transcripts of the last words (`tailMs` for a stream the
+   * renderer drives), and stores what is still a draft as it stands.
+   */
+  async stop(tailMs = 0) {
     this.stopped = true;
-    for (const s of this.streams.values()) s.stop();
+    await Promise.all([...[...this.streams.values()].map((s) => s.stop()), sleep(tailMs)]);
+    for (const d of [...this.drafts.values()].sort((a, b) => a.startSec - b.startSec))
+      if (d.text.trim()) this.onSegment(d.track, d.key, { startSec: d.startSec, text: d.text.trim() });
+    this.drafts.clear();
+    this.changed();
   }
 
   view(): LiveView {
-    const lines = [...this.drafts.values()]
+    const lines = [...this.finished, ...this.drafts.values()]
       .filter((d) => d.text.trim())
       .sort((a, b) => a.startSec - b.startSec)
-      .map(({ key, track, startSec, text }) => ({ key, track, startSec, text: text.trim() }));
+      .map((d) => ({ ...d, text: d.text.trim() }));
     return { lines, error: this.error };
   }
 }
 
-/** Whether [start, end] lies inside the union of the ranges, give or take `slack` seconds. */
-export function covered(ranges: [number, number][], start: number, end: number, slack = 1) {
-  let reach = start;
-  for (const [a, b] of [...ranges].sort((x, y) => x[0] - y[0])) {
-    if (a - slack > reach) break;
-    reach = Math.max(reach, b);
-    if (reach + slack >= end) return true;
-  }
-  return false;
-}
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** Reconnect wait: grows with consecutive failures, capped at 10 s. */
+const backoffMs = (failures: number) => 1000 * Math.min(10, failures);

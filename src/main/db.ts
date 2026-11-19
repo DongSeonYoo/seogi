@@ -87,9 +87,17 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
 
     createMeeting(title: string, folderId: number | null = null): number {
       const r = db
-        .prepare("INSERT INTO meetings (title, started_at, status, folder_id) VALUES (?, ?, 'recording', ?)")
+        .prepare("INSERT INTO meetings (title, started_at, status, folder_id) VALUES (?, ?, 'new', ?)")
         .run(title, new Date().toISOString(), folderId);
       return Number(r.lastInsertRowid);
+    },
+
+    /** Recording starts the clock, so the length leaves out the time before it. */
+    startRecording(id: number): boolean {
+      const r = db
+        .prepare("UPDATE meetings SET status = 'recording', started_at = ? WHERE id = ? AND status = 'new'")
+        .run(new Date().toISOString(), id);
+      return r.changes > 0;
     },
 
     setStatus(id: number, status: MeetingStatus, error: string | null = null) {

@@ -45,7 +45,7 @@ export async function listModels(store: SettingsStore, role: ModelRole, provider
       const models =
         role === "summary"
           ? catalog.text.map((x) => textOption(x, t))
-          : (role === "live" ? catalog.transcriptionStream : catalog.transcription).map((x) => speechOption(x, t));
+          : catalog.transcriptionStream.map((x) => speechOption(x, t));
       // Not a transcription model in qgrid's catalog: the conversational GPT-Live, kept for its transcript.
       if (role === "live") {
         const openai = catalog.text.some((x) => x.id.startsWith("openai/") && x.available);
@@ -61,8 +61,7 @@ export async function listModels(store: SettingsStore, role: ModelRole, provider
       const keep =
         role === "summary"
           ? (id: string) => /^(gpt-|o\d)/.test(id) && !/transcribe|whisper|tts|realtime|audio|image|search|embedding/.test(id)
-          : // File transcription has no realtime-only models; live captions take any realtime transcriber.
-            (id: string) => speech(id) && (role === "live" || !id.includes("realtime"));
+          : speech;
       return { ok: true, models: data.map((m) => m.id).filter(keep).sort().map((id) => ({ id, available: true })) };
     }
     const { data } = await getJson<{ data: { id: string; display_name?: string }[] }>(

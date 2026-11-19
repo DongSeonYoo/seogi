@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isPromptEcho, splitUtterances } from "./main/ai.ts";
+import { isPromptEcho } from "./main/ai.ts";
 import { Chunker } from "./renderer/src/recorder.ts";
 
 const RATE = 16000;
@@ -24,20 +24,6 @@ test("Chunker cuts at a pause after 25 s, forces a cut at 35 s, and drops silenc
   for (let i = 0; i < 400; i++) c.push(frame(0)); // silent chunk is not emitted
   c.flush();
   assert.equal(out.length, 3); // the 1 s of speech left over from the forced cut
-});
-
-test("splitUtterances dates sentences by word timing, else by interpolation", () => {
-  const text = "첫 문장입니다. 두 번째 문장이에요?";
-  const words = [0.5, 1.0, 2.0, 2.5, 3.0].map((startSecond) => ({ startSecond }));
-
-  const timed = splitUtterances({ text, words, durationSec: 4 }, 30, 4);
-  assert.deepEqual(timed.map((u) => u.text), ["첫 문장입니다.", "두 번째 문장이에요?"]);
-  assert.equal(timed[0].startSec, 30.5);
-  assert.equal(timed[1].startSec, 32); // 9/20 of the text -> word index 2
-
-  const untimed = splitUtterances({ text, words: [], durationSec: 0 }, 30, 4);
-  assert.equal(untimed[0].startSec, 30);
-  assert.equal(untimed[1].startSec, 30 + (9 / text.length) * 4);
 });
 
 test("isPromptEcho drops a transcript that only repeats the glossary prompt", () => {
@@ -82,39 +68,46 @@ test("SilenceWatch flags a long run of exact zeros and clears on the first sound
   assert.deepEqual(events, [true, false]);
 });
 
-test("live drafts leave only once successful chunks cover their whole span", async () => {
+test("live captions store finished segments, show what is still spoken, and flush it on stop", async () => {
   const { LiveCaptions } = await import("./main/live.ts");
-  const c = new LiveCaptions(() => ({ audio() {}, stop() {} }), () => {});
-  const seg = (id: string, startSec: number, endSec: number) =>
-    c.onEvent("system", { type: "segment", id, text: id, startSec, endSec });
-  const keys = () => c.view().lines.map((l) => l.text);
+  const stored: { track: string; startSec: number; text: string }[] = [];
+  const c = new LiveCaptions(() => ({ audio() {}, stop: async () => {} }), () => {}, (track, s) => stored.push({ track, ...s }));
+  const lines = () => c.view().lines.map((l) => l.text);
 
-  seg("a", 2, 6); // inside chunk 0-30
-  seg("b", 28, 33); // straddles the 30 s cut
-  seg("c", 40, 44); // inside chunk 30-60
-  c.onEvent("system", { type: "delta", id: "d", text: "말하는 중", atSec: 61 }); // still open
+  c.onEvent("mic", { type: "delta", id: "a", text: "첫 문장", atSec: 1 });
+  c.onEvent("mic", { type: "delta", id: "a", text: "입니다.", atSec: 2 });
+  assert.deepEqual(lines(), ["첫 문장입니다."]);
+  c.onEvent("mic", { type: "segment", id: "a", text: "첫 문장입니다.", startSec: 1, endSec: 3 });
+  assert.deepEqual(lines(), []);
+  assert.deepEqual(stored, [{ track: "mic", startSec: 1, text: "첫 문장입니다." }]);
 
-  c.settle("system", 30, 60); // out of order: the later chunk lands first
-  assert.deepEqual(keys(), ["a", "b", "말하는 중"]); // b keeps its 28-30 s part until chunk 0 lands
-  c.settle("mic", 0, 30); // the other track settles nothing here
-  assert.deepEqual(keys(), ["a", "b", "말하는 중"]);
-  c.settle("system", 0, 30);
-  assert.deepEqual(keys(), ["말하는 중"]);
-  seg("e", 50, 55); // a draft finishing after its chunk already landed never shows
-  assert.deepEqual(keys(), ["말하는 중"]);
-  c.settle("system", 60, 90); // a delta that never got its segment leaves once a segment's span is covered
-  assert.deepEqual(keys(), []);
+  c.onEvent("system", { type: "reconnect" });
+  c.onEvent("system", { type: "delta", id: "b", text: "말하는 중", atSec: 5 });
+  await c.stop();
+  assert.equal(c.drops, 1);
+  assert.deepEqual(stored.at(-1), { track: "system", startSec: 5, text: "말하는 중" });
+  assert.deepEqual(lines(), []);
 
-  // GPT-Live: one long turn of timed deltas. Covered pieces leave; the rest continues as a fresh draft.
-  const d = (text: string, atSec: number, endSec: number) => c.onEvent("mic", { type: "delta", id: "t1", text, atSec, endSec });
-  d("첫 문장", 102, 105);
-  d(" 둘째", 125, 129);
-  assert.deepEqual(keys(), ["첫 문장 둘째"]);
-  c.settle("mic", 100, 130);
-  assert.deepEqual(keys(), []);
-  d(" 이미 받아쓴 부분", 128, 129.5); // arrived late, inside the settled chunk: dropped
-  d(" 셋째", 131, 134);
-  assert.deepEqual(keys(), ["셋째"]);
+  // Without a store (the settings test) finished lines stay in the view.
+  const t = new LiveCaptions(() => ({ audio() {}, stop: async () => {} }), () => {}, null);
+  t.onEvent("mic", { type: "segment", id: "x", text: "시험", startSec: 0, endSec: 1 });
+  t.onEvent("mic", { type: "delta", id: "y", text: "중", atSec: 2 });
+  await t.stop();
+  assert.deepEqual(t.view().lines.map((l) => l.text), ["시험", "중"]);
+});
+
+test("GPT-Live turns are cut into segments at sentence ends, pauses and on demand", async () => {
+  const { Segmenter } = await import("./renderer/src/gptLive.ts");
+  const out: string[] = [];
+  const s = new Segmenter("g1", (e) => e.type === "segment" && out.push(`${e.id}@${e.startSec}:${e.text}`));
+  s.add("t", "오늘은 큐그리드", 0, 1);
+  s.add("t", " 2.", 1, 1.5);
+  s.add("t", "23을 봅니다.", 1.5, 3); // "2." mid-number is not a sentence end
+  s.add("t", "서기 앱", 3.2, 4);
+  s.add("t", " 시험", 7, 8); // 3 s pause ends "서기 앱"
+  s.add("t", "합니다.회의는", 8, 9); // one piece ends a sentence and starts the next
+  s.cut();
+  assert.deepEqual(out, ["g1:t:0@0:오늘은 큐그리드 2.23을 봅니다.", "g1:t:1@3.2:서기 앱", "g1:t:2@7:시험합니다.", "g1:t:3@8:회의는"]);
 });
 
 test("listModels maps qgrid's catalog per role and filters OpenAI's list by task", async () => {
@@ -130,7 +123,7 @@ test("listModels maps qgrid's catalog per role and filters OpenAI's list by task
   globalThis.fetch = (async (url: string) =>
     Response.json(String(url).startsWith("http://q") ? catalog : { data: openaiIds.map((id) => ({ id })) })) as typeof fetch;
   try {
-    const ids = async (role: "live" | "transcription" | "summary", provider: string) => {
+    const ids = async (role: "live" | "summary", provider: string) => {
       const r = await listModels(store, role, provider);
       assert.ok(r.ok);
       return r.models;
@@ -141,7 +134,6 @@ test("listModels maps qgrid's catalog per role and filters OpenAI's list by task
     // GPT-Live joins the live list, usable when qgrid serves any OpenAI model.
     assert.deepEqual((await ids("live", "qgrid")).at(-1)?.id, "openai/gpt-live-1");
     assert.equal((await ids("live", "qgrid")).at(-1)?.available, true);
-    assert.deepEqual((await ids("transcription", "openai")).map((m) => m.id), ["gpt-4o-transcribe", "whisper-1"]);
     assert.deepEqual((await ids("live", "openai")).map((m) => m.id), ["gpt-4o-transcribe", "gpt-realtime-whisper", "whisper-1"]);
     assert.deepEqual((await ids("summary", "openai")).map((m) => m.id), ["gpt-6-luna"]);
   } finally {
@@ -161,6 +153,8 @@ test("library changes undo and redo, deletes purge for real, and a resummary kee
 
   const a = db.createMeeting("회의 A");
   const b = db.createMeeting("회의 B");
+  assert.ok(db.startRecording(a));
+  assert.ok(!db.startRecording(a)); // only a new session starts recording
   assert.deepEqual(run({ type: "delete", ids: [a] }), { ok: false, error: "녹음하거나 정리 중인 회의는 삭제할 수 없습니다" });
   db.setStatus(a, "done");
   db.setStatus(b, "done");
@@ -210,4 +204,12 @@ test("every Korean string fills the same placeholders as its English source", as
   }
   assert.equal(en("list.count", { n: 3 }), "3");
   assert.equal(ko("undo.deleteMany", { n: 2 }), "회의 2개 삭제");
+});
+
+test("appendDelta spaces a new sentence but not a decimal or a delta that brings its own space", async () => {
+  const { appendDelta } = await import("./shared/text.ts");
+  assert.equal(appendDelta("이야기합니다.", "서기 앱에서"), "이야기합니다. 서기 앱에서");
+  assert.equal(appendDelta("버전 2.", "23"), "버전 2.23");
+  assert.equal(appendDelta("Hello.", " World"), "Hello. World");
+  assert.equal(appendDelta("오늘은", " 큐그리드"), "오늘은 큐그리드");
 });

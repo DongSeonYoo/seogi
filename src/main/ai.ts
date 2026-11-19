@@ -1,39 +1,13 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import qgrid from "@cartanova/qgrid-ai-sdk";
-import { generateText, Output, transcribe, type LanguageModel } from "ai";
+import { generateText, Output, type LanguageModel } from "ai";
 import { z } from "zod";
 import type { ConnectionResult, ConnectionRole, Summary } from "../shared/types";
 import type { SettingsStore } from "./settings";
-import { toWav, SAMPLE_RATE } from "./wav.ts";
-
-export type Transcript = { text: string; words: { startSecond: number }[]; durationSec: number };
-
-export async function transcribeWav(store: SettingsStore, wav: Uint8Array): Promise<Transcript> {
-  const s = store.get();
-  const { provider, model: id } = s.transcription;
-  const prompt = s.glossary.trim() ? glossaryPrompt(s.language, s.glossary) : undefined;
-
-  const model =
-    provider === "qgrid"
-      ? qgrid.transcription(id as Parameters<typeof qgrid.transcription>[0], {
-          serverUrl: s.qgridUrl,
-        })
-      : createOpenAI({ apiKey: store.key("openai") }).transcription(id);
-
-  // "auto" leaves language detection to the model.
-  const language: Record<string, string> = s.language === "auto" ? {} : { language: s.language };
-  const providerOptions: Record<string, Record<string, string>> = id.startsWith("grok/")
-    ? { xai: language }
-    : { openai: { ...language, ...(prompt && { prompt }) } };
-
-  const r = await transcribe({ model, audio: wav, providerOptions, maxRetries: 2 });
-  const text = prompt && isPromptEcho(r.text, prompt) ? "" : r.text.trim();
-  return { text, words: r.segments, durationSec: r.durationInSeconds ?? 0 };
-}
 
 /**
- * On noise without speech, prompted models read the glossary prompt back as the transcript.
+ * On noise without speech, prompted caption models read the glossary prompt back as the transcript.
  * Treats a transcript that is only a piece of the prompt as empty. A lone glossary word that
  * was really spoken is dropped too.
  */
@@ -41,25 +15,6 @@ export function isPromptEcho(text: string, prompt: string): boolean {
   const norm = (s: string) => s.replace(/[\s\p{P}]/gu, "");
   const t = norm(text);
   return t.length > 0 && norm(prompt).includes(t);
-}
-
-/**
- * Splits a chunk transcript into sentences and dates each one. Word timings (when the provider
- * returns them) place a sentence by its character position; without them it is interpolated
- * over the chunk length.
- */
-export function splitUtterances(t: Transcript, chunkStartSec: number, chunkSec: number) {
-  const sentences = t.text.split(/(?<=[.?!。])\s+/).filter((x) => x.trim());
-  const total = t.text.length || 1;
-  let offset = 0;
-  return sentences.map((text) => {
-    const frac = offset / total;
-    offset += text.length + 1;
-    const rel = t.words.length
-      ? t.words[Math.min(t.words.length - 1, Math.floor(frac * t.words.length))].startSecond
-      : frac * chunkSec;
-    return { startSec: chunkStartSec + rel, text };
-  });
 }
 
 /** Steers the spelling of names and terms; the prefix is in the meeting's language. */
@@ -124,8 +79,7 @@ export async function summarize(store: SettingsStore, transcript: string): Promi
 export async function testConnection(store: SettingsStore, role: ConnectionRole): Promise<ConnectionResult> {
   const started = Date.now();
   try {
-    if (role === "transcription") await transcribeWav(store, toWav(new Int16Array(SAMPLE_RATE)));
-    else await generateText({ model: summaryModel(store, store.get()), prompt: "Reply with OK.", maxRetries: 0 });
+    if (role === "summary") await generateText({ model: summaryModel(store, store.get()), prompt: "Reply with OK.", maxRetries: 0 });
     return { ok: true, ms: Date.now() - started };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

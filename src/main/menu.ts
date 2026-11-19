@@ -34,6 +34,7 @@ export function appMenu(history: History, send: (id: ActionId) => void, openSett
     {
       label: t("menu.file"),
       submenu: [
+        item("newSession", t("action.newSession"), "Cmd+N"),
         item("record", t("menu.recordToggle"), "Cmd+Shift+R"),
         item("newFolder", t("action.newFolder"), "Cmd+Shift+N"),
         { type: "separator" },
@@ -68,10 +69,8 @@ export function appMenu(history: History, send: (id: ActionId) => void, openSett
     {
       label: t("menu.view"),
       submenu: [
-        item("tab:summary", t("detail.summary"), "Cmd+1"),
-        item("tab:transcript", t("detail.transcript"), "Cmd+2"),
-        { type: "separator" },
         item("toggleSidebar", t("action.toggleSidebar"), "Cmd+B"),
+        item("toggleSummary", t("action.toggleSummary"), "Alt+Cmd+S"),
         { type: "separator" },
         ...(app.isPackaged
           ? []

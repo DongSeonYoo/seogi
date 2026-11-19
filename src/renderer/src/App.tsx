@@ -11,7 +11,7 @@ import type {
 } from "../../shared/types";
 import { CommandPalette, type PaletteAction } from "./CommandPalette";
 import { MeetingList } from "./MeetingList";
-import { MeetingView, type DetailTab } from "./MeetingView";
+import { MeetingView } from "./MeetingView";
 import { useT } from "./i18n";
 import { liveCaptionHooks } from "./gptLive";
 import { NO_SYSTEM_AUDIO, startRecording } from "./recorder";
@@ -36,7 +36,6 @@ export function App() {
   const [library, setLibrary] = useState<Library>(EMPTY_LIBRARY);
   const [selected, setSelected] = useState<number | null>(null);
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
-  const [tab, setTab] = useState<DetailTab>("summary");
   const [recording, setRecording] = useState<Recording | null>(null);
   const [live, setLive] = useState<{ id: number; view: LiveView } | null>(null);
   const [systemSilent, setSystemSilent] = useState(false);
@@ -48,6 +47,9 @@ export function App() {
   const [renaming, setRenaming] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState<number | null>(null);
   const stopRef = useRef<(() => Promise<void>) | null>(null);
+  /** The live recording and a start in progress, read by handlers that may run before a re-render. */
+  const recordingRef = useRef<Recording | null>(null);
+  const startingRef = useRef<Promise<void> | null>(null);
 
   const refreshList = useCallback(async () => {
     const [rows, lib] = await Promise.all([api.listMeetings(view), api.library()]);
@@ -105,8 +107,6 @@ export function App() {
     setSelected(id);
     setRenaming(false);
     setGuide(false);
-    const m = meetings.find((x) => x.id === id);
-    setTab(m && (m.status === "recording" || m.status === "processing") ? "transcript" : "summary");
   }
 
   async function run(op: LibraryOp) {
@@ -115,10 +115,26 @@ export function App() {
     return r;
   }
 
-  async function start() {
+  /** Starts a meeting; a second press while capture is still being set up stops it instead. */
+  function start() {
+    if (startingRef.current || recordingRef.current) return;
+    startingRef.current = begin().finally(() => (startingRef.current = null));
+  }
+
+  async function begin() {
     setNotice(null);
     const { recording: options, live: liveModel } = await api.getSettings();
-    const id = await api.startMeeting(typeof view === "number" ? view : null);
+    // Records into the open session if it has not been recorded yet, else into a new one.
+    const id = current?.status === "new" ? current.id : await api.createMeeting(typeof view === "number" ? view : null);
+    if (!(await api.startMeeting(id))) return;
+    // Recording from the press on: the toolbar flips to Stop while capture (and its permission
+    // prompts) is still being set up.
+    const rec = { id, startedAt: Date.now() };
+    recordingRef.current = rec;
+    setRecording(rec);
+    void refreshList();
+    setSelected(id);
+    setGuide(false);
     const captions = liveCaptionHooks(id, liveModel);
     try {
       const stopRecording = await startRecording(
@@ -131,26 +147,33 @@ export function App() {
       };
     } catch (e) {
       captions.stop();
+      recordingRef.current = null;
+      setRecording(null);
       await api.stopMeeting(id);
       const message = e instanceof Error ? e.message : String(e);
       setNotice(t("notice.startFailed", { error: message === NO_SYSTEM_AUDIO ? t("error.noSystemAudio") : message }));
-      return;
     }
-    setRecording({ id, startedAt: Date.now() });
-    void refreshList();
+  }
+
+  /** A new, empty session in the folder on view, opened and ready to record. */
+  async function newSession() {
+    const id = await api.createMeeting(typeof view === "number" ? view : null);
+    await refreshList();
     setSelected(id);
-    setTab("transcript");
+    setRenaming(false);
     setGuide(false);
   }
 
   async function stop() {
-    if (!recording) return;
-    const { id } = recording;
+    await startingRef.current; // a start in progress finishes first, so its capture is not left running
+    const rec = recordingRef.current;
+    if (!rec) return;
+    recordingRef.current = null;
     setRecording(null);
     setSystemSilent(false);
     await stopRef.current?.();
     stopRef.current = null;
-    await api.stopMeeting(id);
+    await api.stopMeeting(rec.id);
   }
 
   const current = detail && detail.id === selected ? detail : null;
@@ -161,8 +184,9 @@ export function App() {
     record: {
       label: recording ? t("action.stop") : t("action.record"),
       shortcut: "⇧⌘R",
-      run: () => void (recording ? stop() : start()),
+      run: () => void (recordingRef.current || startingRef.current ? stop() : start()),
     },
+    newSession: { label: t("action.newSession"), shortcut: "⌘N", run: newSession },
     newFolder: {
       label: t("action.newFolder"),
       shortcut: "⇧⌘N",
@@ -211,8 +235,7 @@ export function App() {
         if (r.ok) select((meetings[i + 1] ?? meetings[i - 1])?.id ?? null);
       },
     },
-    "tab:summary": { label: t("action.showSummary"), shortcut: "⌘1", enabled: !!current, run: () => setTab("summary") },
-    "tab:transcript": { label: t("action.showTranscript"), shortcut: "⌘2", enabled: !!current, run: () => setTab("transcript") },
+    toggleSummary: { label: t("action.toggleSummary"), shortcut: "⌥⌘S", run: panes.toggleSummary },
     toggleSidebar: { label: t("action.toggleSidebar"), shortcut: "⌘B", run: panes.toggleSidebar },
     settings: { label: t("action.settings"), shortcut: "⌘,", run: () => api.openSettings() },
     styleGuide: { label: t("action.styleGuide"), run: () => void (import.meta.env.DEV && setGuide((v) => !v)) },
@@ -312,16 +335,17 @@ export function App() {
       )}
       <Toolbar
         meeting={current}
-        recording={recording}
         renaming={renaming}
         sidebar={sidebar}
+        summary={panes.layout.summary}
         onToggleSidebar={() => perform("toggleSidebar")}
+        onToggleSummary={() => perform("toggleSummary")}
         onRename={(title) => {
           setRenaming(false);
           if (current && title !== null && title !== current.title) void run({ type: "rename", id: current.id, title });
         }}
         onStartRename={() => perform("rename")}
-        onRecord={() => perform("record")}
+        onNewSession={() => perform("newSession")}
         onStar={() => perform("star")}
         onResummarize={() => perform("resummarize")}
         onPalette={() => perform("palette")}
@@ -342,11 +366,16 @@ export function App() {
         ) : current ? (
           <MeetingView
             meeting={current}
-            tab={tab}
-            onTab={setTab}
             live={live?.id === current.id ? live.view : null}
             recording={recording?.id === current.id ? recording : null}
             systemSilent={systemSilent}
+            summary={{
+              open: panes.layout.summary,
+              width: panes.layout.summaryW,
+              onResize: panes.resizeSummary,
+              onReset: panes.resetSummary,
+            }}
+            onRecord={() => perform("record")}
           />
         ) : (
           <div className="placeholder">
