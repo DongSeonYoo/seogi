@@ -1,9 +1,9 @@
 import { AlertCircle, BookmarkPlus, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AudioRef, LiveView, MeetingDetail, ModelOption, Settings, Track, Utterance } from "../../shared/types";
-import { speakerName } from "../../shared/summary";
+import { clock, speakerName } from "../../shared/summary";
 import { joinSplitSentences } from "../../shared/transcript";
-import { clock, duration, fullDate, groupUtterances, insertDrafts } from "./format";
+import { duration, fullDate, groupUtterances, insertDrafts } from "./format";
 import { useI18n, useT } from "./i18n";
 import { showStored } from "../../shared/i18n";
 import { Elapsed, type Recording } from "./Toolbar";

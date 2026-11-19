@@ -397,6 +397,38 @@ test("appendDelta spaces a new sentence but not a decimal or a delta that brings
   assert.equal(appendDelta("오늘은", " 큐그리드"), "오늘은 큐그리드");
 });
 
+test("summary time links read both total minutes and hours", async () => {
+  const { clock, TIME_LINK, clockSeconds, summaryPreview } = await import("./shared/summary.ts");
+  const line = "First [60:00]. Second [100:00]. Last [1:40:00].";
+  assert.deepEqual([...line.matchAll(TIME_LINK)].map((m) => clockSeconds(m[1])), [3600, 6000, 6000]);
+  assert.deepEqual([3599.9, 3600, 6000].map(clock), ["59:59", "1:00:00", "1:40:00"]);
+  assert.equal(summaryPreview(line), "First. Second. Last.");
+});
+
+test("legacy summary migration converts only complete old summaries and runs once", async () => {
+  const { openDb } = await import("./main/db.ts");
+  const { translator } = await import("./shared/i18n.ts");
+  const db = openDb(":memory:");
+  try {
+    const summary = { title: "Original", overview: "First.", decisions: [], topics: [], actionItems: [] };
+    const valid = JSON.stringify(summary);
+    const entries = [" \n" + valid, "{my notes", '{"hello":"world"}', JSON.stringify({ ...summary, actionItems: [null] })];
+    const ids = entries.map((entry) => {
+      const id = db.createMeeting("Edited title");
+      db.setSummaryText(id, entry);
+      return id;
+    });
+    db.migrateSummaries(translator("en"));
+    assert.deepEqual(ids.map((id) => db.getMeeting(id)?.summary), ["## Overview\n\nFirst.", ...entries.slice(1)]);
+    assert.equal(db.getMeeting(ids[0])?.title, "Edited title");
+    db.setSummaryText(ids[0], valid);
+    db.migrateSummaries(translator("en"));
+    assert.equal(db.getMeeting(ids[0])?.summary, valid);
+  } finally {
+    db.raw.close();
+  }
+});
+
 test("summaries become editable Markdown, export as Markdown or plain text", async () => {
   const { summaryMarkdown, summaryPreview, meetingDocument } = await import("./shared/summary.ts");
   const { translator } = await import("./shared/i18n.ts");

@@ -14,13 +14,12 @@ import type {
   ModelRole,
   ImportProgress,
   StorageInfo,
-  Summary,
   Settings,
   StoredSettings,
   Track,
 } from "../shared/types";
 import { INTL_LOCALE, showStored, storedMessage, translator, type Locale } from "../shared/i18n";
-import { meetingDocument, summaryMarkdown } from "../shared/summary";
+import { clock, meetingDocument, summaryMarkdown } from "../shared/summary";
 import { joinSplitSentences } from "../shared/transcript";
 import { glossaryPrompt, isPromptEcho, splitUtterances, summarize, testConnection, transcribeFile } from "./ai";
 import { openDb } from "./db";
@@ -235,11 +234,7 @@ app.whenReady().then(async () => {
     }
   }
 
-  // Summaries saved as the model's JSON before they became editable Markdown.
-  for (const { id, json } of db.legacySummaries()) {
-    const s = JSON.parse(json) as Summary;
-    db.setSummaryText(id, summaryMarkdown(s, tr()));
-  }
+  db.migrateSummaries(tr());
 
   ipcMain.handle("listMeetings", (_e, view: LibraryView, query?: string) => db.listMeetings(view, query));
   ipcMain.handle("library", () => ({ counts: db.counts(), folders: db.listFolders() }));
@@ -615,11 +610,6 @@ function popupMenu(sender: Electron.WebContents, items: MenuSpec[]): Promise<str
     // The close callback can run before the click handler, so it only settles a dismissal, later.
     Menu.buildFromTemplate(build(items)).popup({ window, callback: () => setTimeout(() => done(null), 200) });
   });
-}
-
-function clock(sec: number) {
-  const m = Math.floor(sec / 60);
-  return `${String(m).padStart(2, "0")}:${String(Math.floor(sec % 60)).padStart(2, "0")}`;
 }
 
 function dirSize(dir: string): number {

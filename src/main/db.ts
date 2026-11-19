@@ -5,12 +5,29 @@ import type {
   LibraryView,
   MeetingRow,
   MeetingStatus,
+  Summary,
   Track,
   Utterance,
 } from "../shared/types";
-import { summaryPreview } from "../shared/summary.ts";
+import { summaryMarkdown, summaryPreview } from "../shared/summary.ts";
+import type { Translate } from "../shared/i18n";
 
 export type Db = ReturnType<typeof openDb>;
+
+function legacySummary(json: string): Summary | null {
+  let s: Summary;
+  try {
+    s = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  const strings = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+  if (!s || typeof s.title !== "string" || typeof s.overview !== "string" || !strings(s.decisions)) return null;
+  if (!Array.isArray(s.actionItems) || !s.actionItems.every((a) =>
+    a && typeof a.task === "string" && typeof a.owner === "string" && typeof a.due === "string")) return null;
+  if (!Array.isArray(s.topics) || !s.topics.every((x) => x && typeof x.title === "string" && strings(x.points))) return null;
+  return s;
+}
 
 /** `appQuitMessage` marks meetings a crash or quit left unfinished. */
 export function openDb(file: string, appQuitMessage = "Processing stopped because the app quit") {
@@ -166,12 +183,22 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       db.prepare("UPDATE meetings SET summary = ? WHERE id = ?").run(markdown.trim() ? markdown : null, id);
     },
 
-    /** Summaries stored before they became Markdown, as the model's JSON. */
-    legacySummaries(): { id: number; json: string }[] {
-      return db
-        .prepare("SELECT id, summary FROM meetings WHERE summary LIKE '{%'")
-        .all()
-        .map((r) => ({ id: Number(r.id), json: String(r.summary) }));
+    /** Later edits are free-form Markdown, even if the user pastes valid JSON. */
+    migrateSummaries(t: Translate) {
+      if (Number(db.prepare("PRAGMA user_version").get()?.user_version) >= 1) return;
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const update = db.prepare("UPDATE meetings SET summary = ? WHERE id = ?");
+        const rows = db.prepare("SELECT id, summary FROM meetings WHERE ltrim(summary, char(9,10,13,32)) LIKE '{%'").all();
+        for (const row of rows) {
+          const s = legacySummary(String(row.summary));
+          if (s) update.run(summaryMarkdown(s, t), row.id);
+        }
+        db.exec("PRAGMA user_version = 1; COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
     },
 
     addUtterances(meetingId: number, track: Track, rows: { startSec: number; text: string; speaker?: number }[]) {

@@ -1,14 +1,6 @@
 import type { Translate } from "../../shared/i18n";
 import type { Utterance } from "../../shared/types";
 
-export function clock(sec: number) {
-  const s = Math.max(0, Math.floor(sec));
-  const h = Math.floor(s / 3600);
-  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
-  const ss = String(s % 60).padStart(2, "0");
-  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
-}
-
 type Fmt = { t: Translate; intl: string };
 
 function dateFormat(options: Intl.DateTimeFormatOptions) {

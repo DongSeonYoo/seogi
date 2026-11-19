@@ -26,6 +26,14 @@ export function summaryMarkdown(s: Summary, t: Translate): string {
   return parts.join("\n\n");
 }
 
+/** Two fields use total minutes in older notes, three fields start with hours. */
+export const TIME_LINK = /\[(\d+:(?:[0-5]?\d:)?[0-5]\d)\]/g;
+const PREVIEW_TIME = new RegExp(`\\s*${TIME_LINK.source}`, "g");
+
+export function clockSeconds(label: string) {
+  return label.split(":").reduce((seconds, field) => seconds * 60 + Number(field), 0);
+}
+
 /** The first line of prose in a summary, for the meeting list. */
 export function summaryPreview(markdown: string): string | null {
   const line = markdown
@@ -33,7 +41,7 @@ export function summaryPreview(markdown: string): string | null {
     .map((l) => l.trim())
     .find((l) => l && !l.startsWith("#"));
   // Time links help in the pane but are noise in a one-line preview.
-  return line ? plainLine(line).replace(/\s*\[(?:\d{1,2}:)?\d{1,2}:\d{2}\]/g, "") : null;
+  return line ? plainLine(line).replace(PREVIEW_TIME, "") : null;
 }
 
 /** Markdown to readable plain text: headings lose their marks, list items become bullets. */
@@ -55,13 +63,13 @@ function plainLine(l: string) {
     .replace(/`([^`]+)`/g, "$1");
 }
 
-const clock = (sec: number) => {
+export function clock(sec: number) {
   const s = Math.max(0, Math.floor(sec));
   const h = Math.floor(s / 3600);
   const mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
   const ss = String(s % 60).padStart(2, "0");
   return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
-};
+}
 
 /** A meeting as one document: title, date, summary, then the transcript. */
 export function meetingDocument(

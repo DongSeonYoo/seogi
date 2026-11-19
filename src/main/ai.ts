@@ -117,7 +117,7 @@ export async function summarize(
       "'Me' is the person recording; 'Others' is everyone on the other end of the call, possibly several people. 'Speaker 1', 'Speaker 2', … are voices told apart in an imported recording.",
       "Fix words that look like transcription errors, using the context and the glossary.",
       "Do not add anything the transcript does not say.",
-      "End each overview sentence, decision, action item and point with the [mm:ss] time of the transcript line it comes from, as written there, e.g. 'Ship on Friday [12:05]'. Use only times that appear in the transcript.",
+      "End each overview sentence, decision, action item and point with the [mm:ss] or [h:mm:ss] time of the transcript line it comes from, as written there, e.g. 'Ship on Friday [12:05]'. Use only times that appear in the transcript.",
       glossary.trim() && `Glossary: ${glossary}`,
     ]
       .filter(Boolean)

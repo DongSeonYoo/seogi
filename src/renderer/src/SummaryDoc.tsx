@@ -1,7 +1,5 @@
 import type { ReactNode } from "react";
-
-/** `[mm:ss]` or `[h:mm:ss]`: a time in the transcript. */
-const TIME = /\[(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\]/g;
+import { clockSeconds, TIME_LINK } from "../../shared/summary";
 
 /**
  * Renders the summary's Markdown (headings, lists, checkboxes, bold, code, paragraphs: what
@@ -45,12 +43,12 @@ export function SummaryDoc({ markdown, onTime }: { markdown: string; onTime: (se
 function inline(text: string, onTime: (sec: number) => void): ReactNode[] {
   const out: ReactNode[] = [];
   let last = 0;
-  for (const m of text.matchAll(TIME)) {
+  for (const m of text.matchAll(TIME_LINK)) {
     out.push(...styled(text.slice(last, m.index), out.length));
-    const sec = Number(m[1] ?? 0) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+    const sec = clockSeconds(m[1]);
     out.push(
       <button key={out.length} type="button" className="time-link tnum" onClick={() => onTime(sec)}>
-        {m[0].slice(1, -1)}
+        {m[1]}
       </button>,
     );
     last = m.index + m[0].length;

@@ -1,7 +1,8 @@
 import { PanelLeft, PanelRight, Plus, Search, Sparkles, Star } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { MeetingDetail } from "../../shared/types";
-import { clock, duration, fullDate } from "./format";
+import { clock } from "../../shared/summary";
+import { duration, fullDate } from "./format";
 import { useI18n } from "./i18n";
 import { IconButton } from "./ui";
 
