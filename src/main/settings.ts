@@ -32,7 +32,12 @@ export async function openSettings(dir: string) {
     settings.live = { provider, model: DEFAULT_MODELS.live[provider] };
     writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
   }
-  const keys = await readKeys(keysFile);
+  // Not awaited: decrypting asks the keychain, which can show a prompt (after the app's signature
+  // changes, for one) and waits for an answer; the window must not wait with it.
+  let keys: Partial<Record<KeyName, string>> = {};
+  const keysLoaded = readKeys(keysFile).then((k) => {
+    keys = k;
+  });
 
   // CSS prefers-color-scheme follows themeSource, so one switch re-themes every window.
   nativeTheme.themeSource = settings.theme;
@@ -63,6 +68,7 @@ export async function openSettings(dir: string) {
     },
 
     async setKey(name: KeyName, value: string): Promise<Settings> {
+      await keysLoaded; // or the write would drop the keys not yet read
       if (value.trim()) keys[name] = value.trim();
       else delete keys[name];
       await writeKeys(keysFile, keys);
