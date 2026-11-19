@@ -14,7 +14,7 @@ const COLLAPSE_BELOW = 120;
 const DETAIL_MIN = 360;
 
 export function useLayout() {
-  const [layout, setLayout] = useState<Layout>(() => {
+  const [saved, setLayout] = useState<Layout>(() => {
     try {
       return { ...DEFAULT, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") };
     } catch {
@@ -23,11 +23,24 @@ export function useLayout() {
   });
   useEffect(() => {
     try {
-      localStorage.setItem(KEY, JSON.stringify(layout));
+      localStorage.setItem(KEY, JSON.stringify(saved));
     } catch {
       // Private or blocked storage: the layout just isn't remembered.
     }
-  }, [layout]);
+  }, [saved]);
+
+  // A window too narrow for every open pane hides the summary, then the sidebar, so the transcript
+  // keeps DETAIL_MIN; they come back as the window widens (the saved layout is untouched).
+  const [windowW, setWindowW] = useState(window.innerWidth);
+  useEffect(() => {
+    const resize = () => setWindowW(window.innerWidth);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
+  const layout = { ...saved };
+  const left = () => windowW - (layout.sidebar ? layout.sidebarW : 0) - layout.listW - (layout.summary ? layout.summaryW : 0);
+  if (left() < DETAIL_MIN) layout.summary = false;
+  if (left() < DETAIL_MIN) layout.sidebar = false;
 
   const clamp = (v: number, r: { min: number; max: number }) => Math.round(Math.min(r.max, Math.max(r.min, v)));
   /** Room left for one pane once the others and the transcript have theirs. */
@@ -41,8 +54,9 @@ export function useLayout() {
   return {
     layout,
     style: { "--sidebar-w": `${layout.sidebarW}px`, "--list-w": `${layout.listW}px` } as CSSProperties,
-    toggleSidebar: () => setLayout((l) => ({ ...l, sidebar: !l.sidebar })),
-    toggleSummary: () => setLayout((l) => ({ ...l, summary: !l.summary })),
+    // Toggles act on what is on screen, so one press always shows or hides the pane.
+    toggleSidebar: () => setLayout((l) => ({ ...l, sidebar: !layout.sidebar })),
+    toggleSummary: () => setLayout((l) => ({ ...l, summary: !layout.summary })),
     resizeSidebar: (w: number) =>
       setLayout((l) =>
         w < COLLAPSE_BELOW

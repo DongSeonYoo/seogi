@@ -89,6 +89,12 @@ export function App() {
     void api.accentColor().then(apply);
     return api.onAccentColor(apply);
   }, []);
+  // A selection the list on screen no longer shows (another folder, an unstarred meeting) goes, so
+  // the toolbar never acts on a meeting out of sight. The recording session stays open regardless.
+  useEffect(() => {
+    if (selected !== null && selected !== recordingRef.current?.id && !meetings.some((m) => m.id === selected)) setSelected(null);
+  }, [meetings]);
+
   // Lists grey out their selection while the window is in the background, like AppKit.
   useEffect(() => {
     const set = () => document.documentElement.toggleAttribute("data-inactive", !document.hasFocus());
@@ -183,6 +189,8 @@ export function App() {
 
   /** A new, empty session in the folder on view, opened and ready to record. */
   async function newSession() {
+    // A new session is not starred, so Starred could not show it.
+    if (view === "starred") setView("all");
     const id = await api.createMeeting(typeof view === "number" ? view : null);
     await refreshList();
     setSelected(id);
@@ -257,12 +265,12 @@ export function App() {
     exportMarkdown: {
       label: t("action.exportMarkdown"),
       shortcut: "⇧⌘E",
-      enabled: !!current && !busy(current),
+      enabled: !!current && !busy(current) && current.utterances.length > 0,
       run: () => void (current && api.exportMeeting(current.id, "md")),
     },
     exportText: {
       label: t("action.exportText"),
-      enabled: !!current && !busy(current),
+      enabled: !!current && !busy(current) && current.utterances.length > 0,
       run: () => void (current && api.exportMeeting(current.id, "txt")),
     },
     delete: {
@@ -289,7 +297,12 @@ export function App() {
   };
   useEffect(() => api.onMenuAction(perform), []);
   const disabledActions = (Object.keys(actions) as ActionId[]).filter((id) => actions[id].enabled === false).join(",");
-  useEffect(() => api.setMenuState(disabledActions ? (disabledActions.split(",") as ActionId[]) : []), [disabledActions]);
+  // The menu bar mirrors what the screen offers: the same disabled commands, the Star/Unstar label.
+  const starLabel = actions.star.label;
+  useEffect(
+    () => api.setMenuState(disabledActions ? (disabledActions.split(",") as ActionId[]) : [], { star: starLabel }),
+    [disabledActions, starLabel],
+  );
 
   /** The right-click menu for a meeting: the same actions plus "move to folder". */
   async function meetingMenu(m: MeetingRow) {
@@ -303,12 +316,13 @@ export function App() {
       { id: "rename", label: t("action.rename") },
       { id: "star", label: m.starred ? t("action.unstar") : t("action.star") },
       { label: t("action.moveTo"), submenu: folders },
-      { id: "summarize", label: t("action.summarize"), enabled: !locked && summarizing === null },
+      // Only a finished meeting has a transcript to summarize or export.
+      { id: "summarize", label: t("action.summarize"), enabled: m.status === "done" && summarizing === null },
       {
         label: t("action.export"),
         submenu: [
-          { id: "export:md", label: t("action.exportMarkdown"), enabled: !locked },
-          { id: "export:txt", label: t("action.exportText"), enabled: !locked },
+          { id: "export:md", label: t("action.exportMarkdown"), enabled: m.status === "done" },
+          { id: "export:txt", label: t("action.exportText"), enabled: m.status === "done" },
         ],
       },
       { type: "separator" },
@@ -433,6 +447,7 @@ export function App() {
               onExport: (format) => void api.exportMeeting(current.id, format),
             }}
             onRecord={() => perform("record")}
+            recordingElsewhere={!!recording && recording.id !== current.id}
           />
         ) : (
           <div className="placeholder">

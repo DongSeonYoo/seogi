@@ -9,8 +9,6 @@ export type AudioFile = {
   name: string;
   bytes: number;
   durationSec: number;
-  /** Of the file, before it is turned into 16 kHz mono. */
-  sampleRate: number;
   channels: number;
   samples: Float32Array;
 };
@@ -35,7 +33,6 @@ export async function readAudioFile(file: File): Promise<AudioFile> {
     name: file.name,
     bytes: file.size,
     durationSec: decoded.duration,
-    sampleRate: decoded.sampleRate,
     channels: decoded.numberOfChannels,
     samples: rendered.getChannelData(0),
   };

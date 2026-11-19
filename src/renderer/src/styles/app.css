@@ -871,7 +871,7 @@
 
 .prefs__tab[aria-selected="true"] {
   background: var(--color-selected);
-  color: var(--color-accent);
+  color: var(--color-accent-text);
 }
 
 .guide {
@@ -1405,7 +1405,7 @@
   border: 0;
   border-radius: var(--radius-sm);
   background: var(--color-accent-soft);
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font: inherit;
   font-size: 0.85em;
   cursor: pointer;

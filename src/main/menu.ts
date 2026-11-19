@@ -15,9 +15,11 @@ export function appMenu(
   t: Translate,
   /** Commands the main window cannot run right now; greyed out here as they are on screen. */
   disabled: ReadonlySet<string> = new Set(),
+  /** Labels the screen words by state (Star / Unstar), so the menu says the same. */
+  labels: Record<string, string> = {},
 ): Menu {
   const item = (id: ActionId, label: string, accelerator?: string): MenuItemConstructorOptions => ({
-    label,
+    label: labels[id] ?? label,
     accelerator,
     enabled: !disabled.has(id),
     click: () => send(id),

@@ -70,7 +70,8 @@ export type MenuSpec =
   | { type: "separator" };
 
 /** Where an utterance's audio lives: a chunk file URL and the offset into it. */
-export type AudioRef = { url: string; offsetSec: number };
+/** `chunkStartSec`: where that file starts in the meeting, so playback can carry on into the next one. */
+export type AudioRef = { url: string; offsetSec: number; chunkStartSec: number };
 
 /** `speaker`: 1, 2, … when diarization told the voices in a track apart (imported files). */
 export type Utterance = { id: number; track: Track; startSec: number; text: string; speaker: number | null };
@@ -171,7 +172,7 @@ export type Api = {
   /** Pops a native context menu at the pointer; resolves to the chosen item id. */
   showMenu(items: MenuSpec[]): Promise<string | null>;
   /** The commands disabled on screen right now, so the menu bar greys out the same ones. */
-  setMenuState(disabled: ActionId[]): void;
+  setMenuState(disabled: ActionId[], labels: Partial<Record<ActionId, string>>): void;
   /** Commands from the app menu bar, by action id. */
   onMenuAction(listener: (id: ActionId) => void): () => void;
   openSettings(): void;

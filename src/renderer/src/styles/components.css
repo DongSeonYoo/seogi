@@ -445,6 +445,7 @@ select.control {
   color: var(--speaker);
 }
 
+/* Names are text: mixed toward the ink colour so they read at 4.5:1 in both themes. */
 .msg__name[data-speaker^="s"] {
-  color: var(--speaker);
+  color: color-mix(in oklch, var(--speaker) 75%, var(--color-ink));
 }

@@ -2,6 +2,11 @@ import { appendDelta } from "../../shared/text.ts";
 import { GPT_LIVE_MODEL, GPT_LIVE_TAIL_MS, type LiveEvent, type Track } from "../../shared/types.ts";
 import type { RecordingOptions } from "./recorder";
 
+/**
+ * GPT-Live's turn times run behind the speech by about this much (measured against saved audio:
+ * 0.7–0.9 s), so a line would start, and play, after its first words.
+ */
+const LAG_SEC = 0.8;
 /** A pause this long between pieces of a turn ends the sentence in progress. */
 const PAUSE_SEC = 2;
 /** A run-on without punctuation is cut here, so no utterance grows without bound. */
@@ -159,8 +164,8 @@ async function session(
       return;
     }
     const add = (id: string, text: string, t: Timed) => {
-      const start = offset + (t.start_ms ?? 0) / 1000;
-      segments.add(id, text, start, t.end_ms === undefined ? start : offset + t.end_ms / 1000);
+      const start = Math.max(0, offset - LAG_SEC + (t.start_ms ?? 0) / 1000);
+      segments.add(id, text, start, t.end_ms === undefined ? start : Math.max(start, offset - LAG_SEC + t.end_ms / 1000));
     };
     const turn = e.turn;
     if (e.type === "session.started") {

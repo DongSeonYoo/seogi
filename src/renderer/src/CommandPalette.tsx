@@ -73,7 +73,9 @@ function PaletteBody({
   function pick(item: Item | undefined) {
     if (!item) return;
     onClose();
-    if (item.kind === "action") void item.action.run();
+    // After the dialog closes, so focus is off its search field: commands like Delete refuse to
+    // act while the user is typing.
+    if (item.kind === "action") setTimeout(() => void item.action.run());
     else onPick(item.meeting.id);
   }
 

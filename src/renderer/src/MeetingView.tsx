@@ -1,6 +1,6 @@
 import { AlertCircle, BookmarkPlus, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { LiveView, MeetingDetail, ModelOption, Settings, Utterance } from "../../shared/types";
+import type { AudioRef, LiveView, MeetingDetail, ModelOption, Settings, Track, Utterance } from "../../shared/types";
 import { speakerName } from "../../shared/summary";
 import { joinSplitSentences } from "../../shared/transcript";
 import { clock, duration, fullDate, groupUtterances } from "./format";
@@ -37,6 +37,7 @@ export function MeetingView({
   systemSilent,
   summary,
   onRecord,
+  recordingElsewhere,
 }: {
   meeting: MeetingDetail;
   live: LiveView | null;
@@ -44,6 +45,8 @@ export function MeetingView({
   systemSilent: boolean;
   summary: SummaryPane;
   onRecord: () => void;
+  /** Another session is recording: this one's Record would stop that one, so it waits. */
+  recordingElsewhere: boolean;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -56,6 +59,10 @@ export function MeetingView({
   const [over, setOver] = useState(false);
   // A file is often not in the meeting language set for live captions, so it is asked per file.
   const [fileLanguage, setFileLanguage] = useState("auto");
+  // Each file starts from the meeting language in Settings: detection misreads short lines
+  // (Korean turns came back as Japanese), so it is the fallback, not the default.
+  const [meetingLanguage, setMeetingLanguage] = useState("auto");
+  useEffect(() => void window.api.getSettings().then((s) => setMeetingLanguage(s.language)), []);
   const importing = useImportProgress(m.id);
   // A [mm:ss] clicked in the summary; n makes a second click on the same time scroll again.
   const [focus, setFocus] = useState<{ sec: number; n: number } | null>(null);
@@ -71,6 +78,7 @@ export function MeetingView({
   async function take(f: File) {
     setFileError(null);
     setFile(null);
+    setFileLanguage(meetingLanguage);
     setReading(true);
     try {
       setFile(await readAudioFile(f));
@@ -113,8 +121,9 @@ export function MeetingView({
                 type="button"
                 className="capsule__label"
                 data-recording={recording ? true : undefined}
+                disabled={recordingElsewhere}
                 onClick={onRecord}
-                title={`${recording ? t("action.stop") : t("action.record")} (⇧⌘R)`}
+                title={recordingElsewhere ? t("detail.recordingElsewhere") : `${recording ? t("action.stop") : t("action.record")} (⇧⌘R)`}
               >
                 {recording ? (
                   <>
@@ -144,7 +153,6 @@ export function MeetingView({
                   <p className="import-card__meta tnum">
                     {[
                       clock(file.durationSec),
-                      `${(file.sampleRate / 1000).toFixed(1)} kHz`,
                       t(file.channels === 1 ? "import.mono" : "import.channels", { n: file.channels }),
                       `${(file.bytes / 1024 / 1024).toFixed(1)} MB`,
                     ].join(" · ")}
@@ -313,11 +321,15 @@ function Transcript({
   const player = usePlayer(m.id);
   const [focused, setFocused] = useState<string | null>(null);
 
-  // A time from the summary: the line spoken then (the last to start by it) scrolls into view and
-  // is marked briefly. Lines run a little behind the speech, so half a second of slack.
+  // A time from the summary: the line it names scrolls into view and is marked briefly. Times are
+  // written as whole seconds (a line at 24.89 s reads [00:24]), so a line in that second wins,
+  // else the nearest one.
   useEffect(() => {
     if (!focus) return;
-    const target = [...m.utterances].reverse().find((u) => u.startSec <= focus.sec + 0.5) ?? m.utterances[0];
+    const shown = joinSplitSentences(m.utterances);
+    const target =
+      shown.find((u) => Math.floor(u.startSec) === focus.sec) ??
+      shown.reduce<Utterance | undefined>((best, u) => (!best || Math.abs(u.startSec - focus.sec) < Math.abs(best.startSec - focus.sec) ? u : best), undefined);
     if (!target) return;
     const el = scroller.current?.querySelector(`[data-key="${target.id}"]`);
     stick.current = false;
@@ -449,7 +461,9 @@ function usePlayer(meetingId: number) {
 
   useEffect(() => {
     const a = new Audio();
-    a.onended = a.onpause = () => setPlayingId(null);
+    a.onpause = () => {
+      if (!a.ended) setPlayingId(null);
+    };
     audio.current = a;
     return () => {
       a.pause();
@@ -457,16 +471,29 @@ function usePlayer(meetingId: number) {
     };
   }, [meetingId]);
 
+  /** Plays one chunk file from `offset`; when it ends, the track's next file carries on. */
+  async function play(ref: AudioRef, track: Track, offset: number) {
+    const a = audio.current;
+    if (!a) return;
+    a.src = ref.url;
+    await new Promise<void>((r) => a.addEventListener("loadedmetadata", () => r(), { once: true }));
+    // A caption time can fall a little past the end of the audio; start near the end instead.
+    a.currentTime = offset < a.duration ? offset : Math.max(0, a.duration - 2);
+    a.onended = async () => {
+      const next = await window.api.audioFor(meetingId, track, ref.chunkStartSec + a.duration + 0.05);
+      if (next && next.url !== ref.url) void play(next, track, 0);
+      else setPlayingId(null);
+    };
+    await a.play();
+  }
+
   async function toggle(u: Utterance) {
     const a = audio.current;
     if (!a) return;
     if (playingId === u.id) return a.pause();
     const ref = await window.api.audioFor(meetingId, u.track, u.startSec);
     if (!ref) return;
-    a.src = ref.url;
-    await new Promise<void>((r) => a.addEventListener("loadedmetadata", () => r(), { once: true }));
-    a.currentTime = ref.offsetSec;
-    await a.play();
+    await play(ref, u.track, ref.offsetSec);
     setPlayingId(u.id);
   }
 
@@ -515,7 +542,7 @@ function SummaryView({ meeting: m, pane, onTime }: { meeting: MeetingDetail; pan
         <IconButton
           label={editing ? t("summary.done") : t("summary.edit")}
           aria-pressed={editing}
-          disabled={m.summary === null}
+          disabled={!recorded}
           onClick={() => setEditing((v) => !v)}
         >
           {editing ? <Check aria-hidden /> : <Pencil aria-hidden />}
@@ -529,15 +556,16 @@ function SummaryView({ meeting: m, pane, onTime }: { meeting: MeetingDetail; pan
           {pane.error}
         </p>
       )}
-      {m.summary !== null && editing ? (
-        <SummaryEditor key={m.id} meetingId={m.id} value={m.summary} />
+      {editing ? (
+        // Also with no summary yet: write one by hand, or keep typing after clearing it.
+        <SummaryEditor key={m.id} meetingId={m.id} value={m.summary ?? ""} />
       ) : m.summary !== null ? (
         <div className="summary-read" onDoubleClick={() => setEditing(true)}>
           <SummaryDoc markdown={m.summary} onTime={onTime} />
         </div>
       ) : (
         <p className="panel__pending">
-          {m.status === "recording" || m.status === "new"
+          {m.status === "recording" || m.status === "new" || m.status === "processing"
             ? t("summary.afterRecording")
             : recorded
               ? t("summary.none")

@@ -66,13 +66,16 @@ app.whenReady().then(async () => {
   const db = openDb(path.join(dataDir, "seogi.db"), tr()("error.appQuit"));
   const history = new History();
   const notify = (id: number) => broadcast("meeting-changed", id);
-  let disabledActions = new Set<string>();
+  let menuState: { disabled: Set<string>; labels: Record<string, string> } = { disabled: new Set(), labels: {} };
   const rebuildMenu = () =>
-    Menu.setApplicationMenu(appMenu(history, sendAction, openSettingsWindow, tr(), disabledActions));
-  ipcMain.on("menuState", (_e, disabled: string[]) => {
-    const next = new Set(disabled);
-    if (next.size === disabledActions.size && [...next].every((id) => disabledActions.has(id))) return;
-    disabledActions = next;
+    Menu.setApplicationMenu(appMenu(history, sendAction, openSettingsWindow, tr(), menuState.disabled, menuState.labels));
+  ipcMain.on("menuState", (_e, disabled: string[], labels: Record<string, string>) => {
+    const same =
+      disabled.length === menuState.disabled.size &&
+      disabled.every((id) => menuState.disabled.has(id)) &&
+      JSON.stringify(labels) === JSON.stringify(menuState.labels);
+    if (same) return;
+    menuState = { disabled: new Set(disabled), labels };
     rebuildMenu();
   });
   /** -1: a library change (folders, stars, deletes) that any list may show. */
@@ -357,7 +360,13 @@ app.whenReady().then(async () => {
       if (start <= startSec + 0.05 && (!best || start > best.start)) best = { file, start };
     }
     // Caption times run up to a second behind the speech, so playback starts a little early.
-    return best && { url: `${AUDIO_SCHEME}://audio/${id}/${best.file}`, offsetSec: Math.max(0, startSec - PLAYBACK_LEAD_SEC - best.start) };
+    return (
+      best && {
+        url: `${AUDIO_SCHEME}://audio/${id}/${best.file}`,
+        offsetSec: Math.max(0, startSec - PLAYBACK_LEAD_SEC - best.start),
+        chunkStartSec: best.start,
+      }
+    );
   });
   protocol.handle(AUDIO_SCHEME, (req) => {
     const [, id, file] = new URL(req.url).pathname.split("/");
