@@ -1,6 +1,6 @@
 import { AlertCircle, BookmarkPlus, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { AudioRef, LiveView, MeetingDetail, ModelOption, Settings, Track, Utterance } from "../../shared/types";
+import type { LiveView, MeetingDetail, ModelOption, Settings, Utterance } from "../../shared/types";
 import { clock, speakerName } from "../../shared/summary";
 import { joinSplitSentences } from "../../shared/transcript";
 import { duration, fullDate, groupUtterances, insertDrafts } from "./format";
@@ -483,49 +483,63 @@ const Message = memo(function Message({
 
 type Player = ReturnType<typeof usePlayer>;
 
-/** One audio element per meeting; plays an utterance from its chunk file to the chunk's end. */
+/** Follow a selected utterance into subsequent chunks until paused or the meeting changes. */
 function usePlayer(meetingId: number) {
-  const audio = useRef<HTMLAudioElement | null>(null);
-  const [playingId, setPlayingId] = useState<number | null>(null);
-
-  useEffect(() => {
-    const a = new Audio();
-    a.onpause = () => {
-      if (!a.ended) setPlayingId(null);
-    };
-    audio.current = a;
-    return () => {
-      a.pause();
-      audio.current = null;
-    };
+  const [selection, setSelection] = useState<{ meetingId: number; u: Utterance } | null>(null);
+  const toggle = useCallback((u: Utterance) => {
+    setSelection((s) => s?.meetingId === meetingId && s.u.id === u.id ? null : { meetingId, u });
   }, [meetingId]);
 
-  /** Plays one chunk file from `offset`; when it ends, the track's next file carries on. */
-  async function play(ref: AudioRef, track: Track, offset: number) {
-    const a = audio.current;
-    if (!a) return;
-    a.src = ref.url;
-    await new Promise<void>((r) => a.addEventListener("loadedmetadata", () => r(), { once: true }));
-    // A caption time can fall a little past the end of the audio; start near the end instead.
-    a.currentTime = offset < a.duration ? offset : Math.max(0, a.duration - 2);
-    a.onended = async () => {
-      const next = await window.api.audioFor(meetingId, track, ref.chunkStartSec + a.duration + 0.05);
-      if (next && next.url !== ref.url) void play(next, track, 0);
-      else setPlayingId(null);
+  useLayoutEffect(() => {
+    if (!selection) return;
+    if (selection.meetingId !== meetingId) {
+      setSelection(null);
+      return;
+    }
+    const { u } = selection;
+    let active = true;
+    let audio: HTMLAudioElement | null = null;
+    function release() {
+      if (!audio) return;
+      audio.onloadedmetadata = audio.onerror = audio.onended = audio.onpause = null;
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      audio = null;
+    }
+    function finish() {
+      if (active) setSelection((s) => s === selection ? null : s);
+    }
+    async function play(at: number, previousUrl?: string) {
+      try {
+        const ref = await window.api.audioFor(meetingId, u.track, at);
+        if (!active) return;
+        if (!ref || ref.url === previousUrl) return finish();
+        release();
+        const a = new Audio();
+        audio = a;
+        a.onloadedmetadata = () => {
+          a.onloadedmetadata = null;
+          const offset = previousUrl ? 0 : ref.offsetSec;
+          a.currentTime = offset < a.duration ? offset : Math.max(0, a.duration - 2);
+          void a.play().catch(() => { if (audio === a) finish(); });
+        };
+        a.onended = () => { void play(ref.chunkStartSec + a.duration + 0.05, ref.url); };
+        a.onpause = () => { if (!a.ended) finish(); };
+        a.onerror = finish;
+        a.src = ref.url;
+      } catch {
+        finish();
+      }
+    }
+    void play(u.startSec);
+    return () => {
+      active = false;
+      release();
     };
-    await a.play();
-  }
+  }, [meetingId, selection]);
 
-  const toggle = useCallback(async (u: Utterance) => {
-    const a = audio.current;
-    if (!a) return;
-    if (playingId === u.id) return a.pause();
-    const ref = await window.api.audioFor(meetingId, u.track, u.startSec);
-    if (!ref) return;
-    await play(ref, u.track, ref.offsetSec);
-    setPlayingId(u.id);
-  }, [meetingId, playingId]);
-
+  const playingId = selection?.meetingId === meetingId ? selection.u.id : null;
   return useMemo(() => ({ playingId, toggle }), [playingId, toggle]);
 }
 

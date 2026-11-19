@@ -1,6 +1,7 @@
 import { Copy, Folder, Inbox, Mic, Play, Settings, Star } from "lucide-react";
 import { useState } from "react";
 import { Button, Dialog, Field, IconButton, Kbd, Segmented, Select, Switch } from "./ui";
+import "./styles/guide.css";
 
 /** Dev-only living style guide (⌘⇧D). Every component in every state, on real tokens. */
 const COLORS = [

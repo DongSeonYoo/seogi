@@ -1,5 +1,6 @@
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, protocol, session, shell, systemPreferences } from "electron";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { GPT_LIVE_MODEL, GPT_LIVE_TAIL_MS, IMPORT_CHUNK_SEC, LIVE_TEST_ID, type LiveEvent } from "../shared/types";
 import type {
@@ -24,13 +25,14 @@ import { joinSplitSentences } from "../shared/transcript";
 import { glossaryPrompt, isPromptEcho, splitUtterances } from "./transcription";
 import { openDb } from "./db";
 import { History, perform } from "./library";
-import { diarize, ensureModels } from "./diarize";
+import { diarize } from "./diarize";
+import { cleanModelDownloads, ensureModels } from "./modelFiles";
 import { speakerTurns } from "./speakers";
 import { LiveCaptions, openLiveStream } from "./live";
 import { appMenu } from "./menu";
 import { listModels } from "./models";
 import { openSettings } from "./settings";
-import { CHUNK_FILE, playbackResponse } from "./playback";
+import { CHUNK_FILE, ChunkIndex, playbackResponse } from "./playback";
 import { SAMPLE_RATE, toFloat32, toWav } from "./wav";
 
 // Pinned to the original name so meetings and keys survive any change to the display name.
@@ -38,6 +40,7 @@ import { SAMPLE_RATE, toFloat32, toWav } from "./wav";
 const dataDir = path.join(app.getPath("appData"), app.isPackaged ? "Seogi" : "Seogi-dev");
 app.setPath("userData", dataDir);
 const audioDir = path.join(dataDir, "meetings");
+const chunkIndex = new ChunkIndex();
 const modelsDir = path.join(dataDir, "models");
 let aiModule: Promise<typeof import("./ai")> | undefined;
 const loadAI = () => aiModule ??= import("./ai");
@@ -90,11 +93,21 @@ app.whenReady().then(async () => {
   };
 
   // Deleted meetings stay restorable (⌘Z) until quit; then rows and audio go for good.
-  const purge = () => {
-    for (const id of db.purgeDeleted()) rmSync(path.join(audioDir, String(id)), { recursive: true, force: true });
-  };
-  purge();
-  app.on("before-quit", purge);
+  const pendingAudio = db.purgeDeleted();
+  async function removeAudio(ids: number[], quitting = false) {
+    for (const id of ids) {
+      try {
+        const dir = path.join(audioDir, String(id));
+        const options = { recursive: true, force: true };
+        if (quitting) rmSync(dir, options);
+        else await rm(dir, options);
+        db.audioRemoved(id);
+      } catch (error) {
+        console.warn("[seogi] audio deletion will be retried:", id, error);
+      }
+    }
+  }
+  app.on("before-quit", () => void removeAudio(db.purgeDeleted(), true));
 
   /** `tailMs`: how long a stop waits for captions the renderer still sends (GPT-Live). */
   type LiveSession = {
@@ -174,6 +187,7 @@ app.whenReady().then(async () => {
     const name = `${track}-${startSec.toFixed(1)}`;
     if ("ogg" in chunk) writeFileSync(path.join(dir, name + ".ogg"), chunk.ogg);
     else writeFileSync(path.join(dir, name + ".wav"), toWav(chunk.pcm));
+    chunkIndex.invalidate(meetingId);
   }
 
   /** A provider can hang even after cancellation. Ignore its late result once the deadline passes. */
@@ -286,7 +300,10 @@ app.whenReady().then(async () => {
     let turns: { start: number; end: number; speaker?: number }[];
     try {
       importProgress(id, { phase: "models" });
-      const models = await (loadingModels ??= ensureModels(modelsDir).finally(() => { loadingModels = undefined; }));
+      const models = await (loadingModels ??= ensureModels(modelsDir).finally(() => {
+        loadingModels = undefined;
+        cleanModelDownloads(modelsDir);
+      }));
       importProgress(id, { phase: "speakers" });
       turns = speakerTurns(await diarize(toFloat32(pcm), models));
     } catch (e) {
@@ -423,16 +440,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("markOpened", (_e, id: number) => db.setOpened(id, true));
   ipcMain.handle("audioFor", (_e, id: number, track: Track, startSec: number): AudioRef | null => {
-    const dir = path.join(audioDir, String(id));
-    if (!existsSync(dir)) return null;
-    // The chunk that contains startSec is the last one of this track starting at or before it.
-    let best: { file: string; start: number } | null = null;
-    for (const file of readdirSync(dir)) {
-      const m = CHUNK_FILE.exec(file);
-      if (!m || m[1] !== track) continue;
-      const start = Number(m[2]);
-      if (start <= startSec + 0.05 && (!best || start > best.start)) best = { file, start };
-    }
+    const best = chunkIndex.find(audioDir, id, track, startSec);
     // Caption times run up to a second behind the speech, so playback starts a little early.
     return (
       best && {
@@ -446,8 +454,7 @@ app.whenReady().then(async () => {
     const [, id, file] = new URL(req.url).pathname.split("/");
     if (!/^\d+$/.test(id ?? "") || !CHUNK_FILE.test(file ?? "")) return new Response(null, { status: 404 });
     const full = path.join(audioDir, id, file);
-    if (!existsSync(full)) return new Response(null, { status: 404 });
-    return playbackResponse(readFileSync(full), file, req.headers.get("range"));
+    return playbackResponse(full, req.headers.get("range"));
   });
   ipcMain.handle("getSettings", () => settings.view());
   ipcMain.handle("patchSettings", (_e, patch: Partial<StoredSettings>) => {
@@ -464,7 +471,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("listModels", (_e, role: ModelRole, provider: string) => listModels(settings, role, provider));
   ipcMain.handle("storageInfo", (): StorageInfo => {
     const dbFiles = readdirSync(dataDir).filter((f) => f.startsWith("seogi.db"));
-    const database = dbFiles.reduce((n, f) => n + statSync(path.join(dataDir, f)).size, 0);
+    const database = dbFiles.reduce((n, f) => n + (statSync(path.join(dataDir, f), { throwIfNoEntry: false })?.size ?? 0), 0);
     const audio = dirSize(audioDir);
     const models = dirSize(modelsDir);
     return { path: dataDir, bytes: audio + database + models, audio, database, models, meetings: db.counts().all };
@@ -515,6 +522,10 @@ app.whenReady().then(async () => {
     visualEffectState: "followWindow",
     backgroundColor: "#00000000",
     webPreferences: { preload: path.join(import.meta.dirname, "../preload/index.cjs"), sandbox: true },
+  });
+  win.once("ready-to-show", () => {
+    void removeAudio(pendingAudio);
+    if (!loadingModels) cleanModelDownloads(modelsDir);
   });
   load(win);
   win.on("closed", () => (win = null));
@@ -616,9 +627,13 @@ function popupMenu(sender: Electron.WebContents, items: MenuSpec[]): Promise<str
 }
 
 function dirSize(dir: string): number {
-  if (!existsSync(dir)) return 0;
-  return readdirSync(dir, { withFileTypes: true }).reduce((n, e) => {
-    const p = path.join(dir, e.name);
-    return n + (e.isDirectory() ? dirSize(p) : statSync(p).size);
-  }, 0);
+  try {
+    return readdirSync(dir, { withFileTypes: true }).reduce((n, e) => {
+      const p = path.join(dir, e.name);
+      return n + (e.isDirectory() ? dirSize(p) : statSync(p, { throwIfNoEntry: false })?.size ?? 0);
+    }, 0);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw e;
+  }
 }

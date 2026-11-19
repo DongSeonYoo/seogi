@@ -55,6 +55,9 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       name TEXT NOT NULL,
       deleted_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS pending_audio_deletes (
+      meeting_id INTEGER PRIMARY KEY AUTOINCREMENT
+    );
   `);
   const columns = db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name);
   const addColumn = (name: string, ddl: string) => {
@@ -109,8 +112,13 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
     raw: db,
 
     createMeeting(title: string, folderId: number | null = null): number {
+      // sqlite_sequence remembers even acknowledged deletions. A slow retry must never
+      // see a new meeting at a retired folder path.
       const r = db
-        .prepare("INSERT INTO meetings (title, started_at, status, folder_id) VALUES (?, ?, 'new', ?)")
+        .prepare(`INSERT INTO meetings (id, title, started_at, status, folder_id)
+          VALUES (1 + MAX(COALESCE((SELECT MAX(id) FROM meetings), 0),
+                          COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'pending_audio_deletes'), 0)),
+                  ?, ?, 'new', ?)`)
         .run(title, new Date().toISOString(), folderId);
       return Number(r.lastInsertRowid);
     },
@@ -329,20 +337,29 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       db.prepare("UPDATE folders SET deleted_at = ? WHERE id = ?").run(deleted ? new Date().toISOString() : null, id);
     },
 
-    /** Removes deleted meetings and folders for good; returns the meeting ids so audio can go too. */
+    /** Permanently deletes the rows and records the remaining filesystem work together. */
     purgeDeleted(): number[] {
-      const ids = db
-        .prepare("SELECT id FROM meetings WHERE deleted_at IS NOT NULL")
-        .all()
-        .map((r) => Number(r.id));
-      db.exec(`
-        DELETE FROM utterances WHERE meeting_id IN (SELECT id FROM meetings WHERE deleted_at IS NOT NULL);
-        DELETE FROM meetings WHERE deleted_at IS NOT NULL;
-        UPDATE meetings SET folder_id = NULL
-          WHERE folder_id IN (SELECT id FROM folders WHERE deleted_at IS NOT NULL);
-        DELETE FROM folders WHERE deleted_at IS NOT NULL;
-      `);
-      return ids;
+      const deleted = "deleted_at IS NOT NULL AND status NOT IN ('recording', 'processing')";
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        db.exec(`
+          INSERT INTO pending_audio_deletes SELECT id FROM meetings WHERE ${deleted};
+          DELETE FROM utterances WHERE meeting_id IN (SELECT id FROM meetings WHERE ${deleted});
+          DELETE FROM meetings WHERE ${deleted};
+          UPDATE meetings SET folder_id = NULL
+            WHERE folder_id IN (SELECT id FROM folders WHERE deleted_at IS NOT NULL);
+          DELETE FROM folders WHERE deleted_at IS NOT NULL;
+          COMMIT;
+        `);
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+      return db.prepare("SELECT meeting_id FROM pending_audio_deletes").all().map((r) => Number(r.meeting_id));
+    },
+
+    audioRemoved(id: number) {
+      db.prepare("DELETE FROM pending_audio_deletes WHERE meeting_id = ?").run(id);
     },
   };
 }

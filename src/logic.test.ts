@@ -324,6 +324,53 @@ test("listModels maps qgrid's catalog per role and filters OpenAI's list by task
   }
 });
 
+test("a pending audio deletion survives restart without reusing its meeting id", async () => {
+  const { openDb } = await import("./main/db.ts");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "seogi-purge-"));
+  const file = join(dir, "test.db");
+  let db = openDb(file);
+  try {
+    const kept = db.createMeeting("Undo");
+    db.setMeetingDeleted(kept, true);
+    db.setMeetingDeleted(kept, false);
+    const gone = db.createMeeting("Delete");
+    db.setMeetingDeleted(gone, true);
+    assert.deepEqual(db.purgeDeleted(), [gone]);
+    db.raw.close();
+    db = openDb(file);
+    assert.deepEqual(db.purgeDeleted(), [gone]);
+    db.audioRemoved(gone);
+    assert.deepEqual(db.purgeDeleted(), []);
+    assert.ok(db.createMeeting("New") > gone);
+    assert.equal(db.getMeeting(kept)?.title, "Undo");
+  } finally {
+    db.raw.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("model cleanup waits for active downloads and removes only abandoned temp folders", async (t) => {
+  const { cleanModelDownloads } = await import("./main/modelFiles.ts");
+  const { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "seogi-model-cleanup-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const active = mkdtempSync(join(dir, `download-${process.pid}-`));
+  const stale = mkdtempSync(join(dir, "download-"));
+  writeFileSync(join(stale, "unfinished.part"), "incomplete");
+  mkdirSync(join(dir, "speaker-model"));
+  writeFileSync(join(dir, "download-abcdef"), "keep");
+  cleanModelDownloads(dir);
+  assert.equal(readdirSync(dir).length, 4);
+  rmSync(active, { recursive: true });
+  cleanModelDownloads(dir);
+  assert.deepEqual(readdirSync(dir).sort(), ["download-abcdef", "speaker-model"]);
+});
+
 test("library changes undo and redo, deletes purge for real, and a resummary keeps a typed title", async () => {
   const { openDb } = await import("./main/db.ts");
   const { History, perform } = await import("./main/library.ts");
@@ -517,19 +564,47 @@ test("Ogg Opus pages round-trip headers, packet lacing, CRCs and trimmed 48 kHz 
   assert.deepEqual(audio, packets);
 });
 
-test("playback serves both chunk formats and byte ranges for seeking", async () => {
+test("playback serves file-backed WAV and Ogg ranges for seeking", async (t) => {
   const { CHUNK_FILE, playbackResponse } = await import("./main/playback.ts");
-  const bytes = Uint8Array.of(1, 2, 3, 4);
+  const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "seogi-range-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   for (const [name, mime] of [["mic-0.0.wav", "audio/wav"], ["system-30.0.ogg", "audio/ogg"]]) {
     assert.ok(CHUNK_FILE.test(name));
-    const response = playbackResponse(bytes, name, "bytes=2-");
+    const file = join(dir, name);
+    writeFileSync(file, Uint8Array.of(1, 2, 3, 4));
+    const response = await playbackResponse(file, "bytes=1-2");
     assert.equal(response.status, 206);
     assert.equal(response.headers.get("content-type"), mime);
-    assert.equal(response.headers.get("content-range"), "bytes 2-3/4");
-    assert.deepEqual(await response.bytes(), Uint8Array.of(3, 4));
+    assert.equal(response.headers.get("content-range"), "bytes 1-2/4");
+    assert.deepEqual(await response.bytes(), Uint8Array.of(2, 3));
+    assert.deepEqual(await (await playbackResponse(file, "bytes=-2")).bytes(), Uint8Array.of(3, 4));
+    assert.equal((await playbackResponse(file, null)).status, 200);
+    assert.equal((await playbackResponse(file, "bytes=4-")).status, 416);
   }
-  assert.equal(playbackResponse(bytes, "mic-0.0.wav", null).status, 200);
-  assert.equal(playbackResponse(bytes, "mic-0.0.ogg", "bytes=4-").status, 416);
+  assert.equal((await playbackResponse(join(dir, "absent.wav"), null)).status, 404);
+});
+
+test("the chunk index finds the preceding chunk on each track and refreshes on save", async (t) => {
+  const { ChunkIndex } = await import("./main/playback.ts");
+  const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "seogi-index-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, "1"));
+  for (const name of ["mic-20.0.ogg", "mic-5.0.wav", "system-4.0.ogg"]) writeFileSync(join(dir, "1", name), "");
+  const index = new ChunkIndex();
+  assert.equal(index.find(dir, 1, "mic", 3), null);
+  assert.equal(index.find(dir, 1, "mic", 19.96)?.start, 20);
+  assert.equal(index.find(dir, 1, "system", 20)?.start, 4);
+  writeFileSync(join(dir, "1", "mic-10.0.wav"), "");
+  assert.equal(index.find(dir, 1, "mic", 12)?.start, 5);
+  index.invalidate(1);
+  assert.equal(index.find(dir, 1, "mic", 12)?.start, 10);
+  assert.equal(index.find(dir, 2, "mic", 12), null);
 });
 
 test("unavailable Opus encoding selects the PCM fallback", async () => {
