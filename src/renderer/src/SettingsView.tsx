@@ -636,7 +636,7 @@ function About() {
           [t("action.resummarize"), "⇧⌘S"],
           [t("action.delete"), "⌘⌫"],
           [t("action.newFolder"), "⇧⌘N"],
-          [t("action.toggleSidebar"), "⌃⌘S"],
+          [t("action.toggleSidebar"), "⌘B"],
           [t("action.settings"), "⌘,"],
         ].map(([label, key]) => (
           <Row key={label} label={label}>

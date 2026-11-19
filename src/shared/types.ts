@@ -27,8 +27,8 @@ export type MeetingRow = {
 };
 
 /** What the meeting list shows: a smart collection or a folder id. */
-export type LibraryView = "all" | "unread" | "starred" | "error" | number;
-export type LibraryCounts = { all: number; unread: number; starred: number; error: number; recording: boolean };
+export type LibraryView = "all" | "starred" | number;
+export type LibraryCounts = { all: number; starred: number; recording: boolean };
 export type Folder = { id: number; name: string; count: number };
 export type Library = { counts: LibraryCounts; folders: Folder[] };
 

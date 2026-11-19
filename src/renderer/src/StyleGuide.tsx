@@ -1,4 +1,4 @@
-import { AlertTriangle, Copy, Folder, Inbox, Mic, Play, Settings, Star } from "lucide-react";
+import { Copy, Folder, Inbox, Mic, Play, Settings, Star } from "lucide-react";
 import { useState } from "react";
 import { Button, Dialog, Field, IconButton, Kbd, Segmented, Select, Switch } from "./ui";
 
@@ -118,7 +118,6 @@ export function StyleGuide() {
           <li><button type="button" className="side-item"><Inbox aria-hidden /><span className="side-item__label">기본</span><span className="side-item__count">12</span></button></li>
           <li><button type="button" className="side-item" aria-current><Star aria-hidden /><span className="side-item__label">선택됨</span><span className="side-item__count">3</span></button></li>
           <li><button type="button" className="side-item" data-drop><Folder aria-hidden /><span className="side-item__label">끌어다 놓는 중</span></button></li>
-          <li><button type="button" className="side-item" data-tone="danger"><AlertTriangle aria-hidden /><span className="side-item__label">오류</span><span className="side-item__count">2</span></button></li>
         </ul>
         <ul className="list__rows guide__list" tabIndex={0} role="listbox" aria-label="예시">
           {[

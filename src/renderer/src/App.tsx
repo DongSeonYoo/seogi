@@ -16,12 +16,13 @@ import { useT } from "./i18n";
 import { liveCaptionHooks } from "./gptLive";
 import { NO_SYSTEM_AUDIO, startRecording } from "./recorder";
 import { Sidebar } from "./Sidebar";
+import { Splitter, useLayout } from "./Splitter";
 import { StyleGuide } from "./StyleGuide";
 import { Toolbar, type Recording } from "./Toolbar";
 
 const api = window.api;
 const EMPTY_LIBRARY: Library = {
-  counts: { all: 0, unread: 0, starred: 0, error: 0, recording: false },
+  counts: { all: 0, starred: 0, recording: false },
   folders: [],
 };
 
@@ -40,7 +41,8 @@ export function App() {
   const [live, setLive] = useState<{ id: number; view: LiveView } | null>(null);
   const [systemSilent, setSystemSilent] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [sidebar, setSidebar] = useState(true);
+  const panes = useLayout();
+  const { sidebar } = panes.layout;
   const [palette, setPalette] = useState(false);
   const [guide, setGuide] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -211,7 +213,7 @@ export function App() {
     },
     "tab:summary": { label: t("action.showSummary"), shortcut: "⌘1", enabled: !!current, run: () => setTab("summary") },
     "tab:transcript": { label: t("action.showTranscript"), shortcut: "⌘2", enabled: !!current, run: () => setTab("transcript") },
-    toggleSidebar: { label: t("action.toggleSidebar"), shortcut: "⌃⌘S", run: () => setSidebar((v) => !v) },
+    toggleSidebar: { label: t("action.toggleSidebar"), shortcut: "⌘B", run: panes.toggleSidebar },
     settings: { label: t("action.settings"), shortcut: "⌘,", run: () => api.openSettings() },
     styleGuide: { label: t("action.styleGuide"), run: () => void (import.meta.env.DEV && setGuide((v) => !v)) },
   };
@@ -273,7 +275,22 @@ export function App() {
       : t(`view.${view}`);
 
   return (
-    <div className="app" data-sidebar={sidebar || undefined}>
+    <div className="app" data-sidebar={sidebar || undefined} style={panes.style}>
+      {sidebar && (
+        <Splitter
+          at={panes.layout.sidebarW}
+          label={t("sidebar.resize")}
+          onResize={panes.resizeSidebar}
+          onReset={panes.resetSidebar}
+        />
+      )}
+      <Splitter
+        at={(sidebar ? panes.layout.sidebarW : 0) + panes.layout.listW}
+        label={t("sidebar.resizeList")}
+        className="splitter--list"
+        onResize={(w) => panes.resizeList(w - (sidebar ? panes.layout.sidebarW : 0))}
+        onReset={panes.resetList}
+      />
       {sidebar && (
         <Sidebar
           view={view}

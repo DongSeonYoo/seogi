@@ -79,9 +79,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
 
   const viewWhere: Record<Exclude<LibraryView, number>, string> = {
     all: "1",
-    unread: "m.status = 'done' AND m.opened = 0",
     starred: "m.starred = 1",
-    error: "m.status = 'error'",
   };
 
   return {
@@ -145,9 +143,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
         Number(db.prepare(`SELECT COUNT(*) AS n FROM meetings m WHERE ${live} AND ${where}`).get()?.n ?? 0);
       return {
         all: one(viewWhere.all),
-        unread: one(viewWhere.unread),
         starred: one(viewWhere.starred),
-        error: one(viewWhere.error),
         recording: one("m.status = 'recording'") > 0,
       };
     },

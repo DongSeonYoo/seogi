@@ -1,4 +1,4 @@
-import { AlertTriangle, CircleDot, Folder, FolderPlus, Inbox, Settings, Star, type LucideIcon } from "lucide-react";
+import { Folder, FolderPlus, Inbox, Settings, Star, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import type { Library, LibraryView } from "../../shared/types";
 import { TitleInput } from "./Toolbar";
@@ -39,11 +39,7 @@ export function Sidebar({
       <nav className="sidebar__scroll">
         <Section title={t("sidebar.library")}>
           <Item icon={Inbox} label={t("view.all")} count={counts.all} active={view === "all"} onClick={() => onView("all")} onDrop={(id) => onDropMeeting(id, null)} />
-          <Item icon={CircleDot} label={t("view.unread")} count={counts.unread} active={view === "unread"} onClick={() => onView("unread")} />
           <Item icon={Star} label={t("view.starred")} count={counts.starred} active={view === "starred"} onClick={() => onView("starred")} />
-          {counts.error > 0 && (
-            <Item icon={AlertTriangle} label={t("view.error")} count={counts.error} active={view === "error"} onClick={() => onView("error")} tone="danger" />
-          )}
         </Section>
         <Section
           title={t("sidebar.folders")}
@@ -104,7 +100,6 @@ function Item({
   label,
   count,
   active,
-  tone,
   onClick,
   onDrop,
   onMenu,
@@ -113,7 +108,6 @@ function Item({
   label: string;
   count: number;
   active: boolean;
-  tone?: "danger";
   onClick: () => void;
   onDrop?: (meetingId: number) => void;
   onMenu?: () => void;
@@ -125,7 +119,6 @@ function Item({
         type="button"
         className="side-item"
         aria-current={active || undefined}
-        data-tone={tone}
         data-drop={over || undefined}
         onClick={onClick}
         onContextMenu={

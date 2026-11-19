@@ -48,7 +48,7 @@ export function Toolbar({
   return (
     <header className="toolbar drag">
       {!sidebar && <div className="toolbar__lights" />}
-      <IconButton label={`${t("action.toggleSidebar")} (⌃⌘S)`} onClick={onToggleSidebar}>
+      <IconButton label={`${t("action.toggleSidebar")} (⌘B)`} onClick={onToggleSidebar}>
         <PanelLeft aria-hidden />
       </IconButton>
       <div className="toolbar__title">

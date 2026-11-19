@@ -71,7 +71,7 @@ export function appMenu(history: History, send: (id: ActionId) => void, openSett
         item("tab:summary", t("detail.summary"), "Cmd+1"),
         item("tab:transcript", t("detail.transcript"), "Cmd+2"),
         { type: "separator" },
-        item("toggleSidebar", t("action.toggleSidebar"), "Ctrl+Cmd+S"),
+        item("toggleSidebar", t("action.toggleSidebar"), "Cmd+B"),
         { type: "separator" },
         ...(app.isPackaged
           ? []
