@@ -1,5 +1,5 @@
-import { nativeTheme, safeStorage } from "electron";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { app, nativeTheme, safeStorage } from "electron";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { translator } from "../shared/i18n";
 import { DEFAULT_MODELS, type KeyName, type Settings, type StoredSettings } from "../shared/types";
@@ -84,6 +84,7 @@ export async function openSettings(dir: string) {
  */
 async function readKeys(file: string): Promise<Partial<Record<KeyName, string>>> {
   if (!existsSync(file)) return {};
+  if (!app.isPackaged) return JSON.parse(readFileSync(file, "utf8"));
   try {
     const { result, shouldReEncrypt } = await safeStorage.decryptStringAsync(readFileSync(file));
     const keys = JSON.parse(result);
@@ -96,6 +97,11 @@ async function readKeys(file: string): Promise<Partial<Record<KeyName, string>>>
   }
 }
 
+/**
+ * No keys, no file: the keychain is asked only once a key exists (qgrid needs none). Development
+ * builds (their own Seogi-dev folder) keep keys as plain JSON, so they never prompt either.
+ */
 async function writeKeys(file: string, keys: Partial<Record<KeyName, string>>) {
-  writeFileSync(file, await safeStorage.encryptStringAsync(JSON.stringify(keys)));
+  if (!Object.keys(keys).length) return rmSync(file, { force: true });
+  writeFileSync(file, app.isPackaged ? await safeStorage.encryptStringAsync(JSON.stringify(keys)) : JSON.stringify(keys));
 }
