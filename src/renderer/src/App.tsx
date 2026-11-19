@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type {
   ActionId,
   Library,
@@ -17,10 +17,12 @@ import { liveCaptionHooks } from "./gptLive";
 import { NO_SYSTEM_AUDIO, startRecording } from "./recorder";
 import { Sidebar } from "./Sidebar";
 import { Splitter, useLayout } from "./Splitter";
-import { StyleGuide } from "./StyleGuide";
 import { Toolbar, type Recording } from "./Toolbar";
 
 const api = window.api;
+const StyleGuide = import.meta.env.DEV
+  ? lazy(async () => ({ default: (await import("./StyleGuide")).StyleGuide }))
+  : null;
 const EMPTY_LIBRARY: Library = {
   counts: { all: 0, starred: 0, recording: false },
   folders: [],
@@ -426,8 +428,8 @@ export function App() {
         onMenu={meetingMenu}
       />
       <main className="detail">
-        {guide ? (
-          <StyleGuide />
+        {guide && StyleGuide ? (
+          <Suspense fallback={null}><StyleGuide /></Suspense>
         ) : current ? (
           <MeetingView
             meeting={current}

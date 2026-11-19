@@ -33,5 +33,5 @@ export default defineConfig({
   main: { build: { license: true } },
   // Sandboxed preloads cannot be ES modules.
   preload: { build: { rollupOptions: { output: { format: "cjs", entryFileNames: "[name].cjs" } } } },
-  renderer: { build: { license: true }, plugins: [react(), cspInBuild] },
+  renderer: { build: { minify: true, license: true }, plugins: [react(), cspInBuild] },
 });
