@@ -1,4 +1,7 @@
-import type { LiveLine, LiveView, Track } from "../shared/types";
+import type { Translate } from "../shared/i18n";
+import type { LiveEvent, LiveLine, LiveView, Track } from "../shared/types";
+
+export type { LiveEvent };
 
 /** Live captions are drafts: kept in memory only and replaced by the chunk transcripts. */
 
@@ -9,15 +12,10 @@ const PROJECT_NAME = "seogi";
 // The chunk transcripts of the same audio are already logged; drafts would only duplicate them.
 const QGRID_LOGGER = false;
 
-export type LiveEvent =
-  | { type: "delta"; id: string; text: string; atSec: number }
-  | { type: "segment"; id: string; text: string; startSec: number; endSec: number }
-  | { type: "error"; message: string };
-
 /** One track's stream. Input is mono PCM16 at 16 kHz, every frame from the track's first sample. */
 export type LiveStream = { audio(pcm: Int16Array): void; stop(): void };
 
-export type LiveConfig = { model: string; language?: string; prompt?: string } & (
+export type LiveConfig = { model: string; language?: string; prompt?: string; t: Translate } & (
   | { provider: "qgrid"; url: string }
   | { provider: "openai"; apiKey: string }
 );
@@ -68,7 +66,7 @@ function qgridStream(
     else if (event === "error") onEvent({ type: "error", message: data.message });
   };
   ws.onclose = (e) => {
-    if (!stopped) onEvent({ type: "error", message: `qgrid 연결이 끊겼습니다 (${e.code})` });
+    if (!stopped) onEvent({ type: "error", message: config.t("error.qgridClosed", { code: e.code }) });
     stopped = true;
   };
 
@@ -185,7 +183,7 @@ function openaiStream(
       policy.reset();
       if (++failures > 3) {
         stopped = true;
-        onEvent({ type: "error", message: `OpenAI 실시간 연결 실패 (${e.code} ${e.reason})` });
+        onEvent({ type: "error", message: config.t("error.openaiLiveFailed", { code: e.code, reason: e.reason }) });
         return;
       }
       setTimeout(connect, 1000 * failures);
@@ -282,7 +280,8 @@ export class CommitPolicy {
   }
 }
 
-type Draft = LiveLine & { endSec?: number };
+/** `done`: the segment finished; until then `endSec` (if any) is the end of the latest delta. */
+type Draft = LiveLine & { endSec?: number; done?: boolean };
 
 /**
  * One meeting's drafts for both tracks. A finished draft disappears once the chunk transcripts
@@ -325,10 +324,19 @@ export class LiveCaptions {
       const key = `${track}:${e.id}`;
       const d = this.drafts.get(key);
       if (e.type === "delta") {
-        if (d?.endSec !== undefined) return;
-        this.drafts.set(key, { key, track, startSec: d?.startSec ?? e.atSec, text: (d?.text ?? "") + e.text });
+        if (d?.done) return;
+        // A timed piece the final transcript already covers (a long turn outliving its chunk).
+        if (e.endSec !== undefined && covered(this.settled[track], e.atSec, e.endSec)) return;
+        // After a settle removed the earlier part, a long turn continues as a fresh draft.
+        this.drafts.set(key, {
+          key,
+          track,
+          startSec: d?.startSec ?? e.atSec,
+          endSec: e.endSec ?? d?.endSec,
+          text: (d?.text ?? "") + e.text,
+        });
       } else if (covered(this.settled[track], e.startSec, e.endSec)) this.drafts.delete(key);
-      else this.drafts.set(key, { key, track, startSec: e.startSec, endSec: e.endSec, text: e.text });
+      else this.drafts.set(key, { key, track, startSec: e.startSec, endSec: e.endSec, text: e.text, done: true });
     }
     this.changed();
   }

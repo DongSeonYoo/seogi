@@ -1,21 +1,43 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, protocol, session, shell } from "electron";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, protocol, session, shell, systemPreferences } from "electron";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { LIVE_TEST_ID } from "../shared/types";
-import type { AppInfo, AudioRef, Chunk, ConnectionRole, KeyName, ModelRole, StorageInfo, StoredSettings, Track } from "../shared/types";
+import { GPT_LIVE_MODEL, LIVE_TEST_ID, type LiveEvent } from "../shared/types";
+import type {
+  AppInfo,
+  AudioRef,
+  Chunk,
+  ConnectionRole,
+  KeyName,
+  LibraryOp,
+  LibraryView,
+  MenuSpec,
+  ModelRole,
+  StorageInfo,
+  StoredSettings,
+  Track,
+} from "../shared/types";
+import { INTL_LOCALE, translator, type Locale } from "../shared/i18n";
 import { joinSplitSentences } from "../shared/transcript";
-import { splitUtterances, summarize, testConnection, transcribeWav } from "./ai";
+import { glossaryPrompt, splitUtterances, summarize, testConnection, transcribeWav } from "./ai";
 import { openDb } from "./db";
+import { History, perform } from "./library";
 import { LiveCaptions, openLiveStream } from "./live";
+import { appMenu } from "./menu";
 import { listModels } from "./models";
 import { openSettings } from "./settings";
 import { toWav, SAMPLE_RATE } from "./wav";
 
-// Pinned: the packaged app is named 서기, but meetings and keys live under the original name.
-const dataDir = path.join(app.getPath("appData"), "Seogi");
+// Pinned to the original name so meetings and keys survive any change to the display name.
+// Unpackaged runs (pnpm dev) get their own folder so they never touch the installed app's data.
+const dataDir = path.join(app.getPath("appData"), app.isPackaged ? "Seogi" : "Seogi-dev");
 app.setPath("userData", dataDir);
 const audioDir = path.join(dataDir, "meetings");
 let win: BrowserWindow | null = null;
+let settingsWin: BrowserWindow | null = null;
+
+/** Every window hears library and live-caption events (the settings window runs its own test). */
+const broadcast = (channel: string, ...args: unknown[]) =>
+  BrowserWindow.getAllWindows().forEach((w) => w.webContents.send(channel, ...args));
 
 // Chunk WAVs are served to the renderer as seogi-audio://audio/<meetingId>/<file>.
 const AUDIO_SCHEME = "seogi-audio";
@@ -25,29 +47,47 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 app.whenReady().then(async () => {
-  const db = openDb(path.join(dataDir, "seogi.db"));
   const settings = await openSettings(dataDir);
-  const dbMeetings = () => db.listMeetings("").length;
-  const notify = (id: number) => win?.webContents.send("meeting-changed", id);
+  /** Messages in the UI language the user picked; read each time so a change applies at once. */
+  const tr = () => translator(settings.get().locale);
+  const db = openDb(path.join(dataDir, "seogi.db"), tr()("error.appQuit"));
+  const history = new History();
+  const notify = (id: number) => broadcast("meeting-changed", id);
+  /** -1: a library change (folders, stars, deletes) that any list may show. */
+  const libraryChanged = () => {
+    notify(-1);
+    Menu.setApplicationMenu(appMenu(history, sendAction, openSettingsWindow, tr()));
+  };
+
+  // Deleted meetings stay restorable (⌘Z) until quit; then rows and audio go for good.
+  const purge = () => {
+    for (const id of db.purgeDeleted()) rmSync(path.join(audioDir, String(id)), { recursive: true, force: true });
+  };
+  purge();
+  app.on("before-quit", purge);
 
   // Transcription requests in flight per meeting; stop waits for them before summarizing.
   const pending = new Map<number, Set<Promise<void>>>();
   const failures = new Map<number, { count: number; last: string }>();
   const live = new Map<number, LiveCaptions>();
-  const sendLive = (id: number) => win?.webContents.send("live", id, live.get(id)?.view() ?? { lines: [], error: null });
+  const sendLive = (id: number) => broadcast("live", id, live.get(id)?.view() ?? { lines: [], error: null });
 
   function startLive(id: number) {
     const s = settings.get();
     const { provider, model } = s.live;
     const language = s.language === "auto" ? undefined : s.language;
     // Whisper models take no prompt (qgrid rejects it for gpt-realtime-whisper).
-    const prompt = s.glossary.trim() && !model.includes("whisper") ? `용어: ${s.glossary}` : undefined;
+    const prompt = s.glossary.trim() && !model.includes("whisper") ? glossaryPrompt(s.language, s.glossary) : undefined;
+    // GPT-Live runs over WebRTC in the renderer, which sends its events here (liveEvent).
+    const rendererDriven = provider === "qgrid" && model === GPT_LIVE_MODEL;
     const captions = new LiveCaptions(
       (onEvent) =>
-        openLiveStream(
+        rendererDriven
+          ? { audio() {}, stop() {} }
+          : openLiveStream(
           provider === "qgrid"
-            ? { provider: "qgrid", url: s.qgridUrl, model, language, prompt }
-            : { provider: "openai", apiKey: settings.key("openai"), model, language, prompt },
+            ? { provider: "qgrid", url: s.qgridUrl, model, language, prompt, t: tr() }
+            : { provider: "openai", apiKey: settings.key("openai"), model, language, prompt, t: tr() },
           onEvent,
         ),
       () => sendLive(id),
@@ -84,7 +124,7 @@ app.whenReady().then(async () => {
       const count = (failures.get(meetingId)?.count ?? 0) + 1;
       failures.set(meetingId, { count, last });
       // Shown while still recording, so a wrong key or model surfaces before the meeting ends.
-      db.setError(meetingId, `전사 실패 ${count}건: ${last}`);
+      db.setError(meetingId, tr()("error.transcriptionFailed", { n: count, error: last }));
       console.error(`[seogi] transcription failed (${track} @${startSec}s):`, e);
     }
     notify(meetingId);
@@ -104,16 +144,16 @@ app.whenReady().then(async () => {
     try {
       const m = db.getMeeting(id);
       if (!m?.utterances.length)
-        throw new Error(`전사된 내용이 없습니다${failed ? ` (${failed.last})` : ""}`);
+        throw new Error(`${tr()("error.nothingTranscribed")}${failed ? ` (${failed.last})` : ""}`);
       const transcript = joinSplitSentences(m.utterances)
-        .map((u) => `[${clock(u.startSec)}] ${u.track === "mic" ? "나" : "상대"}: ${u.text}`)
+        .map((u) => `[${clock(u.startSec)}] ${u.track === "mic" ? "Me" : "Others"}: ${u.text}`)
         .join("\n");
       db.setSummary(id, await summarize(settings, transcript));
       db.setOpened(id, false);
       db.setStatus(
         id,
         "done",
-        failed ? `${failed.count}개 구간의 전사에 실패했습니다: ${failed.last}` : null,
+        failed ? tr()("error.someChunksFailed", { n: failed.count, error: failed.last }) : null,
       );
     } catch (e) {
       db.setStatus(id, "error", e instanceof Error ? e.message : String(e));
@@ -121,15 +161,33 @@ app.whenReady().then(async () => {
     notify(id);
   }
 
-  ipcMain.handle("listMeetings", (_e, q: string) => db.listMeetings(q));
+  ipcMain.handle("listMeetings", (_e, view: LibraryView, query?: string) => db.listMeetings(view, query));
+  ipcMain.handle("library", () => ({ counts: db.counts(), folders: db.listFolders() }));
+  ipcMain.handle("perform", (_e, op: LibraryOp) => {
+    const result = perform(db, history, op, tr());
+    if (result.ok) libraryChanged();
+    return result;
+  });
+  for (const kind of ["undo", "redo"] as const)
+    ipcMain.handle(kind, () => {
+      const label = history[kind]();
+      if (label) libraryChanged();
+      return label;
+    });
+  ipcMain.handle("showMenu", (e, items: MenuSpec[]) => popupMenu(e.sender, items));
+  ipcMain.on("openSettings", () => openSettingsWindow());
+  ipcMain.handle("accentColor", accentColor);
   ipcMain.handle("getMeeting", (_e, id: number) => {
     const m = db.getMeeting(id);
     return m && { ...m, pendingChunks: pending.get(id)?.size ?? 0 };
   });
-  ipcMain.handle("startMeeting", () => {
-    const title = `회의 ${new Date().toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })}`;
-    const id = db.createMeeting(title);
+  ipcMain.handle("startMeeting", (_e, folderId?: number | null) => {
+    const { locale } = settings.get();
+    const date = new Date().toLocaleString(INTL_LOCALE[locale], { dateStyle: "short", timeStyle: "short" });
+    const title = translator(locale)("meeting.defaultTitle", { date });
+    const id = db.createMeeting(title, folderId ?? null);
     startLive(id);
+    notify(id);
     return id;
   });
   ipcMain.handle("startLiveTest", () => {
@@ -139,6 +197,30 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("stopLiveTest", () => live.get(LIVE_TEST_ID)?.stop());
   ipcMain.on("liveAudio", (_e, id: number, track: Track, pcm: Int16Array) => live.get(id)?.audio(track, pcm));
+  ipcMain.on("liveEvent", (_e, id: number, track: Track, event: LiveEvent) => live.get(id)?.onEvent(track, event));
+  ipcMain.handle("liveCall", async (_e, sdp: string) => {
+    try {
+      const res = await fetch(`${settings.get().qgridUrl.replace(/\/$/, "")}/api/qgrid/liveCall`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          params: {
+            sdp,
+            instructions: gptLiveInstructions(settings.get().language, settings.get().glossary),
+            projectName: "seogi",
+            // Same as the other live captions: the chunk transcripts are what gets logged.
+            logger: false,
+          },
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.message ?? `qgrid ${res.status}`);
+      return { ok: true, sdp: String(body.sdp) };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
   ipcMain.on("sendChunk", (_e, chunk: Chunk) => {
     const set = pending.get(chunk.meetingId) ?? new Set();
     pending.set(chunk.meetingId, set);
@@ -146,7 +228,11 @@ app.whenReady().then(async () => {
     set.add(p);
     notify(chunk.meetingId);
   });
-  ipcMain.handle("stopMeeting", (_e, id: number) => finish(id));
+  ipcMain.handle("stopMeeting", (_e, id: number) => {
+    // Only a real stop fixes the length; a resummary of an older meeting must not stamp "now".
+    db.setEnded(id);
+    return finish(id);
+  });
   ipcMain.handle("resummarize", (_e, id: number) => finish(id));
   ipcMain.handle("markOpened", (_e, id: number) => db.setOpened(id, true));
   ipcMain.handle("audioFor", (_e, id: number, track: Track, startSec: number): AudioRef | null => {
@@ -175,14 +261,22 @@ app.whenReady().then(async () => {
     });
   });
   ipcMain.handle("getSettings", () => settings.view());
-  ipcMain.handle("patchSettings", (_e, patch: Partial<StoredSettings>) => settings.patch(patch));
+  ipcMain.handle("patchSettings", (_e, patch: Partial<StoredSettings>) => {
+    const before: Locale = settings.get().locale;
+    const view = settings.patch(patch);
+    if (view.locale !== before) {
+      Menu.setApplicationMenu(appMenu(history, sendAction, openSettingsWindow, tr()));
+      broadcast("locale", view.locale);
+    }
+    return view;
+  });
   ipcMain.handle("setKey", (_e, name: KeyName, value: string) => settings.setKey(name, value));
   ipcMain.handle("testConnection", (_e, role: ConnectionRole) => testConnection(settings, role));
   ipcMain.handle("listModels", (_e, role: ModelRole, provider: string) => listModels(settings, role, provider));
   ipcMain.handle("storageInfo", (): StorageInfo => {
-    const db = readdirSync(dataDir).filter((f) => f.startsWith("seogi.db"));
-    const bytes = dirSize(audioDir) + db.reduce((n, f) => n + statSync(path.join(dataDir, f)).size, 0);
-    return { path: dataDir, bytes, meetings: dbMeetings() };
+    const dbFiles = readdirSync(dataDir).filter((f) => f.startsWith("seogi.db"));
+    const bytes = dirSize(audioDir) + dbFiles.reduce((n, f) => n + statSync(path.join(dataDir, f)).size, 0);
+    return { path: dataDir, bytes, meetings: db.counts().all };
   });
   ipcMain.handle("openDataFolder", () => shell.openPath(dataDir).then(() => undefined));
   ipcMain.handle("appInfo", (): AppInfo => ({
@@ -198,23 +292,121 @@ app.whenReady().then(async () => {
     callback({ video: screen, audio: "loopback" });
   });
 
+  // macOS accent colour (System Settings › Appearance) drives selection and default buttons.
+  systemPreferences.subscribeNotification("AppleColorPreferencesChangedNotification", () =>
+    broadcast("accent-color", accentColor()),
+  );
+
+  Menu.setApplicationMenu(appMenu(history, sendAction, openSettingsWindow, tr()));
   win = new BrowserWindow({
-    width: 1240,
-    height: 800,
-    minWidth: 760,
-    minHeight: 480,
+    width: 1280,
+    height: 820,
+    minWidth: 900,
+    minHeight: 520,
     title: "Seogi",
     titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 18, y: 18 },
-    // Matches --color-chrome so the window never flashes white before CSS loads.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1d1c1a" : "#f3f1eb",
+    trafficLightPosition: { x: 22, y: 22 },
+    // The sidebar is translucent like Finder's; the content panes paint their own background.
+    vibrancy: "sidebar",
+    visualEffectState: "followWindow",
+    backgroundColor: "#00000000",
     webPreferences: { preload: path.join(import.meta.dirname, "../preload/index.cjs"), sandbox: true },
   });
-  if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL);
-  else win.loadFile(path.join(import.meta.dirname, "../renderer/index.html"));
+  load(win);
+  win.on("closed", () => (win = null));
 });
 
 app.on("window-all-closed", () => app.quit());
+
+/**
+ * GPT-Live is a conversational model; Seogi only wants its transcript of what people say. It has no
+ * language setting, and without a hint it has written Korean speech out in Japanese (probe
+ * 2026-11-19), so the meeting language and glossary go into its instructions.
+ */
+function gptLiveInstructions(language: string, glossary: string) {
+  const name = { ko: "Korean", en: "English", ja: "Japanese" }[language];
+  return [
+    "You are listening to a meeting only so it can be transcribed. Stay completely silent: never speak, never answer, never ask anything, and never hand anything off.",
+    name && `The meeting is in ${name}. Transcribe what people say in ${name}, exactly as spoken; do not translate.`,
+    glossary.trim() && `Names and terms that come up: ${glossary.trim()}.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function load(w: BrowserWindow, hash?: string) {
+  if (process.env.ELECTRON_RENDERER_URL) void w.loadURL(`${process.env.ELECTRON_RENDERER_URL}${hash ? `#${hash}` : ""}`);
+  else void w.loadFile(path.join(import.meta.dirname, "../renderer/index.html"), { hash });
+}
+
+/** macOS-style settings window: one instance, toolbar tabs, no zoom or full screen. */
+function openSettingsWindow() {
+  if (settingsWin) return settingsWin.focus();
+  settingsWin = new BrowserWindow({
+    width: 760,
+    height: 640,
+    minWidth: 640,
+    minHeight: 420,
+    title: "Settings",
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 20, y: 20 },
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    vibrancy: "sidebar",
+    visualEffectState: "followWindow",
+    backgroundColor: "#00000000",
+    webPreferences: { preload: path.join(import.meta.dirname, "../preload/index.cjs"), sandbox: true },
+  });
+  load(settingsWin, "settings");
+  settingsWin.on("closed", () => (settingsWin = null));
+}
+
+/**
+ * App-menu commands run in the main window, which owns the action list; undo and redo go to the
+ * focused window so typing in the settings window can be undone there.
+ */
+function sendAction(id: string) {
+  const edit = id === "undo" || id === "redo";
+  const target = edit ? (BrowserWindow.getFocusedWindow() ?? win) : win;
+  if (!edit && target && !target.isFocused()) target.focus();
+  target?.webContents.send("menu-action", id);
+}
+
+function accentColor() {
+  return `#${systemPreferences.getAccentColor().slice(0, 6)}`;
+}
+
+/** A native context menu built from the renderer's spec; resolves to the chosen id. */
+function popupMenu(sender: Electron.WebContents, items: MenuSpec[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (id: string | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(id);
+    };
+    const build = (specs: MenuSpec[]): Electron.MenuItemConstructorOptions[] =>
+      specs.map((s) =>
+        "type" in s
+          ? { type: "separator" }
+          : "submenu" in s
+            ? { label: s.label, submenu: build(s.submenu) }
+            : {
+                label: s.label,
+                enabled: s.enabled ?? true,
+                type: s.checked === undefined ? "normal" : "checkbox",
+                checked: s.checked,
+                accelerator: s.accelerator,
+                registerAccelerator: false,
+                click: () => done(s.id),
+              },
+      );
+    const window = BrowserWindow.fromWebContents(sender) ?? undefined;
+    // The close callback can run before the click handler, so it only settles a dismissal, later.
+    Menu.buildFromTemplate(build(items)).popup({ window, callback: () => setTimeout(() => done(null), 200) });
+  });
+}
 
 function clock(sec: number) {
   const m = Math.floor(sec / 60);

@@ -1,12 +1,30 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { Api, LiveView } from "../shared/types";
+import type { Api } from "../shared/types";
+
+/** Subscribes to a main-process event; returns the unsubscribe function. */
+function on<A extends unknown[]>(channel: string, listener: (...args: A) => void) {
+  const handler = (_e: unknown, ...args: unknown[]) => listener(...(args as A));
+  ipcRenderer.on(channel, handler);
+  return () => void ipcRenderer.off(channel, handler);
+}
 
 const api: Api = {
-  listMeetings: (q) => ipcRenderer.invoke("listMeetings", q),
+  listMeetings: (view, query) => ipcRenderer.invoke("listMeetings", view, query),
+  library: () => ipcRenderer.invoke("library"),
+  perform: (op) => ipcRenderer.invoke("perform", op),
+  undo: () => ipcRenderer.invoke("undo"),
+  redo: () => ipcRenderer.invoke("redo"),
+  showMenu: (items) => ipcRenderer.invoke("showMenu", items),
+  onMenuAction: (listener) => on("menu-action", listener),
+  openSettings: () => ipcRenderer.send("openSettings"),
+  accentColor: () => ipcRenderer.invoke("accentColor"),
+  onAccentColor: (listener) => on("accent-color", listener),
   getMeeting: (id) => ipcRenderer.invoke("getMeeting", id),
-  startMeeting: () => ipcRenderer.invoke("startMeeting"),
+  startMeeting: (folderId) => ipcRenderer.invoke("startMeeting", folderId),
   sendChunk: (chunk) => ipcRenderer.send("sendChunk", chunk),
   sendLiveAudio: (meetingId, track, pcm) => ipcRenderer.send("liveAudio", meetingId, track, pcm),
+  sendLiveEvent: (meetingId, track, event) => ipcRenderer.send("liveEvent", meetingId, track, event),
+  liveCall: (sdp) => ipcRenderer.invoke("liveCall", sdp),
   startLiveTest: () => ipcRenderer.invoke("startLiveTest"),
   stopLiveTest: () => ipcRenderer.invoke("stopLiveTest"),
   stopMeeting: (id) => ipcRenderer.invoke("stopMeeting", id),
@@ -21,16 +39,9 @@ const api: Api = {
   storageInfo: () => ipcRenderer.invoke("storageInfo"),
   openDataFolder: () => ipcRenderer.invoke("openDataFolder"),
   appInfo: () => ipcRenderer.invoke("appInfo"),
-  onMeetingChanged(listener) {
-    const handler = (_e: unknown, id: number) => listener(id);
-    ipcRenderer.on("meeting-changed", handler);
-    return () => ipcRenderer.off("meeting-changed", handler);
-  },
-  onLive(listener) {
-    const handler = (_e: unknown, id: number, view: LiveView) => listener(id, view);
-    ipcRenderer.on("live", handler);
-    return () => ipcRenderer.off("live", handler);
-  },
+  onMeetingChanged: (listener) => on("meeting-changed", listener),
+  onLive: (listener) => on("live", listener),
+  onLocale: (listener) => on("locale", listener),
 };
 
 contextBridge.exposeInMainWorld("api", api);

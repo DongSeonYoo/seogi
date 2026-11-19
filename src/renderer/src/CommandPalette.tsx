@@ -1,35 +1,60 @@
+import { ChevronRight, FileText } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { MeetingRow } from "../../shared/types";
+import type { ActionId, MeetingRow } from "../../shared/types";
 import { fullDate } from "./format";
+import { useI18n, useT } from "./i18n";
 import { Dialog, Kbd } from "./ui";
 
-/** Discord's quick switcher: type to search every meeting, arrows to move, Enter to open. */
+export type PaletteAction = {
+  label: string;
+  shortcut?: string;
+  /** false greys the command out everywhere it appears. */
+  enabled?: boolean;
+  run: () => void | Promise<void>;
+};
+
+type Item = { kind: "action"; id: ActionId; action: PaletteAction } | { kind: "meeting"; meeting: MeetingRow };
+
+/** ⌘K: one field for commands and for every meeting's title, summary and transcript. */
 export function CommandPalette({
   open,
   onClose,
+  actions,
   onPick,
 }: {
   open: boolean;
   onClose: () => void;
-  onPick: (id: number) => void;
+  actions: (PaletteAction & { id: ActionId })[];
+  onPick: (meetingId: number) => void;
 }) {
+  const t = useT();
   return (
-    <Dialog open={open} onClose={onClose} className="palette" label="회의 검색">
-      <PaletteBody onClose={onClose} onPick={onPick} />
+    <Dialog open={open} onClose={onClose} className="palette" label={t("action.palette")}>
+      <PaletteBody onClose={onClose} actions={actions} onPick={onPick} />
     </Dialog>
   );
 }
 
-function PaletteBody({ onClose, onPick }: { onClose: () => void; onPick: (id: number) => void }) {
+function PaletteBody({
+  onClose,
+  actions,
+  onPick,
+}: {
+  onClose: () => void;
+  actions: (PaletteAction & { id: ActionId })[];
+  onPick: (id: number) => void;
+}) {
+  const i18n = useI18n();
+  const { t } = i18n;
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<MeetingRow[]>([]);
+  const [meetings, setMeetings] = useState<MeetingRow[]>([]);
   const [active, setActive] = useState(0);
 
   useEffect(() => {
     let stale = false;
-    window.api.listMeetings(query).then((r) => {
+    window.api.listMeetings("all", query).then((r) => {
       if (stale) return;
-      setResults(r.slice(0, 50));
+      setMeetings(r.slice(0, 50));
       setActive(0);
     });
     return () => {
@@ -37,10 +62,19 @@ function PaletteBody({ onClose, onPick }: { onClose: () => void; onPick: (id: nu
     };
   }, [query]);
 
-  function pick(m: MeetingRow | undefined) {
-    if (!m) return;
-    onPick(m.id);
+  const q = query.trim().toLowerCase();
+  const items: Item[] = [
+    ...actions
+      .filter((a) => a.enabled !== false && (!q || a.label.toLowerCase().includes(q)))
+      .map((a) => ({ kind: "action" as const, id: a.id, action: a })),
+    ...meetings.map((m) => ({ kind: "meeting" as const, meeting: m })),
+  ];
+
+  function pick(item: Item | undefined) {
+    if (!item) return;
     onClose();
+    if (item.kind === "action") void item.action.run();
+    else onPick(item.meeting.id);
   }
 
   return (
@@ -48,51 +82,59 @@ function PaletteBody({ onClose, onPick }: { onClose: () => void; onPick: (id: nu
       <input
         className="palette__input"
         autoFocus
-        placeholder="제목, 요약, 대화 내용으로 찾기"
+        placeholder={t("palette.placeholder")}
         value={query}
         role="combobox"
         aria-expanded
         aria-controls="palette-list"
-        aria-activedescendant={results[active] ? `palette-${results[active].id}` : undefined}
+        aria-activedescendant={items[active] ? `palette-${active}` : undefined}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "ArrowDown") setActive((i) => Math.min(i + 1, results.length - 1));
+          if (e.key === "ArrowDown") setActive((i) => Math.min(i + 1, items.length - 1));
           else if (e.key === "ArrowUp") setActive((i) => Math.max(i - 1, 0));
-          else if (e.key === "Enter") pick(results[active]);
+          else if (e.key === "Enter") pick(items[active]);
           else return;
           e.preventDefault();
         }}
       />
       <ul className="palette__list" id="palette-list" role="listbox">
-        {results.map((m, i) => (
-          <li key={m.id}>
+        {items.map((item, i) => (
+          <li key={item.kind === "action" ? item.id : item.meeting.id}>
+            {(i === 0 || items[i - 1].kind !== item.kind) && (
+              <div className="palette__group">{item.kind === "action" ? t("palette.commands") : t("palette.meetings")}</div>
+            )}
             <button
               type="button"
-              id={`palette-${m.id}`}
+              id={`palette-${i}`}
               role="option"
               className="palette__item"
               aria-selected={i === active}
               tabIndex={-1}
               onMouseMove={() => setActive(i)}
-              onClick={() => pick(m)}
+              onClick={() => pick(item)}
             >
-              <span className="palette__item-title">{m.title}</span>
-              <span className="palette__item-meta tnum">{fullDate(m.startedAt)}</span>
+              {item.kind === "action" ? <ChevronRight aria-hidden /> : <FileText aria-hidden />}
+              <span className="palette__item-title">{item.kind === "action" ? item.action.label : item.meeting.title}</span>
+              {item.kind === "action" ? (
+                item.action.shortcut && <Kbd>{item.action.shortcut}</Kbd>
+              ) : (
+                <span className="palette__item-meta tnum">{fullDate(item.meeting.startedAt, i18n)}</span>
+              )}
             </button>
           </li>
         ))}
-        {!results.length && <li className="empty">{query ? `'${query}'와 일치하는 회의가 없습니다.` : "회의가 없습니다."}</li>}
+        {!items.length && <li className="empty">{t("palette.noMatch", { query })}</li>}
       </ul>
       <div className="palette__foot">
         <span>
           <Kbd>↑</Kbd>
-          <Kbd>↓</Kbd> 이동
+          <Kbd>↓</Kbd> {t("palette.move")}
         </span>
         <span>
-          <Kbd>↵</Kbd> 열기
+          <Kbd>↵</Kbd> {t("palette.run")}
         </span>
         <span>
-          <Kbd>esc</Kbd> 닫기
+          <Kbd>esc</Kbd> {t("palette.close")}
         </span>
       </div>
     </>

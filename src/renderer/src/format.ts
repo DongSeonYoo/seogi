@@ -1,4 +1,5 @@
-import type { MeetingRow, Utterance } from "../../shared/types";
+import type { Translate } from "../../shared/i18n";
+import type { Utterance } from "../../shared/types";
 
 export function clock(sec: number) {
   const s = Math.max(0, Math.floor(sec));
@@ -8,34 +9,35 @@ export function clock(sec: number) {
   return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-export function timeOfDay(iso: string) {
-  return new Date(iso).toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" });
+type Fmt = { t: Translate; intl: string };
+
+export function timeOfDay(iso: string, { intl }: Fmt) {
+  return new Date(iso).toLocaleTimeString(intl, { hour: "numeric", minute: "2-digit" });
 }
 
-export function fullDate(iso: string) {
-  return new Date(iso).toLocaleString("ko-KR", { dateStyle: "long", timeStyle: "short" });
+export function fullDate(iso: string, { intl }: Fmt) {
+  return new Date(iso).toLocaleString(intl, { dateStyle: "long", timeStyle: "short" });
 }
 
-/** Discord-style channel categories by recency. */
-export function groupByDay(meetings: MeetingRow[], now = new Date()) {
-  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const today = startOfDay(now);
-  const day = 86_400_000;
-  const label = (iso: string) => {
-    const t = startOfDay(new Date(iso));
-    if (t >= today) return "오늘";
-    if (t >= today - day) return "어제";
-    if (t >= today - 6 * day) return "지난 7일";
-    return new Date(iso).toLocaleDateString("ko-KR", { year: "numeric", month: "long" });
-  };
-  const groups: { label: string; items: MeetingRow[] }[] = [];
-  for (const m of meetings) {
-    const l = label(m.startedAt);
-    const last = groups.at(-1);
-    if (last?.label === l) last.items.push(m);
-    else groups.push({ label: l, items: [m] });
-  }
-  return groups;
+/** Meeting length in words: "45 s", "32 min", "1 hr 5 min". */
+export function duration(sec: number, { t }: Fmt) {
+  const s = Math.round(sec);
+  if (s < 60) return t("time.seconds", { s });
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  if (!h) return t("time.minutes", { m });
+  return m ? t("time.hoursMinutes", { h, m }) : t("time.hours", { h });
+}
+
+/** Mail-style list date: time today, "Yesterday", the weekday this week, then the date. */
+export function listDate(iso: string, f: Fmt, now = new Date()) {
+  const d = new Date(iso);
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
+  if (days <= 0) return timeOfDay(iso, f);
+  if (days === 1) return f.t("time.yesterday");
+  if (days < 7) return d.toLocaleDateString(f.intl, { weekday: "long" });
+  return d.toLocaleDateString(f.intl, { year: "2-digit", month: "numeric", day: "numeric" });
 }
 
 /** Discord message grouping: consecutive lines from one speaker within two minutes share a header. */
@@ -50,4 +52,3 @@ export function groupUtterances<T extends Utterance>(utterances: T[], gapSec = 1
   return groups;
 }
 
-export const SPEAKER = { mic: "나", system: "상대" } as const;

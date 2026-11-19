@@ -1,3 +1,5 @@
+import type { Locale } from "./i18n";
+
 export type Track = "mic" | "system";
 
 export type MeetingStatus = "recording" | "processing" | "done" | "error";
@@ -16,7 +18,53 @@ export type MeetingRow = {
   startedAt: string;
   status: MeetingStatus;
   unread: boolean;
+  folderId: number | null;
+  starred: boolean;
+  /** Recording length; for meetings before it was stored, the last utterance's start. */
+  durationSec: number;
+  /** The summary overview, for the list's second line. */
+  preview: string | null;
 };
+
+/** What the meeting list shows: a smart collection or a folder id. */
+export type LibraryView = "all" | "unread" | "starred" | "error" | number;
+export type LibraryCounts = { all: number; unread: number; starred: number; error: number; recording: boolean };
+export type Folder = { id: number; name: string; count: number };
+export type Library = { counts: LibraryCounts; folders: Folder[] };
+
+/** Undoable library changes (⌘Z). */
+export type LibraryOp =
+  | { type: "rename"; id: number; title: string }
+  | { type: "move"; ids: number[]; folderId: number | null }
+  | { type: "star"; ids: number[]; starred: boolean }
+  | { type: "delete"; ids: number[] }
+  | { type: "createFolder"; name: string }
+  | { type: "renameFolder"; id: number; name: string }
+  | { type: "deleteFolder"; id: number };
+export type LibraryResult = { ok: true; id?: number } | { ok: false; error: string };
+
+/** Commands shared by the menu bar, toolbar, context menus and ⌘K. */
+export type ActionId =
+  | "record"
+  | "newFolder"
+  | "undo"
+  | "redo"
+  | "palette"
+  | "rename"
+  | "star"
+  | "resummarize"
+  | "delete"
+  | "tab:summary"
+  | "tab:transcript"
+  | "toggleSidebar"
+  | "settings"
+  | "styleGuide";
+
+/** A native context menu item; `id` comes back when it is chosen. */
+export type MenuSpec =
+  | { id: string; label: string; enabled?: boolean; checked?: boolean; accelerator?: string }
+  | { label: string; submenu: MenuSpec[] }
+  | { type: "separator" };
 
 /** Where an utterance's audio lives: a chunk file URL and the offset into it. */
 export type AudioRef = { url: string; offsetSec: number };
@@ -32,6 +80,19 @@ export type MeetingDetail = MeetingRow & {
 
 /** A live caption draft, shown while recording until the chunk transcript replaces it. */
 export type LiveLine = { key: string; track: Track; startSec: number; text: string };
+/** A live caption event from any provider: text still being spoken, or a finished segment. */
+export type LiveEvent =
+  /** Text appended to segment `id`; `endSec`, when known, is where this piece of audio ends. */
+  | { type: "delta"; id: string; text: string; atSec: number; endSec?: number }
+  | { type: "segment"; id: string; text: string; startSec: number; endSec: number }
+  | { type: "error"; message: string };
+
+/**
+ * GPT-Live, the conversational model Codex's /voice runs on, used here only for its transcript of
+ * what people say; its spoken replies are discarded. Runs over WebRTC in the renderer (qgrid only).
+ */
+export const GPT_LIVE_MODEL = "openai/gpt-live-1";
+
 /** Live caption traffic for the settings test uses this id; meetings start at 1. */
 export const LIVE_TEST_ID = 0;
 export type LiveView = { lines: LiveLine[]; error: string | null };
@@ -58,6 +119,8 @@ export type ModelOption = { id: string; available: boolean; detail?: string; eff
 export type ModelList = { ok: true; models: ModelOption[] } | { ok: false; error: string };
 
 export type Settings = {
+  /** Language of the app's menus and screens. */
+  locale: Locale;
   theme: ThemeMode;
   qgridUrl: string;
   transcription: { provider: TranscriptionProvider; model: string };
@@ -87,12 +150,30 @@ export type StorageInfo = { path: string; bytes: number; meetings: number };
 export type AppInfo = { version: string; electron: string; platform: string };
 
 export type Api = {
-  listMeetings(query: string): Promise<MeetingRow[]>;
+  listMeetings(view: LibraryView, query?: string): Promise<MeetingRow[]>;
+  library(): Promise<Library>;
+  perform(op: LibraryOp): Promise<LibraryResult>;
+  /** App-level undo; resolves to the label of what changed, or null. */
+  undo(): Promise<string | null>;
+  redo(): Promise<string | null>;
+  /** Pops a native context menu at the pointer; resolves to the chosen item id. */
+  showMenu(items: MenuSpec[]): Promise<string | null>;
+  /** Commands from the app menu bar, by action id. */
+  onMenuAction(listener: (id: ActionId) => void): () => void;
+  openSettings(): void;
+  /** macOS accent colour as #rrggbb, and its changes. */
+  accentColor(): Promise<string>;
+  onAccentColor(listener: (hex: string) => void): () => void;
   getMeeting(id: number): Promise<MeetingDetail | null>;
-  startMeeting(): Promise<number>;
+  /** Starts a meeting in `folderId` (the folder on screen), or unfiled. */
+  startMeeting(folderId?: number | null): Promise<number>;
   sendChunk(chunk: Chunk): void;
   /** About 100 ms of 16 kHz PCM16 for the live captions, every frame from the track's start. */
   sendLiveAudio(meetingId: number, track: Track, pcm: Int16Array): void;
+  /** Caption events the renderer produced itself (GPT-Live over WebRTC). */
+  sendLiveEvent(meetingId: number, track: Track, event: LiveEvent): void;
+  /** Exchanges a WebRTC offer for a GPT-Live session through qgrid; resolves to the answer. */
+  liveCall(sdp: string): Promise<{ ok: true; sdp: string } | { ok: false; error: string }>;
   stopMeeting(id: number): Promise<void>;
   /** Live captions for the settings test under LIVE_TEST_ID; nothing is saved. */
   startLiveTest(): Promise<void>;
@@ -112,5 +193,7 @@ export type Api = {
   openDataFolder(): Promise<void>;
   appInfo(): Promise<AppInfo>;
   onMeetingChanged(listener: (id: number) => void): () => void;
+  /** The UI language changed in settings. */
+  onLocale(listener: (locale: Locale) => void): () => void;
   onLive(listener: (meetingId: number, view: LiveView) => void): () => void;
 };

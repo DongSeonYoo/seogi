@@ -1,2 +1,2 @@
-"CFBundleName" = "서기";
-"CFBundleDisplayName" = "서기";
+"NSMicrophoneUsageDescription" = "회의에서 내 목소리를 받아 적으려면 마이크가 필요합니다.";
+"NSAudioCaptureUsageDescription" = "상대방 목소리를 받아 적으려면 시스템 오디오가 필요합니다.";

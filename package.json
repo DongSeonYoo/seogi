@@ -25,7 +25,6 @@
     "@cartanova/qgrid-ai-sdk": "2.22.2",
     "ai": "7.0.173",
     "lucide-react": "^1.73.0",
-    "pretendard": "^1.3.9",
     "zod": "^4.6.7"
   },
   "scripts": {
@@ -49,9 +48,8 @@
       "category": "public.app-category.productivity",
       "target": "dir",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "회의에서 내 목소리를 받아 적으려면 마이크가 필요합니다.",
-        "NSAudioCaptureUsageDescription": "상대방 목소리를 받아 적으려면 시스템 오디오가 필요합니다.",
-        "LSHasLocalizedDisplayName": true
+        "NSMicrophoneUsageDescription": "Seogi records your voice in meetings to transcribe it.",
+        "NSAudioCaptureUsageDescription": "Seogi records the other side of a call to transcribe it."
       },
       "identity": "-",
       "hardenedRuntime": false,
@@ -59,10 +57,6 @@
         {
           "from": "build/ko.lproj",
           "to": "ko.lproj"
-        },
-        {
-          "from": "build/en.lproj",
-          "to": "en.lproj"
         }
       ]
     }

@@ -1,165 +1,163 @@
-import { AlertCircle, Info, Mic, Search, Settings, Square } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { MeetingRow } from "../../shared/types";
-import { clock, groupByDay, timeOfDay } from "./format";
-import { Button, IconButton, Kbd } from "./ui";
+import { AlertTriangle, CircleDot, Folder, FolderPlus, Inbox, Settings, Star, type LucideIcon } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import type { Library, LibraryView } from "../../shared/types";
+import { TitleInput } from "./Toolbar";
+import { useT } from "./i18n";
+import { IconButton } from "./ui";
 
-export type Recording = { id: number; startedAt: number };
+/** Drag payload for a meeting row; folders and All Meetings accept it. */
+export const MEETING_DRAG = "application/x-seogi-meeting";
 
+/** Tower's sidebar: smart collections, then folders. Dropping a meeting files it. */
 export function Sidebar({
-  meetings,
-  selected,
-  recording,
-  pendingChunks,
-  error,
-  systemSilent,
-  onSelect,
-  onSearch,
-  onStart,
-  onStop,
+  view,
+  library,
+  renamingFolder,
+  onView,
+  onDropMeeting,
+  onFolderMenu,
+  onRenameFolder,
+  onNewFolder,
   onSettings,
 }: {
-  meetings: MeetingRow[];
-  selected: number | null;
-  recording: Recording | null;
-  pendingChunks: number;
-  error: string | null;
-  systemSilent: boolean;
-  onSelect: (id: number) => void;
-  onSearch: () => void;
-  onStart: () => void;
-  onStop: () => void;
+  view: LibraryView;
+  library: Library;
+  renamingFolder: number | null;
+  onView: (v: LibraryView) => void;
+  onDropMeeting: (meetingId: number, folderId: number | null) => void;
+  onFolderMenu: (folderId: number) => void;
+  /** null: renaming was cancelled. */
+  onRenameFolder: (id: number, name: string | null) => void;
+  onNewFolder: () => void;
   onSettings: () => void;
 }) {
-  const [starting, setStarting] = useState(false);
-
+  const t = useT();
+  const { counts, folders } = library;
   return (
-    <aside className="sidebar" aria-label="회의 목록">
-      <div className="sidebar__chrome drag" />
-      <div className="sidebar__top">
-        <button type="button" className="search-trigger" onClick={onSearch}>
-          <Search aria-hidden />
-          <span>회의 검색</span>
-          <Kbd>⌘K</Kbd>
-        </button>
-      </div>
-
-      <nav className="channel-list">
-        {groupByDay(meetings).map((g) => (
-          <section key={g.label} className="channel-group">
-            <h2 className="channel-group__label">{g.label}</h2>
-            <ul>
-              {g.items.map((m) => (
-                <li key={m.id}>
-                  <button
-                    type="button"
-                    className="channel"
-                    aria-current={m.id === selected || undefined}
-                    data-unread={m.unread || undefined}
-                    onClick={() => onSelect(m.id)}
-                  >
-                    <span className="channel__title">{m.title}</span>
-                    <ChannelStatus meeting={m} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-        {!meetings.length && <p className="empty">아직 녹음한 회의가 없습니다.</p>}
-      </nav>
-
-      <div className="dock">
-        {error && (
-          <p className="notice" role="alert">
-            <AlertCircle aria-hidden />
-            {error}
-          </p>
-        )}
-        {recording ? (
-          <>
-            <div className="dock__live" role="status">
-              <span className="live-dot" aria-hidden />
-              <div className="dock__live-text">
-                <div className="dock__live-title">녹음 중</div>
-                <div className="dock__live-meta tnum">
-                  <Elapsed since={recording.startedAt} />
-                  {pendingChunks > 0 && ` · 전사 대기 ${pendingChunks}`}
-                </div>
-              </div>
-            </div>
-            {systemSilent && (
-              <p className="dock__hint" role="status">
-                <Info aria-hidden />
-                <span>
-                  아직 상대방 소리가 없습니다. 통화 중인데 계속 비어 있으면 시스템 설정 › 개인정보 보호 및 보안 ›
-                  화면 및 시스템 오디오 녹음에서 이 앱을 허용하세요.
-                </span>
-              </p>
-            )}
-            <div className="dock__row">
-              <Button variant="danger" icon={<Square aria-hidden />} onClick={onStop}>
-                녹음 종료
-              </Button>
-            </div>
-          </>
-        ) : (
-          <div className="dock__row">
-            <Button
-              variant="primary"
-              icon={<Mic aria-hidden />}
-              state={starting ? "loading" : undefined}
-              onClick={async () => {
-                setStarting(true);
-                try {
-                  await onStart();
-                } finally {
-                  setStarting(false);
-                }
-              }}
-            >
-              새 회의 녹음
-            </Button>
-            <IconButton label="설정 (⌘,)" onClick={onSettings}>
-              <Settings aria-hidden />
+    <aside className="sidebar" aria-label={t("sidebar.library")}>
+      <div className="sidebar__lights drag" />
+      <nav className="sidebar__scroll">
+        <Section title={t("sidebar.library")}>
+          <Item icon={Inbox} label={t("view.all")} count={counts.all} active={view === "all"} onClick={() => onView("all")} onDrop={(id) => onDropMeeting(id, null)} />
+          <Item icon={CircleDot} label={t("view.unread")} count={counts.unread} active={view === "unread"} onClick={() => onView("unread")} />
+          <Item icon={Star} label={t("view.starred")} count={counts.starred} active={view === "starred"} onClick={() => onView("starred")} />
+          {counts.error > 0 && (
+            <Item icon={AlertTriangle} label={t("view.error")} count={counts.error} active={view === "error"} onClick={() => onView("error")} tone="danger" />
+          )}
+        </Section>
+        <Section
+          title={t("sidebar.folders")}
+          action={
+            <IconButton label={`${t("action.newFolder")} (⇧⌘N)`} onClick={onNewFolder}>
+              <FolderPlus aria-hidden />
             </IconButton>
-          </div>
-        )}
+          }
+        >
+          {folders.map((f) =>
+            renamingFolder === f.id ? (
+              <li key={f.id} className="side-item" data-editing>
+                <Folder aria-hidden />
+                <TitleInput className="side-item__input" value={f.name} onDone={(name) => onRenameFolder(f.id, name)} />
+              </li>
+            ) : (
+              <Item
+                key={f.id}
+                icon={Folder}
+                label={f.name}
+                count={f.count}
+                active={view === f.id}
+                onClick={() => onView(f.id)}
+                onDrop={(id) => onDropMeeting(id, f.id)}
+                onMenu={() => onFolderMenu(f.id)}
+              />
+            ),
+          )}
+          {!folders.length && <li className="side-empty">{t("sidebar.foldersEmpty")}</li>}
+        </Section>
+      </nav>
+      <div className="sidebar__foot">
+        <IconButton label={`${t("action.newFolder")} (⇧⌘N)`} onClick={onNewFolder}>
+          <FolderPlus aria-hidden />
+        </IconButton>
+        <IconButton label={`${t("action.settings")} (⌘,)`} onClick={onSettings}>
+          <Settings aria-hidden />
+        </IconButton>
       </div>
     </aside>
   );
 }
 
-function ChannelStatus({ meeting: m }: { meeting: MeetingRow }) {
-  if (m.status === "recording")
-    return (
-      <span className="channel__status" data-status="recording">
-        <span className="live-dot" aria-hidden />
-        녹음 중
-      </span>
-    );
-  if (m.status === "processing")
-    return (
-      <span className="channel__status">
-        <span className="spinner" aria-hidden />
-        <span className="visually-hidden">정리 중</span>
-      </span>
-    );
-  if (m.status === "error")
-    return (
-      <span className="channel__status" data-status="error" title="처리 중 오류">
-        <AlertCircle size={14} aria-hidden />
-        <span className="visually-hidden">오류</span>
-      </span>
-    );
-  return <span className="channel__meta tnum">{timeOfDay(m.startedAt)}</span>;
+function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="side-section">
+      <h2 className="side-section__title">
+        {title}
+        {action}
+      </h2>
+      <ul>{children}</ul>
+    </section>
+  );
 }
 
-export function Elapsed({ since }: { since: number }) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, []);
-  return <>{clock((now - since) / 1000)}</>;
+function Item({
+  icon: Icon,
+  label,
+  count,
+  active,
+  tone,
+  onClick,
+  onDrop,
+  onMenu,
+}: {
+  icon: LucideIcon;
+  label: string;
+  count: number;
+  active: boolean;
+  tone?: "danger";
+  onClick: () => void;
+  onDrop?: (meetingId: number) => void;
+  onMenu?: () => void;
+}) {
+  const [over, setOver] = useState(false);
+  return (
+    <li>
+      <button
+        type="button"
+        className="side-item"
+        aria-current={active || undefined}
+        data-tone={tone}
+        data-drop={over || undefined}
+        onClick={onClick}
+        onContextMenu={
+          onMenu &&
+          ((e) => {
+            e.preventDefault();
+            onMenu();
+          })
+        }
+        onDragOver={
+          onDrop &&
+          ((e) => {
+            if (!e.dataTransfer.types.includes(MEETING_DRAG)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setOver(true);
+          })
+        }
+        onDragLeave={() => setOver(false)}
+        onDrop={
+          onDrop &&
+          ((e) => {
+            setOver(false);
+            const id = Number(e.dataTransfer.getData(MEETING_DRAG));
+            if (id) onDrop(id);
+          })
+        }
+      >
+        <Icon aria-hidden />
+        <span className="side-item__label">{label}</span>
+        {count > 0 && <span className="side-item__count tnum">{count}</span>}
+      </button>
+    </li>
+  );
 }

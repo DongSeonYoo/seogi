@@ -1,84 +1,78 @@
 # Seogi design system
 
-The locked design system for the Seogi (서기) meeting-notes app. New screens use these tokens and patterns rather than inventing their own. Source of truth for values: `src/renderer/src/styles/tokens.css`. Living reference: the dev-only style guide (`⌘⇧D` in `pnpm dev`).
+The design system for the Seogi (서기) meeting-notes app. New screens use these tokens and patterns rather than inventing their own. Source of truth for values: `src/renderer/src/styles/tokens.css`. Living reference: the dev-only style guide (View › 스타일 가이드, `⌘⇧D` in `pnpm dev`).
 
 ## Direction
 
-- **Structure from Linear.** Inverted-L chrome: sidebar and header frame an inset main surface. Layers are separated by lightness steps and 1px lines, not shadows. UI text is dense (13px). One accent.
-- **Colour from Claude.** Warm oat and charcoal neutrals (every grey carries a small warm chroma). One terracotta accent.
-- **Interaction patterns from Discord**, mapped to meetings:
+- **Look like a Mac app.** System font, Apple's label and separator greys, the user's macOS accent colour, AppKit control shapes and sizes, window vibrancy behind the sidebar, native menus. Nothing should read as a web page: no pointer cursors, no hover fills on list rows, selection greys out when the list loses focus or the window goes to the background.
+- **Structure from Tower** (git-tower.com). Three panes under one toolbar:
 
-| Discord | Seogi |
+| Tower | Seogi |
 | --- | --- |
-| Channel list with categories | Meetings grouped as 오늘 / 어제 / 지난 7일 / month |
-| Unread pill on the left edge | Summary finished but not opened yet |
-| Message groups | Consecutive lines from one speaker within 2 minutes share one header |
-| Hover timestamp in the gutter, hover toolbar | Continuation lines show the time on hover; play-from-here and copy |
-| Member list | Collapsible summary panel on the right (auto-collapses while recording) |
-| Voice-connected panel | Recorder dock at the bottom of the sidebar |
-| Quick switcher | `⌘K` search across titles, summaries and transcript text |
-| User settings | `⌘,` swaps the whole window to settings: category list in the sidebar, grouped rows on the right, changes apply instantly |
+| Floating sidebar with sections and counts (Workspace, Branches) | 보관함 (모든 회의, 읽지 않음, 즐겨찾기, 오류) and 폴더, each with a count |
+| History list | Meeting list: title, date, two-line summary preview, length, status |
+| Detail with a segmented switch (Staged / Unstaged) | Detail with 요약 / 받아쓰기 (`⌘1` / `⌘2`) |
+| Status bar with counts | Status bar: date or live recording time, length, utterance count |
+| Toolbar capsules | 녹음 · (즐겨찾기, 다시 요약) · 찾기 |
+| Undo anything (`⌘Z`) | Rename, star, move, delete and folder changes undo and redo |
+| Drag onto sidebar sections | Drag a meeting onto a folder (or 모든 회의 to unfile it) |
+| Quick actions | `⌘K` runs commands and searches every meeting |
+
+- **One action list.** The menu bar, toolbar, right-click menus and `⌘K` run the same actions (`actions` in `App.tsx`, ids in `ActionId`). Add a command there once.
+- **Settings is its own window** (`⌘,`) with toolbar tabs, like System Settings panes in other Mac apps. Changes apply immediately.
 
 ## Colour
 
-All colours are OKLCH tokens. Light and dark use the same token names; only lightness and chroma move. The theme follows the macOS appearance.
+Light and dark use the same token names. The accent is `--system-accent`, set at runtime from System Settings › Appearance and updated when the user changes it.
 
 | Role | Tokens |
 | --- | --- |
-| Surfaces (low → high) | `chrome` → `main` → `raised`; `hover`, `selected` for item states |
-| Lines | `line` (dividers), `line-strong` (button edges, scrollbars), `line-control` (form-control boundary, ≥ 3:1) |
-| Text | `ink` (primary), `ink-2` (secondary), `ink-3` (meta, placeholders) |
-| Accent | `accent` fills, `accent-text` for accent-coloured text, `accent-soft` washes, `on-accent` for text on fills, `focus` for rings |
-| Status | `danger` / `danger-soft`, `success` / `success-soft` |
+| Surfaces | `window` (content panes), `chrome` (status bar, toolbar of the settings window), `raised` (popovers), `control` (buttons, fields), `sidebar` (the floating card over the vibrancy) |
+| States | `hover`, `selected` (sidebar selection, unfocused list selection) |
+| Lines | `line`, `line-strong`, `line-control` (control boundary, ≥ 3:1) |
+| Text | `ink`, `ink-2`, `ink-3` |
+| Accent | `accent`, `accent-text`, `accent-soft`, `on-accent`, `focus` (the focus halo) |
+| Status | `record` (record control, live dot), `danger` / `danger-soft`, `success` / `success-soft`, `warning` (star) |
 
-The accent marks only these: the record button, live recording state, the "나" speaker, and focus rings. It stays under ~3% of any view.
+The accent fills focused list selection, the default button, switches, the palette selection and sidebar symbols. Red is only for recording and errors.
 
-### Contrast (WCAG 2.x, computed from the tokens)
+### Contrast (WCAG 2.x, default accent)
 
-All pairs pass in both themes. Text ≥ 4.5:1, focus rings and control boundaries ≥ 3:1.
+Text ≥ 4.5:1 and control boundaries ≥ 3:1, both themes.
 
 | Pair | Light | Dark |
 | --- | --- | --- |
-| ink / main | 16.3 | 13.0 |
-| ink-3 / hover (weakest text pair) | 4.5 | 4.8 |
-| on-accent / accent | 5.0 | 6.2 |
-| accent-text / main | 6.1 | 6.6 |
-| focus / chrome | 4.5 | 6.7 |
-| line-control / chrome | 3.0 | 3.8 |
+| ink / window | 16.8 | 15.3 |
+| ink-2 / window | 6.4 | 7.7 |
+| ink-3 / window | 5.5 | 6.5 |
+| ink-3 / selected (weakest text pair) | 4.6 | 4.8 |
+| danger / window | 5.4 | 5.9 |
+| line-control / window | 3.4 | 4.0 |
+| on-accent / accent | 4.0 | 3.6 |
 
-`line` and `line-strong` are decorative and intentionally below 3:1.
+`on-accent / accent` is below 4.5 on purpose: it is AppKit's own selected-row and default-button pairing with the system blue, and matching the platform wins here. The label stays at 13px or larger. `line` and `line-strong` are decorative.
 
 ## Type
 
-- **Pretendard Variable** for everything (bundled, OFL). One family on purpose: app UI, Linear-style. Korean text breaks between words (`word-break: keep-all`).
-- Scale: `xs` 11 · `sm` 12 · `base` 13 (UI) · `read` 15 (transcript and summary) · `lg` 16 · `xl` 20 · `2xl` 24.
-- Weights: 400 (380 in dark), 510, 620. Numbers that change in place (timers, timestamps) use tabular figures (`.tnum`).
-- Headings are always upright; no italic display type.
+- The system font (`-apple-system`: SF Pro, Apple SD Gothic Neo for Korean). Nothing bundled.
+- AppKit sizes: `xs` 11 (section headers, badges) · `sm` 12 (meta, status bar) · `base` 13 (UI) · `read` 14 (transcript and summary) · `lg` 15 (toolbar title) · `xl` 20 · `2xl` 24 (style guide only).
+- Weights 400, 500, 600. Changing numbers use tabular figures (`.tnum`). Korean breaks between words (`word-break: keep-all`).
 
 ## Space, shape, motion
 
-- 4pt spacing scale `--space-1…10`, plus `--space-half` (2px) for dense message rows only.
-- Radii: 4 (kbd) · 6 (controls, items) · 8 (main surface) · 12 (dialogs).
-- Control height 30px (36px for `btn--lg`). Inputs and adjacent buttons share the height.
-- Easings `--ease-out / in / in-out`; durations 120 / 200 / 320 ms. Only `transform`, `opacity` and colours animate. Reduced motion shortens everything to 150ms.
+- 4pt scale `--space-1…10`, plus `--space-half` (2px).
+- Radii: 4 (kbd, inline fields) · 6 (controls, sidebar items) · 10 (list rows) · 14 (sidebar card, dialogs) · full (toolbar capsules, switches).
+- Controls are 26px high (32px for `btn--lg`); sidebar rows 28px; toolbar 52px; status bar 28px.
+- Durations 100 / 180 ms. Only transforms, opacity and colours animate. Reduced motion shortens everything.
 
 ## Components
 
 `src/renderer/src/ui.tsx` + `styles/components.css`:
 
-- **Button**: `primary` (one per area), `secondary`, `ghost`, `danger`; states default · hover · focus · active · disabled · loading · error · success.
-- **IconButton**: 28px with an enlarged hit area; `aria-pressed` for toggles.
-- **Field**: label above, helper below on a reserved line, error replaces helper (`aria-invalid`, `aria-describedby`). Border width never changes between states; focus is a 2px outline.
-- **Select**: native select with a Lucide chevron.
-- **Switch** (`role="switch"`) for on/off settings; **Segmented** (radio group, arrow keys move the choice) for 2–4 exclusive options.
-- **CommitInput**: text input for instant-save settings; commits on blur or Enter, reverts on Esc.
-- **Dialog**: native `<dialog>` in modal mode (focus trap, Esc, inert background); state syncs on the platform `close` event.
-- **Kbd**, **Spinner**, **Avatar** (`data-speaker="mic"` uses the accent wash).
+- **Button**: push button (`secondary`), default button (`primary`), `ghost`, `danger`; states default · hover · focus · active · disabled · loading · error · success.
+- **IconButton**: borderless, 26px; `aria-pressed` for toggles. **Capsule**: a pill that groups toolbar buttons.
+- **Field**, **CommitInput** (instant-save text), **Select** (popup button), **Switch**, **Segmented**.
+- **Dialog**: native `<dialog>` drawn as a sheet; used for `⌘K`.
+- Context menus and the menu bar are native Electron menus, never HTML.
 
 Icons come from `lucide-react` only.
-
-## Deliberate deviations from Hallmark defaults
-
-- **Single family, no display face.** Hallmark wants a distinctive display face for pages; this is a dense app UI where Linear's single-family discipline reads better. Pretendard's Latin glyphs derive from Inter, which Hallmark lists as a banned *display* default.
-- **App type scale** (11–24px) instead of the 1.25 marketing scale.
-- **Tight measure is not enforced** on the transcript; it follows the column width like a chat log.

@@ -1,17 +1,17 @@
-import { Copy, Mic, Play, Settings } from "lucide-react";
+import { AlertTriangle, Copy, Folder, Inbox, Mic, Play, Settings, Star } from "lucide-react";
 import { useState } from "react";
 import { Button, Dialog, Field, IconButton, Kbd, Segmented, Select, Switch } from "./ui";
 
 /** Dev-only living style guide (⌘⇧D). Every component in every state, on real tokens. */
 const COLORS = [
-  "chrome", "main", "raised", "hover", "selected", "line", "line-strong", "line-control",
-  "ink", "ink-2", "ink-3", "accent", "accent-soft", "accent-text", "focus",
-  "danger", "danger-soft", "success", "success-soft",
+  "window", "chrome", "raised", "control", "sidebar", "hover", "selected", "line", "line-strong",
+  "line-control", "ink", "ink-2", "ink-3", "accent", "accent-soft", "accent-text", "focus", "record",
+  "danger", "danger-soft", "success", "success-soft", "warning",
 ];
 const TYPE = [
-  ["2xl", "스타일 가이드 제목"], ["xl", "주간 스프린트 회의"], ["lg", "패널 제목"],
+  ["2xl", "스타일 가이드 제목"], ["xl", "요약 제목"], ["lg", "주간 스프린트 회의 (도구 막대 제목)"],
   ["read", "쿠폰 문제는 동선님이 이번 주 수요일까지 수정하기로 했습니다."],
-  ["base", "새 회의 녹음 · 회의 검색 · 설정"], ["sm", "00:14 · 전사 대기 2"], ["xs", "오늘 · 어제 · 지난 7일"],
+  ["base", "새 회의 녹음 · 회의 검색 · 설정"], ["sm", "00:14 · 전사 대기 2"], ["xs", "보관함 · 폴더"],
 ] as const;
 const STATES = ["default", "hover", "focus", "active", "disabled", "loading", "error", "success"] as const;
 
@@ -33,7 +33,7 @@ export function StyleGuide() {
         ))}
       </div>
 
-      <h2 className="guide__h">글자 · Pretendard Variable</h2>
+      <h2 className="guide__h">글자 · 시스템 글꼴 (SF Pro · Apple SD Gothic Neo)</h2>
       {TYPE.map(([t, sample]) => (
         <div key={t} className="guide__type">
           <code>--text-{t}</code>
@@ -112,15 +112,32 @@ export function StyleGuide() {
         />
       </div>
 
-      <h2 className="guide__h">회의 목록 항목</h2>
-      <div className="guide__channels">
-        <button type="button" className="channel"><span className="channel__title">기본</span><span className="channel__meta tnum">오후 4:48</span></button>
-        <button type="button" className="channel is-hover"><span className="channel__title">호버</span><span className="channel__meta tnum">오후 4:48</span></button>
-        <button type="button" className="channel" aria-current><span className="channel__title">선택됨</span><span className="channel__meta tnum">오후 4:48</span></button>
-        <button type="button" className="channel" data-unread><span className="channel__title">안 읽은 요약</span><span className="channel__meta tnum">오후 4:48</span></button>
-        <button type="button" className="channel"><span className="channel__title">녹음 중</span><span className="channel__status" data-status="recording"><span className="live-dot" />녹음 중</span></button>
-        <button type="button" className="channel"><span className="channel__title">정리 중</span><span className="channel__status"><span className="spinner" /></span></button>
+      <h2 className="guide__h">사이드바 항목 · 회의 목록</h2>
+      <div className="guide__row" style={{ alignItems: "flex-start" }}>
+        <ul className="guide__channels">
+          <li><button type="button" className="side-item"><Inbox aria-hidden /><span className="side-item__label">기본</span><span className="side-item__count">12</span></button></li>
+          <li><button type="button" className="side-item" aria-current><Star aria-hidden /><span className="side-item__label">선택됨</span><span className="side-item__count">3</span></button></li>
+          <li><button type="button" className="side-item" data-drop><Folder aria-hidden /><span className="side-item__label">끌어다 놓는 중</span></button></li>
+          <li><button type="button" className="side-item" data-tone="danger"><AlertTriangle aria-hidden /><span className="side-item__label">오류</span><span className="side-item__count">2</span></button></li>
+        </ul>
+        <ul className="list__rows guide__list" tabIndex={0} role="listbox" aria-label="예시">
+          {[
+            { t: "주간 스프린트 회의", sel: true, unread: false },
+            { t: "안 읽은 요약", sel: false, unread: true },
+          ].map((r) => (
+            <li key={r.t} className="row" role="option" aria-selected={r.sel} data-unread={r.unread || undefined}>
+              <div className="row__line">
+                {r.unread && <span className="row__dot" />}
+                <span className="row__title">{r.t}</span>
+                <span className="row__date tnum">오후 4:48</span>
+              </div>
+              <p className="row__preview">결제 기능 버그 두 건과 대시보드 개편 일정을 정했습니다.</p>
+              <div className="row__meta"><span className="row__status" data-status="recording"><span className="live-dot" />녹음 중</span><span>32분</span></div>
+            </li>
+          ))}
+        </ul>
       </div>
+      <p className="guide__lede">목록을 클릭해 포커스를 주면 선택 행이 강조색이 되고, 창이 뒤로 가면 회색이 됩니다.</p>
 
       <h2 className="guide__h">메시지 묶음</h2>
       <ol className="msg-group guide__messages">

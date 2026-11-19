@@ -16,12 +16,15 @@ Electron + React meeting recorder for macOS: records mic and system audio, trans
 
 # Design system
 
-- `design.md` is the locked design system; `src/renderer/src/styles/tokens.css` holds the values.
+- `design.md` is the design system (macOS-native look, Tower-style three panes); `src/renderer/src/styles/tokens.css` holds the values.
 - Use tokens only: no raw colours or font families outside `tokens.css`, spacing from the `--space-*` scale.
+- Commands live once in the `actions` map in `App.tsx`; the menu bar (`src/main/menu.ts`), toolbar, context menus and ⌘K call them.
+- Library changes go through `perform` in `src/main/library.ts` so they can be undone. Deletes stay restorable until quit, then are purged with their audio.
 - Every interactive element needs default, hover, focus-visible, active, disabled, loading, error, and success states. Check new components in the dev style guide (`⌘⇧D`).
 - After changing colour tokens, re-check WCAG contrast for the pairs listed in `design.md`.
+- `pnpm dev` uses its own data folder (`~/Library/Application Support/Seogi-dev`); never point it at the installed app's data.
 
 # Language
 
 - Write commit messages, code comments, README, and other docs in English, e.g. `feat(recorder): detect pauses with a noise-floor estimate`.
-- UI copy stays Korean; it is product text, not documentation.
+- UI copy lives in `src/shared/i18n.ts` with every string in English and Korean; the app defaults to English and the user picks the language in Settings › General. Never hard-code UI text in components or the main process.

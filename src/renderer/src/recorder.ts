@@ -12,6 +12,9 @@ const WORKLET = `registerProcessor("tap", class extends AudioWorkletProcessor {
   process(inputs) { const ch = inputs[0][0]; if (ch) this.port.postMessage(ch.slice()); return true; }
 });`;
 
+/** Thrown when screen & system audio capture yields no audio track; the UI shows its own message. */
+export const NO_SYSTEM_AUDIO = "NO_SYSTEM_AUDIO";
+
 type Emit = (track: Track, startSec: number, pcm: Int16Array) => void;
 
 export type RecordingOptions = {
@@ -21,6 +24,8 @@ export type RecordingOptions = {
   onSystemSilence?: (silent: boolean) => void;
   /** Every ~100 ms of each track as 16 kHz PCM16, for live captions. */
   onFrame?: (track: Track, pcm: Int16Array) => void;
+  /** The captured streams per track, for consumers that take a MediaStream (WebRTC). */
+  onStreams?: (streams: [Track, MediaStream][]) => void;
 };
 
 /**
@@ -30,7 +35,7 @@ export type RecordingOptions = {
  */
 export async function startRecording(
   emit: Emit,
-  { micDeviceId, systemAudio, onSystemSilence, onFrame }: RecordingOptions,
+  { micDeviceId, systemAudio, onSystemSilence, onFrame, onStreams }: RecordingOptions,
 ): Promise<() => Promise<void>> {
   const mic = await navigator.mediaDevices.getUserMedia({
     // "ideal" falls back to the default input when the chosen device is unplugged.
@@ -46,7 +51,7 @@ export async function startRecording(
   display?.getVideoTracks().forEach((t) => t.stop());
   if (display && !display.getAudioTracks().length) {
     mic.getTracks().forEach((t) => t.stop());
-    throw new Error("시스템 오디오를 가져오지 못했습니다");
+    throw new Error(NO_SYSTEM_AUDIO);
   }
 
   const ctx = new AudioContext({ sampleRate: RATE });
@@ -56,6 +61,7 @@ export async function startRecording(
 
   const tracks: [Track, MediaStream][] = [["mic", mic]];
   if (display) tracks.push(["system", new MediaStream(display.getAudioTracks())]);
+  onStreams?.(tracks);
   const flushers = tracks.map(([track, stream]) => {
     const node = new AudioWorkletNode(ctx, "tap");
     ctx.createMediaStreamSource(stream).connect(node);

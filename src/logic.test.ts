@@ -104,11 +104,22 @@ test("live drafts leave only once successful chunks cover their whole span", asy
   assert.deepEqual(keys(), ["말하는 중"]);
   c.settle("system", 60, 90); // a delta that never got its segment leaves once a segment's span is covered
   assert.deepEqual(keys(), []);
+
+  // GPT-Live: one long turn of timed deltas. Covered pieces leave; the rest continues as a fresh draft.
+  const d = (text: string, atSec: number, endSec: number) => c.onEvent("mic", { type: "delta", id: "t1", text, atSec, endSec });
+  d("첫 문장", 102, 105);
+  d(" 둘째", 125, 129);
+  assert.deepEqual(keys(), ["첫 문장 둘째"]);
+  c.settle("mic", 100, 130);
+  assert.deepEqual(keys(), []);
+  d(" 이미 받아쓴 부분", 128, 129.5); // arrived late, inside the settled chunk: dropped
+  d(" 셋째", 131, 134);
+  assert.deepEqual(keys(), ["셋째"]);
 });
 
 test("listModels maps qgrid's catalog per role and filters OpenAI's list by task", async () => {
   const { listModels } = await import("./main/models.ts");
-  const store = { get: () => ({ qgridUrl: "http://q" }), key: () => "sk-test" } as never;
+  const store = { get: () => ({ qgridUrl: "http://q", locale: "en" }), key: () => "sk-test" } as never;
   const catalog = {
     text: [{ id: "openai/gpt-6-luna", available: true, pricing: { input: 0.1, output: 0.5, cachedInput: 0.01 }, efforts: ["low", "high"] }],
     transcription: [{ id: "openai/gpt-transcribe", available: true, usdPerMinute: 0.0045, prompt: true, liveDraft: false }],
@@ -125,12 +136,78 @@ test("listModels maps qgrid's catalog per role and filters OpenAI's list by task
       return r.models;
     };
     const [live] = await ids("live", "qgrid");
-    assert.deepEqual(live, { id: "openai/gpt-live-transcribe", available: false, detail: "분당 $0.017 · 용어집 지원 · 말하는 중에 바로 표시" });
+    assert.deepEqual(live, { id: "openai/gpt-live-transcribe", available: false, detail: "$0.017/min · Glossary · Shows text while you speak" });
     assert.deepEqual((await ids("summary", "qgrid"))[0].efforts, ["low", "high"]);
+    // GPT-Live joins the live list, usable when qgrid serves any OpenAI model.
+    assert.deepEqual((await ids("live", "qgrid")).at(-1)?.id, "openai/gpt-live-1");
+    assert.equal((await ids("live", "qgrid")).at(-1)?.available, true);
     assert.deepEqual((await ids("transcription", "openai")).map((m) => m.id), ["gpt-4o-transcribe", "whisper-1"]);
     assert.deepEqual((await ids("live", "openai")).map((m) => m.id), ["gpt-4o-transcribe", "gpt-realtime-whisper", "whisper-1"]);
     assert.deepEqual((await ids("summary", "openai")).map((m) => m.id), ["gpt-6-luna"]);
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("library changes undo and redo, deletes purge for real, and a resummary keeps a typed title", async () => {
+  const { openDb } = await import("./main/db.ts");
+  const { History, perform } = await import("./main/library.ts");
+  const { translator } = await import("./shared/i18n.ts");
+  const db = openDb(":memory:");
+  const history = new History();
+  const run = (op: Parameters<typeof perform>[2]) => perform(db, history, op, translator("ko"));
+  const titles = () => db.listMeetings("all").map((m) => m.title);
+  const summary = { title: "요약 제목", overview: "", decisions: [], actionItems: [], topics: [] };
+
+  const a = db.createMeeting("회의 A");
+  const b = db.createMeeting("회의 B");
+  assert.deepEqual(run({ type: "delete", ids: [a] }), { ok: false, error: "녹음하거나 정리 중인 회의는 삭제할 수 없습니다" });
+  db.setStatus(a, "done");
+  db.setStatus(b, "done");
+
+  run({ type: "rename", id: a, title: "내 제목" });
+  db.setSummary(a, summary);
+  assert.equal(db.getMeeting(a)?.title, "내 제목");
+  history.undo();
+  assert.equal(db.getMeeting(a)?.title, "회의 A");
+
+  const folder = run({ type: "createFolder", name: "고객사" });
+  assert.ok(folder.ok && folder.id);
+  run({ type: "move", ids: [a, b], folderId: folder.id! });
+  run({ type: "star", ids: [b], starred: true });
+  assert.deepEqual(db.listFolders(), [{ id: folder.id, name: "고객사", count: 2 }]);
+  assert.equal(db.counts().starred, 1);
+  assert.equal(history.undo(), "즐겨찾기");
+  assert.equal(history.undo(), "폴더 이동");
+  assert.equal(db.listMeetings(folder.id!).length, 0);
+  assert.equal(history.redo(), "폴더 이동");
+  assert.equal(db.listMeetings(folder.id!).length, 2);
+
+  run({ type: "deleteFolder", id: folder.id! });
+  assert.equal(db.listFolders().length, 0);
+  assert.equal(db.listMeetings("all").every((m) => m.folderId === null), true); // unfiled while deleted
+  history.undo();
+
+  run({ type: "delete", ids: [a] });
+  assert.deepEqual(titles(), ["회의 B"]);
+  assert.equal(db.counts().all, 1);
+  history.undo();
+  assert.equal(db.counts().all, 2);
+  history.redo();
+  assert.deepEqual(db.purgeDeleted(), [a]);
+  assert.equal(db.getMeeting(a), null);
+  assert.equal(Number(db.raw.prepare("SELECT COUNT(*) AS n FROM meetings").get()?.n), 1);
+});
+
+test("every Korean string fills the same placeholders as its English source", async () => {
+  const { translator, MESSAGE_KEYS } = await import("./shared/i18n.ts");
+  const en = translator("en");
+  const ko = translator("ko");
+  const placeholders = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(",");
+  for (const key of MESSAGE_KEYS) {
+    assert.ok(ko(key).trim(), `ko ${key} is empty`);
+    assert.equal(placeholders(ko(key)), placeholders(en(key)), `placeholders differ for ${key}`);
+  }
+  assert.equal(en("list.count", { n: 3 }), "3");
+  assert.equal(ko("undo.deleteMany", { n: 2 }), "회의 2개 삭제");
 });

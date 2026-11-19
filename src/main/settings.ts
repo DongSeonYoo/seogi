@@ -1,9 +1,11 @@
 import { nativeTheme, safeStorage } from "electron";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { translator } from "../shared/i18n";
 import { DEFAULT_MODELS, type KeyName, type Settings, type StoredSettings } from "../shared/types";
 
 const DEFAULTS: StoredSettings = {
+  locale: "en",
   theme: "system",
   qgridUrl: "http://localhost:44900",
   transcription: { provider: "openai", model: DEFAULT_MODELS.transcription.openai },
@@ -49,7 +51,7 @@ export async function openSettings(dir: string) {
 
     key(name: KeyName): string {
       const k = keys[name];
-      if (!k) throw new Error(`${name} API key가 없습니다. 설정에서 입력해 주세요.`);
+      if (!k) throw new Error(translator(settings.locale)("error.noKey", { name: name === "openai" ? "OpenAI" : "Anthropic" }));
       return k;
     },
 

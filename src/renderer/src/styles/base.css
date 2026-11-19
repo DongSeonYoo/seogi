@@ -11,16 +11,15 @@ body {
   overflow: clip;
 }
 
+/* Transparent so the window's vibrancy shows behind the sidebar; panes paint their own colour. */
 body {
-  background: var(--color-chrome);
+  background: transparent;
   color: var(--color-ink);
   font-family: var(--font-ui);
   font-size: var(--text-base);
   font-weight: var(--weight-regular);
   line-height: var(--leading-ui);
-  font-feature-settings: "tnum" 0;
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
   /* Korean breaks between words (eojeol), not between syllables. */
   word-break: keep-all;
   overflow-wrap: anywhere;
@@ -81,13 +80,14 @@ textarea {
   outline: none;
 }
 
-:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
 ::selection {
   background: var(--color-accent-soft);
+}
+
+/* AppKit draws focus as a soft accent halo around the control. */
+:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 0;
 }
 
 .tnum {
@@ -103,9 +103,10 @@ textarea {
   -webkit-app-region: no-drag;
 }
 
+/* Thin overlay-style scrollbars, like macOS with "show when scrolling". */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
 }
 
 ::-webkit-scrollbar-thumb {

@@ -12,7 +12,7 @@ export type Transcript = { text: string; words: { startSecond: number }[]; durat
 export async function transcribeWav(store: SettingsStore, wav: Uint8Array): Promise<Transcript> {
   const s = store.get();
   const { provider, model: id } = s.transcription;
-  const prompt = s.glossary.trim() ? `용어: ${s.glossary}` : undefined;
+  const prompt = s.glossary.trim() ? glossaryPrompt(s.language, s.glossary) : undefined;
 
   const model =
     provider === "qgrid"
@@ -62,23 +62,30 @@ export function splitUtterances(t: Transcript, chunkStartSec: number, chunkSec: 
   });
 }
 
+/** Steers the spelling of names and terms; the prefix is in the meeting's language. */
+export function glossaryPrompt(language: string, glossary: string) {
+  return `${language === "ko" ? "용어" : "Glossary"}: ${glossary}`;
+}
+
 const SummarySchema = z.object({
-  title: z.string().describe("회의를 대표하는 짧은 제목"),
-  overview: z.string().describe("회의 전체를 3~5문장으로 요약"),
-  decisions: z.array(z.string()).describe("회의에서 확정된 결정사항"),
+  title: z.string().describe("A short title that captures the meeting"),
+  overview: z.string().describe("The whole meeting in 3-5 sentences"),
+  decisions: z.array(z.string()).describe("Decisions the meeting settled"),
   actionItems: z
     .array(
       z.object({
-        owner: z.string().describe("담당자. 불명확하면 '미정'"),
+        owner: z.string().describe("Who owns it; if unclear, the word for 'undecided' in the notes' language"),
         task: z.string(),
-        due: z.string().describe("기한. 언급이 없으면 '미정'"),
+        due: z.string().describe("When it is due; if never mentioned, the word for 'undecided' in the notes' language"),
       }),
     )
-    .describe("후속 작업"),
+    .describe("Follow-up work"),
   topics: z
     .array(z.object({ title: z.string(), points: z.array(z.string()) }))
-    .describe("논의된 주제별 핵심 내용"),
+    .describe("Key points per topic discussed"),
 }) satisfies z.ZodType<Summary>;
+
+const LANGUAGE_NAMES: Record<string, string> = { ko: "Korean", en: "English", ja: "Japanese" };
 
 function summaryModel(store: SettingsStore, s: ReturnType<SettingsStore["get"]>): LanguageModel {
   const { provider, model } = s.summary;
@@ -95,11 +102,15 @@ export async function summarize(store: SettingsStore, transcript: string): Promi
       s.summary.effort && { providerOptions: { qgrid: { effort: s.summary.effort } } }),
     output: Output.object({ schema: SummarySchema }),
     system: [
-      "너는 회의록 작성자다. 전사본을 읽고 한국어로 구조화된 회의록을 만든다.",
-      "'나'는 녹음한 사용자, '상대'는 통화 상대방이다. 상대가 여러 명일 수 있다.",
-      "전사 오류로 보이는 단어는 문맥과 용어집에 맞춰 바로잡는다.",
-      "전사본에 없는 내용은 지어내지 않는다.",
-      s.glossary.trim() && `용어집: ${s.glossary}`,
+      "You write meeting notes. Read the transcript and produce structured notes.",
+      // The notes follow the meeting, not the app's UI language.
+      LANGUAGE_NAMES[s.language]
+        ? `Write every field in ${LANGUAGE_NAMES[s.language]}.`
+        : "Write every field in the language most of the meeting was held in.",
+      "'Me' is the person recording; 'Others' is everyone on the other end of the call, possibly several people.",
+      "Fix words that look like transcription errors, using the context and the glossary.",
+      "Do not add anything the transcript does not say.",
+      s.glossary.trim() && `Glossary: ${s.glossary}`,
     ]
       .filter(Boolean)
       .join("\n"),

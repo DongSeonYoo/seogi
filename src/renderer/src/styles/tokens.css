@@ -1,67 +1,71 @@
-/* Hallmark · route: custom (tuned) · scope: app design system · genre: modern-minimal
- * vibe: "warm restraint, dense, conversational"
- * structure: Linear inverted-L chrome · Discord channel list + message groups + member-list panel
- * paper: oklch(98.6% 0.004 85) / dark oklch(25.5% 0.005 80) · accent: oklch(55% 0.13 39) terracotta
- * display + body: Pretendard Variable (single family, app UI) · numerals: tabular
- * axes: light+dark / geometric-sans / warm · contrast: verified (see design.md § Contrast)
+/* Seogi design tokens · macOS native (see design.md)
+ * structure: Tower-style three panes (sidebar · list · detail) under a unified toolbar
+ * colour: Apple system greys and labels; the accent is the user's macOS accent colour
+ * type: the system font (SF Pro + Apple SD Gothic Neo), 13px UI
+ * contrast: verified for both themes (design.md § Contrast)
  */
 
 :root {
   color-scheme: light dark;
 
   /* ── Colour · light ─────────────────────────────────────────────
-   * Surfaces step by lightness only (Linear's surface ladder): chrome is the
-   * darker app frame, main is the reading surface, raised is dialogs/popovers. */
-  --color-chrome: oklch(96.2% 0.008 85);
-  --color-main: oklch(98.6% 0.004 85);
-  --color-raised: oklch(99.4% 0.003 85);
-  --color-hover: oklch(93.2% 0.009 80);
-  --color-selected: oklch(91% 0.011 80);
-  --color-line: oklch(90.5% 0.009 80);
-  --color-line-strong: oklch(83% 0.010 80);
-  --color-line-control: oklch(64% 0.010 75); /* form-control boundary, ≥3:1 */
+   * The sidebar shows the window's vibrancy; content panes paint `window`. */
+  --color-window: #ffffff;
+  --color-chrome: #f5f5f7; /* status bar, palette footer */
+  --color-raised: #ffffff; /* popovers, dialogs */
+  --color-control: #ffffff; /* push buttons, inputs */
+  --color-sidebar: rgb(255 255 255 / 0.42); /* floating sidebar card over the vibrancy */
+  --color-hover: rgb(0 0 0 / 0.05);
+  --color-selected: rgb(0 0 0 / 0.08); /* sidebar selection, unfocused list selection */
+  --color-line: rgb(0 0 0 / 0.1);
+  --color-line-strong: rgb(0 0 0 / 0.16);
+  --color-line-control: #8a8a8e; /* form-control boundary, ≥3:1 */
 
-  --color-ink: oklch(23% 0.012 60);
-  --color-ink-2: oklch(41% 0.012 60);
-  --color-ink-3: oklch(52% 0.010 65);
+  --color-ink: #1d1d1f;
+  --color-ink-2: #5e5e63;
+  --color-ink-3: #68686d;
 
-  --color-accent: oklch(55% 0.130 39);
-  --color-accent-hover: oklch(51% 0.130 39);
-  --color-accent-press: oklch(47% 0.120 39);
-  --color-accent-soft: oklch(94.5% 0.028 45);
-  --color-accent-text: oklch(50% 0.130 39);
-  --color-on-accent: oklch(99% 0.004 85);
-  --color-focus: oklch(56% 0.170 39);
+  /* The macOS accent colour; App.tsx overrides --system-accent from System Settings. */
+  --system-accent: #007aff;
+  --color-accent: var(--system-accent);
+  --color-accent-text: color-mix(in oklab, var(--system-accent) 88%, black);
+  --color-accent-soft: color-mix(in srgb, var(--system-accent) 14%, transparent);
+  --color-on-accent: #ffffff;
+  --color-focus: color-mix(in srgb, var(--system-accent) 55%, transparent);
 
-  --color-danger: oklch(52% 0.190 27);
-  --color-danger-soft: oklch(95% 0.025 27);
-  --color-success: oklch(50% 0.120 150);
-  --color-success-soft: oklch(95% 0.030 150);
+  --color-record: #ff3b30; /* the record control and live dot, as in Voice Memos */
+  --color-danger: #d70015;
+  --color-danger-soft: rgb(255 59 48 / 0.1);
+  --color-success: #248a3d;
+  --color-success-soft: rgb(52 199 89 / 0.12);
+  --color-warning: #b25000;
 
-  --color-scrim: oklch(20% 0.010 60 / 0.32);
-  --shadow-pop: 0 1px 2px oklch(20% 0.010 60 / 0.06), 0 12px 32px oklch(20% 0.010 60 / 0.12);
+  --color-scrim: rgb(0 0 0 / 0.2);
+  --shadow-control: 0 0.5px 1px rgb(0 0 0 / 0.12), 0 0 0 0.5px rgb(0 0 0 / 0.08);
+  --shadow-card: 0 0 0 0.5px rgb(0 0 0 / 0.08), 0 8px 24px rgb(0 0 0 / 0.08);
+  --shadow-pop: 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 16px 48px rgb(0 0 0 / 0.18);
 
-  /* ── Type · one family; app scale, not a marketing scale ─────────── */
-  --font-ui: "Pretendard Variable", "Pretendard", -apple-system, "Apple SD Gothic Neo", sans-serif;
+  /* ── Type · the system font, AppKit sizes ───────────────────────── */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
 
-  --text-xs: 0.6875rem;  /* 11px  group labels, kbd */
-  --text-sm: 0.75rem;    /* 12px  meta, timestamps */
+  --text-xs: 0.6875rem;  /* 11px  section headers, badges */
+  --text-sm: 0.75rem;    /* 12px  meta, status bar */
   --text-base: 0.8125rem;/* 13px  UI: lists, buttons, inputs */
-  --text-read: 0.9375rem;/* 15px  transcript + summary reading text */
-  --text-lg: 1rem;       /* 16px  panel headings */
-  --text-xl: 1.25rem;    /* 20px  meeting title */
+  --text-read: 0.875rem; /* 14px  transcript and summary text */
+  --text-lg: 0.9375rem;  /* 15px  toolbar title */
+  --text-xl: 1.25rem;    /* 20px  summary heading */
   --text-2xl: 1.5rem;    /* 24px  style guide headings only */
 
   --weight-regular: 400;
-  --weight-medium: 510;
-  --weight-strong: 620;
+  --weight-medium: 500;
+  --weight-strong: 600;
 
   --leading-tight: 1.25;
-  --leading-ui: 1.4;
-  --leading-read: 1.65;
-  --tracking-title: -0.012em;
+  --leading-ui: 1.38;
+  --leading-read: 1.6;
+  --tracking-title: -0.01em;
 
-  /* ── Space · 4pt (one half step for dense message rows) ───────── */
+  /* ── Space · 4pt ──────────────────────────────────────────────── */
   --space-half: 0.125rem;
   --space-1: 0.25rem;
   --space-2: 0.5rem;
@@ -75,60 +79,59 @@
   /* ── Shape ────────────────────────────────────────────────────── */
   --radius-sm: 4px;
   --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
   --radius-full: 9999px;
   --rule: 1px solid var(--color-line);
 
   /* ── Layout ───────────────────────────────────────────────────── */
-  --sidebar-w: 264px;
-  --panel-w: 320px;
-  --header-h: 48px;
-  --control-h: 30px;
-  --control-h-lg: 36px;
-  --titlebar-inset: 52px; /* clears the native traffic lights */
+  --sidebar-w: 232px;
+  --list-w: 320px;
+  --toolbar-h: 52px;
+  --statusbar-h: 28px;
+  --control-h: 26px;
+  --control-h-lg: 32px;
+  --row-h: 28px;
 
   /* ── Motion ───────────────────────────────────────────────────── */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  --dur-micro: 120ms;
-  --dur-short: 200ms;
-  --dur-long: 320ms;
+  --dur-micro: 100ms;
+  --dur-short: 180ms;
 }
 
-/* ── Colour · dark ──────────────────────────────────────────────────
- * Same hue anchors; only lightness and chroma move. Higher surfaces are lighter. */
+/* ── Colour · dark ──────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-chrome: oklch(21.5% 0.005 75);
-    --color-main: oklch(25.5% 0.005 80);
-    --color-raised: oklch(29% 0.006 80);
-    --color-hover: oklch(29.5% 0.006 80);
-    --color-selected: oklch(33% 0.007 80);
-    --color-line: oklch(32% 0.006 80);
-    --color-line-strong: oklch(40% 0.007 80);
-    --color-line-control: oklch(56% 0.007 80);
+    --color-window: #1e1e1e;
+    --color-chrome: #252527;
+    --color-raised: #2c2c2e;
+    --color-control: rgb(255 255 255 / 0.1);
+    --color-sidebar: rgb(255 255 255 / 0.04);
+    --color-hover: rgb(255 255 255 / 0.06);
+    --color-selected: rgb(255 255 255 / 0.1);
+    --color-line: rgb(255 255 255 / 0.1);
+    --color-line-strong: rgb(255 255 255 / 0.16);
+    --color-line-control: #7c7c80;
 
-    --color-ink: oklch(93.5% 0.008 85);
-    --color-ink-2: oklch(78% 0.010 80);
-    --color-ink-3: oklch(68% 0.010 75);
+    --color-ink: #f5f5f7;
+    --color-ink-2: #b0b0b5;
+    --color-ink-3: #a1a1a6;
 
-    --color-accent: oklch(68% 0.130 42);
-    --color-accent-hover: oklch(72% 0.120 42);
-    --color-accent-press: oklch(64% 0.130 42);
-    --color-accent-soft: oklch(33% 0.045 42);
-    --color-accent-text: oklch(74% 0.120 42);
-    --color-on-accent: oklch(18% 0.010 60);
-    --color-focus: oklch(72% 0.160 42);
+    --system-accent: #0a84ff;
+    --color-accent-text: color-mix(in oklab, var(--system-accent) 75%, white);
+    --color-accent-soft: color-mix(in srgb, var(--system-accent) 24%, transparent);
 
-    --color-danger: oklch(72% 0.150 27);
-    --color-danger-soft: oklch(32% 0.055 27);
-    --color-success: oklch(70% 0.130 150);
-    --color-success-soft: oklch(31% 0.045 150);
+    --color-record: #ff453a;
+    --color-danger: #ff6961;
+    --color-danger-soft: rgb(255 69 58 / 0.16);
+    --color-success: #30d158;
+    --color-success-soft: rgb(48 209 88 / 0.16);
+    --color-warning: #ffb340;
 
-    --color-scrim: oklch(8% 0.005 60 / 0.55);
-    --shadow-pop: 0 1px 2px oklch(5% 0 0 / 0.3), 0 12px 32px oklch(5% 0 0 / 0.4);
-    --weight-regular: 380; /* light text on dark reads heavier */
+    --color-scrim: rgb(0 0 0 / 0.4);
+    --shadow-control: 0 0.5px 1px rgb(0 0 0 / 0.4), 0 0 0 0.5px rgb(255 255 255 / 0.08);
+    --shadow-card: 0 0 0 0.5px rgb(255 255 255 / 0.1), 0 8px 24px rgb(0 0 0 / 0.3);
+    --shadow-pop: 0 0 0 0.5px rgb(255 255 255 / 0.12), 0 16px 48px rgb(0 0 0 / 0.5);
   }
 }

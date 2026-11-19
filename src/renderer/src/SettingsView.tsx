@@ -1,4 +1,4 @@
-import { ArrowLeft, Cpu, FolderOpen, HardDrive, Info, Languages, Mic, Plug, SlidersHorizontal, Square } from "lucide-react";
+import { Cpu, FolderOpen, HardDrive, Info, Languages, Mic, Plug, SlidersHorizontal, Square } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   DEFAULT_MODELS,
@@ -18,39 +18,60 @@ import {
   type ThemeMode,
   type TranscriptionProvider,
 } from "../../shared/types";
-import type { Recording } from "./Sidebar";
-import { Elapsed } from "./Sidebar";
+import { liveCaptionHooks } from "./gptLive";
 import { startRecording } from "./recorder";
+import { useT } from "./i18n";
+import { LOCALES, type Locale } from "../../shared/i18n";
 import { Button, CommitInput, Kbd, Segmented, Select, Switch } from "./ui";
 
 const SECTIONS = [
-  { id: "general", label: "일반", icon: SlidersHorizontal },
-  { id: "models", label: "AI 모델", icon: Cpu },
-  { id: "transcription", label: "전사", icon: Languages },
-  { id: "recording", label: "녹음", icon: Mic },
-  { id: "storage", label: "저장 공간", icon: HardDrive },
-  { id: "about", label: "정보", icon: Info },
+  { id: "general", label: "settings.general", icon: SlidersHorizontal },
+  { id: "models", label: "settings.models", icon: Cpu },
+  { id: "transcription", label: "settings.transcription", icon: Languages },
+  { id: "recording", label: "settings.recording", icon: Mic },
+  { id: "storage", label: "settings.storage", icon: HardDrive },
+  { id: "about", label: "settings.about", icon: Info },
 ] as const;
 
 type SectionId = (typeof SECTIONS)[number]["id"];
 
-export function SettingsView({ recording, onClose }: { recording: Recording | null; onClose: () => void }) {
+/** The settings window (⌘,): macOS toolbar tabs over grouped rows; changes apply at once. */
+export function SettingsView() {
+  const t = useT();
   const [section, setSection] = useState<SectionId>("general");
   const [s, setS] = useState<Settings | null>(null);
+  const [recording, setRecording] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => void window.api.getSettings().then(setS), []);
-
-  // Esc leaves settings unless a field or a dialog is handling it.
+  useEffect(() => {
+    const load = () => void window.api.library().then((l) => setRecording(l.counts.recording));
+    load();
+    return window.api.onMeetingChanged(load);
+  }, []);
+  useEffect(() => {
+    const apply = (hex: string) => document.documentElement.style.setProperty("--system-accent", hex);
+    void window.api.accentColor().then(apply);
+    return window.api.onAccentColor(apply);
+  }, []);
+  // Edit-menu undo here only ever means a text field.
+  useEffect(
+    () =>
+      window.api.onMenuAction((id) => {
+        if (id === "undo" || id === "redo") document.execCommand(id);
+      }),
+    [],
+  );
+  // Esc closes the window unless a field or a dialog is handling it.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape" || document.querySelector("dialog[open]")) return;
       if (e.target instanceof HTMLElement && e.target.closest("input, textarea, select")) return;
-      onClose();
+      window.close();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
 
   async function patch(p: Partial<StoredSettings>) {
     try {
@@ -61,72 +82,41 @@ export function SettingsView({ recording, onClose }: { recording: Recording | nu
     }
   }
 
-  const current = SECTIONS.find((x) => x.id === section)!;
-
   return (
-    <div className="app">
-      <aside className="sidebar" aria-label="설정 분류">
-        <div className="sidebar__chrome drag" />
-        <div className="sidebar__top">
-          <button type="button" className="settings-back" onClick={onClose}>
-            <ArrowLeft aria-hidden />
-            <span>설정 닫기</span>
-            <Kbd>esc</Kbd>
-          </button>
-        </div>
-        <nav className="channel-list">
-          <h2 className="channel-group__label">설정</h2>
-          <ul>
-            {SECTIONS.map(({ id, label, icon: Icon }) => (
-              <li key={id}>
-                <button
-                  type="button"
-                  className="channel channel--icon"
-                  aria-current={id === section || undefined}
-                  onClick={() => setSection(id)}
-                >
-                  <Icon aria-hidden />
-                  <span className="channel__title">{label}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+    <div className="prefs">
+      <header className="prefs__toolbar drag">
+        <h1 className="prefs__title">{t(SECTIONS.find((x) => x.id === section)!.label)}</h1>
+        <nav className="prefs__tabs" role="tablist" aria-label={t("settings.tabs")}>
+          {SECTIONS.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              className="prefs__tab"
+              aria-selected={id === section}
+              onClick={() => setSection(id)}
+            >
+              <Icon aria-hidden />
+              <span>{t(label)}</span>
+            </button>
+          ))}
         </nav>
-        {recording && (
-          <div className="dock">
-            <div className="dock__live" role="status">
-              <span className="live-dot" aria-hidden />
-              <div className="dock__live-text">
-                <div className="dock__live-title">녹음 중</div>
-                <div className="dock__live-meta tnum">
-                  <Elapsed since={recording.startedAt} />
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </aside>
-
-      <main className="main">
-        <header className="main__header drag">
-          <h1 className="main__title">{current.label}</h1>
-        </header>
-        <div className="settings selectable">
-          <div className="settings__inner">
-            {saveError && (
-              <p className="notice" role="alert">
-                저장하지 못했습니다: {saveError}
-              </p>
-            )}
-            {s && section === "general" && <General s={s} patch={patch} />}
-            {s && section === "models" && <Models s={s} patch={patch} setS={setS} />}
-            {s && section === "transcription" && <Transcription s={s} patch={patch} />}
-            {s && section === "recording" && <RecordingSection s={s} patch={patch} recording={!!recording} />}
-            {section === "storage" && <Storage />}
-            {section === "about" && <About />}
-          </div>
+      </header>
+      <div className="settings selectable">
+        <div className="settings__inner">
+          {saveError && (
+            <p className="notice" role="alert">
+              {t("settings.saveFailed", { error: saveError })}
+            </p>
+          )}
+          {s && section === "general" && <General s={s} patch={patch} />}
+          {s && section === "models" && <Models s={s} patch={patch} setS={setS} />}
+          {s && section === "transcription" && <Transcription s={s} patch={patch} />}
+          {s && section === "recording" && <RecordingSection s={s} patch={patch} recording={recording} />}
+          {section === "storage" && <Storage />}
+          {section === "about" && <About />}
         </div>
-      </main>
+      </div>
     </div>
   );
 }
@@ -169,17 +159,27 @@ function Row({
 }
 
 function General({ s, patch }: SectionProps) {
+  const t = useT();
   return (
     <Group>
-      <Row label="테마" description="시스템을 고르면 macOS 외관 설정을 따릅니다.">
+      <Row label={t("settings.language")} description={t("settings.languageDesc")} htmlFor="locale">
+        <Select id="locale" value={s.locale} onChange={(e) => patch({ locale: e.target.value as Locale })}>
+          {LOCALES.map((l) => (
+            <option key={l.value} value={l.value}>
+              {l.label}
+            </option>
+          ))}
+        </Select>
+      </Row>
+      <Row label={t("settings.theme")} description={t("settings.themeDesc")}>
         <Segmented<ThemeMode>
-          label="테마"
+          label={t("settings.theme")}
           value={s.theme}
           onChange={(theme) => patch({ theme })}
           options={[
-            { value: "system", label: "시스템" },
-            { value: "light", label: "라이트" },
-            { value: "dark", label: "다크" },
+            { value: "system", label: t("settings.themeSystem") },
+            { value: "light", label: t("settings.themeLight") },
+            { value: "dark", label: t("settings.themeDark") },
           ]}
         />
       </Row>
@@ -216,6 +216,7 @@ function ModelGroup({
   reloadKey: string;
   children?: ReactNode;
 }) {
+  const t = useT();
   const [list, setList] = useState<ModelList | null>(null);
   useEffect(() => {
     setList(null);
@@ -229,7 +230,7 @@ function ModelGroup({
 
   return (
     <Group title={title}>
-      <Row label="공급자" description={description} htmlFor={`${role}-provider`}>
+      <Row label={t("settings.provider")} description={description} htmlFor={`${role}-provider`}>
         <Select
           id={`${role}-provider`}
           value={value.provider}
@@ -246,14 +247,14 @@ function ModelGroup({
         </Select>
       </Row>
       <Row
-        label="모델"
+        label={t("settings.model")}
         htmlFor={id}
         description={
           list === null
-            ? "모델 목록을 불러오는 중…"
+            ? t("settings.modelsLoading")
             : !list.ok
-              ? `목록을 불러오지 못했습니다: ${list.error}`
-              : selected?.detail ?? (known ? undefined : "목록에 없는 모델입니다.")
+              ? t("settings.modelsFailed", { error: list.error })
+              : selected?.detail ?? (known ? undefined : t("settings.modelUnknown"))
         }
       >
         {list?.ok ? (
@@ -263,7 +264,7 @@ function ModelGroup({
               <optgroup key={group} label={group}>
                 {items?.map((m) => (
                   <option key={m.id} value={m.id} disabled={!m.available}>
-                    {m.available ? m.id : `${m.id} (사용 불가)`}
+                    {m.available ? m.id : t("settings.modelUnavailable", { id: m.id })}
                   </option>
                 ))}
               </optgroup>
@@ -274,13 +275,13 @@ function ModelGroup({
         )}
       </Row>
       {!!selected?.efforts?.length && (
-        <Row label="추론 강도" description="높을수록 꼼꼼하지만 느리고 비쌉니다." htmlFor={`${role}-effort`}>
+        <Row label={t("settings.effort")} description={t("settings.effortDesc")} htmlFor={`${role}-effort`}>
           <Select
             id={`${role}-effort`}
             value={value.effort ?? ""}
             onChange={(e) => onChange({ ...value, effort: e.target.value || undefined })}
           >
-            <option value="">모델 기본값</option>
+            <option value="">{t("settings.effortDefault")}</option>
             {selected.efforts.map((e) => (
               <option key={e} value={e}>
                 {e}
@@ -290,7 +291,7 @@ function ModelGroup({
         </Row>
       )}
       {test && (
-        <Row label="연결 확인" description="짧은 요청 하나를 실제로 보내 봅니다.">
+        <Row label={t("settings.test")} description={t("settings.testDesc")}>
           <ConnectionTest role={test} />
         </Row>
       )}
@@ -300,25 +301,26 @@ function ModelGroup({
 }
 
 function Models({ s, patch, setS }: SectionProps & { setS: (s: Settings) => void }) {
+  const t = useT();
   const usesQgrid = [s.live, s.transcription, s.summary].some((x) => x.provider === "qgrid");
   const reloadKey = `${s.qgridUrl}|${s.hasKey.openai}|${s.hasKey.anthropic}`;
   return (
     <>
       <ModelGroup
         role="live"
-        title="실시간 자막"
-        description="녹음하는 동안 흐린 글씨로 바로 보여 주는 초안입니다."
+        title={t("settings.liveTitle")}
+        description={t("settings.liveDesc")}
         providers={["qgrid", "openai"]}
         value={s.live}
         onChange={(v) => patch({ live: { provider: v.provider as LiveProvider, model: v.model } })}
         reloadKey={reloadKey}
       >
-        <LiveTest micDeviceId={s.recording.micDeviceId} />
+        <LiveTest micDeviceId={s.recording.micDeviceId} live={s.live} />
       </ModelGroup>
       <ModelGroup
         role="transcription"
-        title="받아쓰기"
-        description="30초 안팎마다 확정하는 받아쓰기입니다. 회의록과 요약은 이 결과로 만듭니다."
+        title={t("settings.transcriptTitle")}
+        description={t("settings.transcriptDesc")}
         providers={["qgrid", "openai"]}
         value={s.transcription}
         onChange={(v) => patch({ transcription: { provider: v.provider as TranscriptionProvider, model: v.model } })}
@@ -327,8 +329,8 @@ function Models({ s, patch, setS }: SectionProps & { setS: (s: Settings) => void
       />
       <ModelGroup
         role="summary"
-        title="요약"
-        description="회의가 끝난 뒤 요약과 액션아이템을 만드는 모델입니다."
+        title={t("settings.summaryTitle")}
+        description={t("settings.summaryDesc")}
         providers={["qgrid", "openai", "anthropic"]}
         value={s.summary}
         onChange={(v) => patch({ summary: { provider: v.provider as SummaryProvider, model: v.model, effort: v.effort } })}
@@ -338,16 +340,16 @@ function Models({ s, patch, setS }: SectionProps & { setS: (s: Settings) => void
 
       {usesQgrid && (
         <Group title="qgrid">
-          <Row label="서버 주소" description="로컬에서 띄웠다면 http://localhost:44900" htmlFor="qgrid-url">
+          <Row label={t("settings.qgridUrl")} description={t("settings.qgridUrlDesc")} htmlFor="qgrid-url">
             <CommitInput id="qgrid-url" value={s.qgridUrl} onCommit={(qgridUrl) => patch({ qgridUrl })} />
           </Row>
         </Group>
       )}
 
-      <Group title="API key">
+      <Group title={t("settings.apiKeys")}>
         <KeyRow name="openai" label="OpenAI" placeholder="sk-…" stored={s.hasKey.openai} onChange={setS} />
         <KeyRow name="anthropic" label="Anthropic" placeholder="sk-ant-…" stored={s.hasKey.anthropic} onChange={setS} />
-        <p className="settings-group__note">키는 macOS 키체인으로 암호화해 이 맥에만 저장하고, 화면에 다시 보여주지 않습니다.</p>
+        <p className="settings-group__note">{t("settings.keysNote")}</p>
       </Group>
     </>
   );
@@ -366,6 +368,7 @@ function KeyRow({
   stored: boolean;
   onChange: (s: Settings) => void;
 }) {
+  const t = useT();
   const [editing, setEditing] = useState(!stored);
   const [draft, setDraft] = useState("");
   useEffect(() => setEditing(!stored), [stored]);
@@ -377,7 +380,7 @@ function KeyRow({
   }
 
   return (
-    <Row label={label} htmlFor={id} description={stored ? "저장됨" : "저장된 키가 없습니다."}>
+    <Row label={label} htmlFor={id} description={stored ? t("settings.keySaved") : t("settings.keyNone")}>
       {editing ? (
         <form
           className="inline-form"
@@ -396,22 +399,22 @@ function KeyRow({
             onChange={(e) => setDraft(e.target.value)}
           />
           <Button type="submit" disabled={!draft.trim()}>
-            저장
+            {t("settings.save")}
           </Button>
           {stored && (
             <Button variant="ghost" onClick={() => setEditing(false)}>
-              취소
+              {t("settings.cancel")}
             </Button>
           )}
         </form>
       ) : (
         <div className="inline-form">
-          <span className="key-mask" aria-label="저장된 키">
+          <span className="key-mask" aria-label={t("settings.savedKey")}>
             ••••••••••••
           </span>
-          <Button onClick={() => setEditing(true)}>변경</Button>
+          <Button onClick={() => setEditing(true)}>{t("settings.change")}</Button>
           <Button variant="danger" onClick={() => save("")}>
-            삭제
+            {t("settings.delete")}
           </Button>
         </div>
       )}
@@ -420,7 +423,8 @@ function KeyRow({
 }
 
 /** Mic-only live captions with the saved live model, so a model can be tried before a meeting. */
-function LiveTest({ micDeviceId }: { micDeviceId: string }) {
+function LiveTest({ micDeviceId, live }: { micDeviceId: string; live: Settings["live"] }) {
+  const t = useT();
   const [running, setRunning] = useState(false);
   const [view, setView] = useState<LiveView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -439,11 +443,12 @@ function LiveTest({ micDeviceId }: { micDeviceId: string }) {
     setView(null);
     try {
       await window.api.startLiveTest();
-      stopRef.current = await startRecording(() => {}, {
-        micDeviceId,
-        systemAudio: false,
-        onFrame: (track, pcm) => window.api.sendLiveAudio(LIVE_TEST_ID, track, pcm),
-      });
+      const captions = liveCaptionHooks(LIVE_TEST_ID, live);
+      const stopRecording = await startRecording(() => {}, { micDeviceId, systemAudio: false, ...captions.options });
+      stopRef.current = async () => {
+        captions.stop();
+        await stopRecording();
+      };
       setRunning(true);
     } catch (e) {
       await window.api.stopLiveTest();
@@ -463,17 +468,17 @@ function LiveTest({ micDeviceId }: { micDeviceId: string }) {
   const problem = error ?? view?.error;
   return (
     <Row
-      label="시험해 보기"
-      description="마이크에 대고 말하면 저장된 모델로 자막이 나옵니다. 회의로 저장하지 않습니다."
+      label={t("settings.liveTest")}
+      description={t("settings.liveTestDesc")}
       stack={running || !!text || !!problem}
     >
       <div className="live-test">
         <Button icon={running ? <Square aria-hidden /> : <Mic aria-hidden />} onClick={running ? stop : start}>
-          {running ? "멈추기" : "마이크로 시험"}
+          {running ? t("settings.liveTestStop") : t("settings.liveTestStart")}
         </Button>
         {(running || text) && (
           <p className="live-test__text" role="status" ref={textRef}>
-            {text || "듣는 중… 말해 보세요."}
+            {text || t("settings.liveTestListening")}
           </p>
         )}
         {problem && (
@@ -487,6 +492,7 @@ function LiveTest({ micDeviceId }: { micDeviceId: string }) {
 }
 
 function ConnectionTest({ role }: { role: ConnectionRole }) {
+  const t = useT();
   const [state, setState] = useState<"loading" | ConnectionResult | null>(null);
   return (
     <div className="connection">
@@ -498,11 +504,17 @@ function ConnectionTest({ role }: { role: ConnectionRole }) {
           setState(await window.api.testConnection(role));
         }}
       >
-        {state === "loading" ? "확인 중" : state && typeof state === "object" ? (state.ok ? "연결됨" : "다시 확인") : "확인"}
+        {state === "loading"
+          ? t("settings.testChecking")
+          : state && typeof state === "object"
+            ? state.ok
+              ? t("settings.testOk")
+              : t("settings.testAgain")
+            : t("settings.testRun")}
       </Button>
       {state && typeof state === "object" && (
         <p className="connection__result" data-tone={state.ok ? "success" : "error"} role="status">
-          {state.ok ? `${(state.ms / 1000).toFixed(1)}초 만에 응답했습니다.` : state.error}
+          {state.ok ? t("settings.testReplied", { sec: (state.ms / 1000).toFixed(1) }) : state.error}
         </p>
       )}
     </div>
@@ -510,28 +522,29 @@ function ConnectionTest({ role }: { role: ConnectionRole }) {
 }
 
 function Transcription({ s, patch }: SectionProps) {
+  const t = useT();
   return (
     <Group>
-      <Row label="언어" description="회의에서 주로 쓰는 언어입니다. 섞여 있으면 자동 감지를 고르세요." htmlFor="language">
+      <Row label={t("settings.meetingLanguage")} description={t("settings.meetingLanguageDesc")} htmlFor="language">
         <Select id="language" value={s.language} onChange={(e) => patch({ language: e.target.value })}>
           <option value="ko">한국어</option>
           <option value="en">English</option>
           <option value="ja">日本語</option>
-          <option value="auto">자동 감지</option>
+          <option value="auto">{t("settings.detect")}</option>
         </Select>
       </Row>
       <Row
         stack
-        label="용어집"
+        label={t("settings.glossary")}
         htmlFor="glossary"
-        description="사람 이름, 제품명을 쉼표로 구분해 적으면 받아 적을 때와 요약할 때 표기를 맞춥니다. ⌘↵로 저장합니다."
+        description={t("settings.glossaryDesc")}
       >
         <CommitInput
           id="glossary"
           multiline
           rows={4}
           value={s.glossary}
-          placeholder="동선, 큐그리드, 회의록 앱"
+          placeholder={t("settings.glossaryPlaceholder")}
           onCommit={(glossary) => patch({ glossary })}
         />
       </Row>
@@ -540,6 +553,7 @@ function Transcription({ s, patch }: SectionProps) {
 }
 
 function RecordingSection({ s, patch, recording }: SectionProps & { recording: boolean }) {
+  const t = useT();
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   useEffect(() => {
     const load = () =>
@@ -548,30 +562,30 @@ function RecordingSection({ s, patch, recording }: SectionProps & { recording: b
     navigator.mediaDevices.addEventListener("devicechange", load);
     return () => navigator.mediaDevices.removeEventListener("devicechange", load);
   }, []);
-  const later = recording ? " 지금 녹음에는 적용되지 않고 다음 녹음부터 적용됩니다." : "";
+  const later = recording ? t("settings.nextRecording") : "";
 
   return (
     <Group>
-      <Row label="마이크" description={`내 목소리를 녹음할 입력 장치입니다.${later}`} htmlFor="mic">
+      <Row label={t("settings.mic")} description={t("settings.micDesc", { later })} htmlFor="mic">
         <Select
           id="mic"
           value={s.recording.micDeviceId}
           onChange={(e) => patch({ recording: { ...s.recording, micDeviceId: e.target.value } })}
         >
-          <option value="">시스템 기본값</option>
+          <option value="">{t("settings.micDefault")}</option>
           {devices.map((d, i) => (
             <option key={d.deviceId} value={d.deviceId}>
-              {d.label || `마이크 ${i + 1}`}
+              {d.label || t("settings.micN", { n: i + 1 })}
             </option>
           ))}
         </Select>
       </Row>
       <Row
-        label="상대방 소리 녹음"
-        description={`화상 회의에서 스피커로 나오는 소리를 따로 녹음해 '상대'로 구분합니다. 대면 회의라면 끄세요. 끄면 모든 목소리가 '나'로 기록됩니다.${later}`}
+        label={t("settings.systemAudio")}
+        description={t("settings.systemAudioDesc", { later })}
       >
         <Switch
-          label="상대방 소리 녹음"
+          label={t("settings.systemAudio")}
           checked={s.recording.systemAudio}
           onChange={(systemAudio) => patch({ recording: { ...s.recording, systemAudio } })}
         />
@@ -581,40 +595,49 @@ function RecordingSection({ s, patch, recording }: SectionProps & { recording: b
 }
 
 function Storage() {
+  const t = useT();
   const [info, setInfo] = useState<StorageInfo | null>(null);
   useEffect(() => void window.api.storageInfo().then(setInfo), []);
   return (
     <Group>
-      <Row label="데이터 위치" description={info?.path ?? "…"}>
+      <Row label={t("settings.dataLocation")} description={info?.path ?? "…"}>
         <Button icon={<FolderOpen aria-hidden />} onClick={() => window.api.openDataFolder()}>
-          Finder에서 열기
+          {t("settings.showInFinder")}
         </Button>
       </Row>
-      <Row label="사용량" description="녹음 파일과 회의 데이터베이스를 합친 크기입니다.">
-        <span className="setting-value tnum">{info ? `${formatBytes(info.bytes)} · 회의 ${info.meetings}개` : "…"}</span>
+      <Row label={t("settings.usage")} description={t("settings.usageDesc")}>
+        <span className="setting-value tnum">{info ? t("settings.usageValue", { size: formatBytes(info.bytes), n: info.meetings }) : "…"}</span>
       </Row>
     </Group>
   );
 }
 
 function About() {
+  const t = useT();
   const [info, setInfo] = useState<AppInfo | null>(null);
   useEffect(() => void window.api.appInfo().then(setInfo), []);
   return (
     <>
       <Group>
-        <Row label="Seogi" description="회의를 녹음하고 받아 적고 정리합니다.">
-          <span className="setting-value tnum">{info ? `버전 ${info.version}` : "…"}</span>
+        <Row label={t("app.name")} description={t("app.tagline")}>
+          <span className="setting-value tnum">{info ? t("settings.version", { v: info.version }) : "…"}</span>
         </Row>
-        <Row label="환경">
+        <Row label={t("settings.environment")}>
           <span className="setting-value tnum">{info ? `Electron ${info.electron} · ${info.platform}` : "…"}</span>
         </Row>
       </Group>
-      <Group title="단축키">
+      <Group title={t("settings.shortcuts")}>
         {[
-          ["회의 검색", "⌘K"],
-          ["설정 열기·닫기", "⌘,"],
-          ["설정·대화상자 닫기", "esc"],
+          [t("shortcut.record"), "⇧⌘R"],
+          [t("shortcut.palette"), "⌘K"],
+          [t("shortcut.tabs"), "⌘1 / ⌘2"],
+          [t("shortcut.undo"), "⌘Z / ⇧⌘Z"],
+          [t("action.star"), "⌘D"],
+          [t("action.resummarize"), "⇧⌘S"],
+          [t("action.delete"), "⌘⌫"],
+          [t("action.newFolder"), "⇧⌘N"],
+          [t("action.toggleSidebar"), "⌃⌘S"],
+          [t("action.settings"), "⌘,"],
         ].map(([label, key]) => (
           <Row key={label} label={label}>
             <Kbd>{key}</Kbd>
