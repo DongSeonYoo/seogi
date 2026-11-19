@@ -3,8 +3,9 @@ import { createOpenAI } from "@ai-sdk/openai";
 import qgrid from "@cartanova/qgrid-ai-sdk";
 import { generateText, Output, transcribe, type LanguageModel } from "ai";
 import { z } from "zod";
-import type { ConnectionResult, ConnectionRole, Summary } from "../shared/types";
+import type { ConnectionResult, ConnectionRole, Summary, Utterance } from "../shared/types";
 import type { SettingsStore } from "./settings";
+import { summarizeParts, SUMMARY_INPUT, SUMMARY_OUTPUT, type CitedNotes } from "./summaryParts.ts";
 
 /** Imported audio files go through a file transcriber of the live caption provider: faster than real time. */
 const FILE_MODEL = { qgrid: "openai/gpt-transcribe", openai: "gpt-4o-transcribe" } as const;
@@ -64,23 +65,26 @@ export function glossaryPrompt(language: string, glossary: string) {
   return `${language === "ko" ? "용어" : "Glossary"}: ${glossary}`;
 }
 
+const ids = z.array(z.number().int());
+const point = z.object({ text: z.string(), ids });
 const SummarySchema = z.object({
   title: z.string().describe("A short title that captures the meeting"),
-  overview: z.string().describe("The whole meeting in 3-5 sentences"),
-  decisions: z.array(z.string()).describe("Decisions the meeting settled"),
+  overview: z.array(point).describe("Three to five concise overview points"),
+  decisions: z.array(point).describe("Decisions in order, identifying earlier decisions later superseded"),
   actionItems: z
     .array(
       z.object({
         owner: z.string().describe("Who owns it; if unclear, the word for 'undecided' in the notes' language"),
         task: z.string(),
+        ids,
         due: z.string().describe("When it is due; if never mentioned, the word for 'undecided' in the notes' language"),
       }),
     )
     .describe("Follow-up work"),
   topics: z
-    .array(z.object({ title: z.string(), points: z.array(z.string()) }))
+    .array(z.object({ title: z.string(), points: z.array(point) }))
     .describe("Key points per topic discussed"),
-}) satisfies z.ZodType<Summary>;
+}) satisfies z.ZodType<CitedNotes>;
 
 const LANGUAGE_NAMES: Record<string, string> = { ko: "Korean", en: "English", ja: "Japanese" };
 
@@ -97,35 +101,34 @@ function summaryModel(store: SettingsStore, s: ReturnType<SettingsStore["get"]>,
  */
 export async function summarize(
   store: SettingsStore,
-  transcript: string,
+  transcript: Utterance[],
   glossary = store.get().glossary,
   model = store.get().summary.model,
 ): Promise<Summary> {
   const s = store.get();
-  const { output } = await generateText({
-    model: summaryModel(store, s, model),
-    ...(s.summary.provider === "qgrid" &&
-      model === s.summary.model &&
-      s.summary.effort && { providerOptions: { qgrid: { effort: s.summary.effort } } }),
-    output: Output.object({ schema: SummarySchema }),
-    system: [
-      "You write meeting notes. Read the transcript and produce structured notes.",
-      // The notes follow the meeting, not the app's UI language.
-      LANGUAGE_NAMES[s.language]
-        ? `Write every field in ${LANGUAGE_NAMES[s.language]}.`
-        : "Write every field in the language most of the meeting was held in.",
-      "'Me' is the person recording; 'Others' is everyone on the other end of the call, possibly several people. 'Speaker 1', 'Speaker 2', … are voices told apart in an imported recording.",
-      "Fix words that look like transcription errors, using the context and the glossary.",
-      "Do not add anything the transcript does not say.",
-      "End each overview sentence, decision, action item and point with the [mm:ss] or [h:mm:ss] time of the transcript line it comes from, as written there, e.g. 'Ship on Friday [12:05]'. Use only times that appear in the transcript.",
-      glossary.trim() && `Glossary: ${glossary}`,
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    prompt: transcript,
-    maxRetries: 2,
+  const languageModel = summaryModel(store, s, model);
+  const instructions = [
+    LANGUAGE_NAMES[s.language] ? `Write every field in ${LANGUAGE_NAMES[s.language]}.`
+      : "Use the language of the meeting throughout the notes.",
+    "Use only supplied material. Put supporting numeric source ids in each ids array. Never put citations or times in prose.",
+    "Keep decisions in chronological order. Explicitly identify superseded decisions and the final choice. Preserve task owners and deadlines.",
+    glossary.trim() && `Glossary: ${glossary}`,
+  ].filter(Boolean).join("\n");
+  const prompts = {
+    transcript: instructions + "\nSummarize the numbered transcript. Me is the recorder, Others is the remote track, and numbered speakers are distinct voices. Use the glossary to correct transcription errors.",
+    merge: instructions + "\nCombine these chronological partial notes. Consolidate duplicate facts and actions, keeping their supporting ids. Keep reversals and distinct speakers separate. Only cite ids attached to these notes.",
+  };
+  const budget = SUMMARY_INPUT - Math.max(Buffer.byteLength(prompts.transcript), Buffer.byteLength(prompts.merge));
+  return summarizeParts(transcript, budget, async (stage, prompt) => {
+    const { output } = await generateText({
+      model: languageModel,
+      ...(s.summary.provider === "qgrid" && model === s.summary.model && s.summary.effort &&
+        { providerOptions: { qgrid: { effort: s.summary.effort } } }),
+      output: Output.object({ schema: SummarySchema }), system: prompts[stage], prompt,
+      maxOutputTokens: SUMMARY_OUTPUT, maxRetries: 2,
+    });
+    return output;
   });
-  return output;
 }
 
 /** One cheap real request through the configured provider, so a bad key or model shows up now. */

@@ -19,7 +19,7 @@ import type {
   Track,
 } from "../shared/types";
 import { INTL_LOCALE, showStored, storedMessage, translator, type Locale } from "../shared/i18n";
-import { clock, meetingDocument, summaryMarkdown } from "../shared/summary";
+import { meetingDocument, summaryMarkdown } from "../shared/summary";
 import { joinSplitSentences } from "../shared/transcript";
 import { glossaryPrompt, isPromptEcho, splitUtterances, summarize, testConnection, transcribeFile } from "./ai";
 import { openDb } from "./db";
@@ -221,14 +221,12 @@ app.whenReady().then(async () => {
     try {
       const m = db.getMeeting(id);
       if (!m?.utterances.length) throw new Error(tr()("error.nothingTranscribed"));
-      const transcript = joinSplitSentences(m.utterances)
-        .map((u) => `[${clock(u.startSec)}] ${u.speaker ? `Speaker ${u.speaker}` : u.track === "mic" ? "Me" : "Others"}: ${u.text}`)
-        .join("\n");
+      const transcript = joinSplitSentences(m.utterances);
       const s = await summarize(settings, transcript, glossaryFor(id), model);
       db.setSummary(id, s.title, summaryMarkdown(s, tr()));
       return { ok: true };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      return { ok: false, error: showStored(e instanceof Error ? e.message : String(e), tr()) };
     } finally {
       notify(id);
     }

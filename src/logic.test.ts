@@ -545,3 +545,101 @@ test("stored messages are worded in the language current when shown; plain text 
   assert.equal(showStored(saved, translator("ko")), translator("ko")("error.captionsDropped", { n: 2 }));
   assert.equal(showStored("qgrid 502: bad gateway", translator("ko")), "qgrid 502: bad gateway");
 });
+
+const summaryRow = (id: number, startSec: number, text: string) =>
+  ({ id, startSec, text, track: "mic" as const, speaker: null });
+const citedOverview = (text: string, ...ids: number[]) => ({
+  title: "Release", overview: [{ text, ids }], decisions: [], actionItems: [], topics: [],
+});
+
+test("summary splitting accounts for UTF-8, labels and newlines without breaking source ids or characters", async () => {
+  const { splitRows } = await import("./main/summaryParts.ts");
+  const rows = ["가🙂나다🙂라", "끝"].map((text, i) => ({ text, label: `[${i + 1}] Me`, ids: [i + 1] }));
+  const parts = splitRows(rows, 17);
+  assert.ok(parts.length > 1);
+  for (const part of parts) {
+    assert.ok(Buffer.byteLength(part.map((r) => `${r.label}: ${r.text}`).join("\n")) <= 17);
+  }
+  for (const row of rows) {
+    const fragments = parts.flat().filter((r) => r.label === row.label);
+    assert.ok(fragments.every((r) => r.ids[0] === row.ids[0] && !/[\uD800-\uDFFF]/u.test(r.text)));
+    assert.equal(fragments.map((r) => r.text).join(""), row.text);
+  }
+});
+
+test("a short transcript takes one call and only valid source ids produce time links", async () => {
+  const { summarizeParts } = await import("./main/summaryParts.ts");
+  const lines = [summaryRow(71, 8.3, "First"), summaryRow(83, 6000.1, "Final"), summaryRow(97, 6000.8, "Agreed")];
+  let calls = 0;
+  const result = await summarizeParts(lines, 1000, async (stage, prompt) => {
+    calls++;
+    assert.equal(stage, "transcript");
+    assert.match(prompt, /\[1\] Me: First/);
+    assert.doesNotMatch(prompt, /1:40:00|\[71\]/);
+    return { ...citedOverview("Published [55:55]", 3, 83, 2, 1, 2), decisions: [{ text: "Invented", ids: [99] }] };
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.overview, "Published [00:08] [1:40:00]");
+  assert.deepEqual(result.decisions, []);
+});
+
+test("the merge model receives ordered, cited decisions and actions and can cite only its child notes", async () => {
+  const { summarizeParts } = await import("./main/summaryParts.ts");
+  const lines = [
+    summaryRow(10, 5, "Plan A. " + "a".repeat(300)),
+    summaryRow(20, 11, "No decision."),
+    summaryRow(30, 15, "Plan B replaces A. " + "b".repeat(300)),
+  ];
+  const stages: string[] = [];
+  const result = await summarizeParts(lines, 430, async (stage, prompt) => {
+    stages.push(stage);
+    if (stage === "transcript") {
+      const later = prompt.includes("Plan B");
+      const id = later ? 3 : 1;
+      return {
+        ...citedOverview("Release discussed", id),
+        decisions: [{ text: later ? "Use B" : "Use A", ids: [id] }],
+        actionItems: later ? [{ task: "Ship", owner: "Jin", due: "Friday", ids: [3] }] : [],
+        topics: later ? [{ title: "QA", points: [{ text: "Run tests", ids: [3] }] }] : [],
+      };
+    }
+    assert.ok(prompt.indexOf("Use A") >= 0 && prompt.indexOf("Use A") < prompt.indexOf("Use B"));
+    assert.equal(prompt.match(/Release discussed/g)?.length, 2);
+    for (const field of ["Ship", "Jin", "Friday", "QA", "Run tests"]) assert.ok(prompt.includes(field));
+    assert.doesNotMatch(prompt, /\[2\]/);
+    return {
+      ...citedOverview("Release discussed", 1, 2, 3),
+      decisions: [{ text: "Superseded: use A", ids: [1] }, { text: "Final: use B", ids: [3] }],
+      actionItems: [{ task: "Ship", owner: "Jin", due: "Friday", ids: [3] }],
+      topics: [{ title: "QA", points: [{ text: "Run tests", ids: [3] }] }],
+    };
+  });
+  assert.deepEqual(stages, ["transcript", "transcript", "merge"]);
+  assert.equal(result.overview, "Release discussed [00:05] [00:15]");
+  assert.deepEqual(result.decisions, ["Superseded: use A [00:05]", "Final: use B [00:15]"]);
+  assert.deepEqual(result.actionItems, [{ task: "Ship [00:15]", owner: "Jin", due: "Friday" }]);
+  assert.deepEqual(result.topics, [{ title: "QA", points: ["Run tests [00:15]"] }]);
+});
+
+test("provider length errors shrink the failing part with bounded retries; unrelated errors propagate", async () => {
+  const { summarizeParts } = await import("./main/summaryParts.ts");
+  const lines = [summaryRow(10, 65, "a".repeat(6000))];
+  const sizes: number[] = [];
+  const result = await summarizeParts(lines, 8000, async (stage, prompt) => {
+    if (stage === "transcript") {
+      sizes.push(Buffer.byteLength(prompt));
+      if (sizes.length === 1) throw Object.assign(new Error("Rejected"), { responseBody: '{"code":"context_length_exceeded"}' });
+    }
+    return citedOverview("Ready", 1);
+  });
+  assert.ok(sizes.length > 1 && sizes.slice(1).every((n) => n < sizes[0]));
+  assert.equal(result.overview, "Ready [01:05]");
+  const generic = new Error("Context window metadata unavailable");
+  let attempts = 0;
+  await assert.rejects(summarizeParts(lines, 8000, async () => { attempts++; throw generic; }), (e) => e === generic);
+  assert.equal(attempts, 1);
+  const tooLarge = Object.assign(new Error("Rejected"), { statusCode: 413 });
+  attempts = 0;
+  await assert.rejects(summarizeParts(lines, 8000, async () => { attempts++; throw tooLarge; }), (e) => e === tooLarge);
+  assert.ok(attempts > 1 && attempts <= 5);
+});
