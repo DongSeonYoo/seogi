@@ -194,6 +194,8 @@ export type Api = {
    * speaker turn is transcribed. Resolves once it has started; progress comes via onImportProgress.
    */
   /** `language`: the file's spoken language, or "auto" to let the transcriber detect it. */
+  /** Transcribes a track's opening audio (16 kHz mono from 0 s) that reached no live session. */
+  transcribeOpening(id: number, track: Track, pcm: Int16Array): void;
   importFile(id: number, pcm: Int16Array, language: string, ogg: (Uint8Array | null)[]): Promise<boolean>;
   /** null: the import of `id` ended. */
   onImportProgress(listener: (id: number, progress: ImportProgress | null) => void): () => void;

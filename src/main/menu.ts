@@ -85,9 +85,11 @@ export function appMenu(
         item("toggleSidebar", t("action.toggleSidebar"), "Cmd+B"),
         item("toggleSummary", t("action.toggleSummary"), "Alt+Cmd+S"),
         { type: "separator" },
+        // Reload and dev tools in any unpackaged run; the style guide only with the dev server
+        // (`pnpm dev`), whose renderer is the only one that contains it.
         ...(app.isPackaged
           ? []
-          : ([{ role: "reload" }, { role: "toggleDevTools" }, item("styleGuide", t("action.styleGuide"), "Cmd+Shift+D")] as MenuItemConstructorOptions[])),
+          : ([{ role: "reload" }, { role: "toggleDevTools" }, ...(process.env.ELECTRON_RENDERER_URL ? [item("styleGuide", t("action.styleGuide"), "Cmd+Shift+D")] : [])] as MenuItemConstructorOptions[])),
         { role: "togglefullscreen", label: t("menu.fullScreen") },
       ],
     },

@@ -24,6 +24,7 @@ const api: Api = {
   createMeeting: (folderId) => ipcRenderer.invoke("createMeeting", folderId),
   startMeeting: (id) => ipcRenderer.invoke("startMeeting", id),
   abortMeeting: (id) => ipcRenderer.invoke("abortMeeting", id),
+  transcribeOpening: (id, track, pcm) => ipcRenderer.send("transcribeOpening", id, track, pcm),
   importFile: (id, pcm, language, ogg) => ipcRenderer.invoke("importFile", id, pcm, language, ogg),
   onImportProgress: (listener) => on("import-progress", listener),
   setSessionOptions: (id, options) => ipcRenderer.invoke("setSessionOptions", id, options),

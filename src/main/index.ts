@@ -288,6 +288,14 @@ app.whenReady().then(async () => {
     void importFile(id, pcm, language, ogg);
     return true;
   });
+  ipcMain.on("transcribeOpening", async (_e, id: number, track: Track, pcm: Int16Array) => {
+    try {
+      const t = await transcribeFile(settings, toWav(pcm), glossaryFor(id));
+      if (t.text) storeUtterances(id, track, splitUtterances(t, 0, pcm.length / SAMPLE_RATE));
+    } catch (e) {
+      console.warn("[seogi] opening audio not transcribed:", e);
+    }
+  });
   ipcMain.handle("abortMeeting", async (_e, id: number) => {
     await stopLive(id);
     db.setStatus(id, "new");

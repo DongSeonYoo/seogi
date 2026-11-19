@@ -63,8 +63,6 @@ export function MeetingView({
   const [fileLanguage, setFileLanguage] = useState("auto");
   // Each file starts from the meeting language in Settings: detection misreads short lines
   // (Korean turns came back as Japanese), so it is the fallback, not the default.
-  const [meetingLanguage, setMeetingLanguage] = useState("auto");
-  useEffect(() => void window.api.getSettings().then((s) => setMeetingLanguage(s.language)), []);
   // A [mm:ss] clicked in the summary; n makes a second click on the same time scroll again.
   const [focus, setFocus] = useState<{ sec: number; n: number } | null>(null);
   /** Appends a transcript line, with its time, to the end of the summary. */
@@ -79,8 +77,9 @@ export function MeetingView({
   async function take(f: File) {
     setFileError(null);
     setFile(null);
-    setFileLanguage(meetingLanguage);
     setReading(true);
+    // Read now, not when the session opened: the setting may have changed since.
+    setFileLanguage((await window.api.getSettings()).language);
     try {
       setFile(await readAudioFile(f));
     } catch (e) {
@@ -209,7 +208,7 @@ export function MeetingView({
             <span>{t("detail.systemSilent")}</span>
           </p>
         )}
-        <Transcript meeting={m} live={live} focus={focus} onStamp={stamp} />
+        <Transcript meeting={m} live={live} focus={focus} onStamp={stamp} importing={!!importing} />
         <footer className="statusbar tnum" role="status">
           <span className="statusbar__left">
             {recording ? (
@@ -311,18 +310,21 @@ function Transcript({
   live,
   focus,
   onStamp,
+  importing,
 }: {
   meeting: MeetingDetail;
   live: LiveView | null;
   focus: { sec: number; n: number } | null;
   onStamp: (u: Utterance) => void;
+  importing: boolean;
 }) {
   const t = useT();
   const scroller = useRef<HTMLDivElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const player = usePlayer(m.id);
-  const [focused, setFocused] = useState<number | null>(null);
+  // Every line in the named second is marked: two lines can share a start time to the second.
+  const [focused, setFocused] = useState<Set<number>>(new Set());
   const confirmed = useMemo(() => joinSplitSentences(m.utterances), [m.utterances]);
   const grouped = useMemo(() => groupUtterances<Line>(confirmed), [confirmed]);
   const groups = useMemo(() => {
@@ -342,8 +344,9 @@ function Transcript({
     const el = scroller.current?.querySelector(`[data-key="${target.id}"]`);
     stick.current = false;
     el?.scrollIntoView({ block: "center", behavior: "smooth" });
-    setFocused(target.id);
-    const timer = setTimeout(() => setFocused(null), 2000);
+    const same = confirmed.filter((u) => Math.floor(u.startSec) === Math.floor(target.startSec)).map((u) => u.id);
+    setFocused(new Set(same.length ? same : [target.id]));
+    const timer = setTimeout(() => setFocused(new Set()), 2000);
     return () => clearTimeout(timer);
   }, [focus]);
 
@@ -368,7 +371,8 @@ function Transcript({
         <MessageGroup key={lineKey(group[0])} group={group} player={player} focused={focused} onStamp={onStamp} />
       ))}
       {!groups.length && !busy && (
-        <p className="empty">{t(m.status === "new" ? "detail.notRecorded" : "detail.emptyTranscript")}</p>
+        // While a file is being prepared the session is still "new", but it is no longer waiting for one.
+        !importing && <p className="empty">{t(m.status === "new" ? "detail.notRecorded" : "detail.emptyTranscript")}</p>
       )}
       {m.status === "recording" && (
         <p className="typing" role="status">
@@ -384,13 +388,13 @@ function Transcript({
 const MessageGroup = memo(function MessageGroup({ group, player, focused, onStamp }: {
   group: Line[];
   player: Player;
-  focused: number | null;
+  focused: ReadonlySet<number>;
   onStamp: (u: Utterance) => void;
 }) {
   return (
     <ol className="msg-group">
       {group.map((u, i) => (
-        <Message key={lineKey(u)} u={u} head={i === 0} player={player} focused={focused === u.id} onStamp={onStamp} />
+        <Message key={lineKey(u)} u={u} head={i === 0} player={player} focused={focused.has(u.id)} onStamp={onStamp} />
       ))}
     </ol>
   );

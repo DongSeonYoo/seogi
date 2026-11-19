@@ -10,8 +10,8 @@ const LIST_W = { min: 240, max: 560 };
 const SUMMARY_W = { min: 280, max: 720 };
 /** Dragging a side pane narrower than this hides it, like Finder. */
 const COLLAPSE_BELOW = 120;
-/** The transcript keeps at least this much room. */
-const DETAIL_MIN = 360;
+/** The transcript keeps at least this much room (so list + summary still fit a 900 px window). */
+const DETAIL_MIN = 300;
 
 export function useLayout() {
   const [saved, setLayout] = useState<Layout>(() => {
@@ -29,7 +29,7 @@ export function useLayout() {
     }
   }, [saved]);
 
-  // A window too narrow for every open pane hides the summary, then the sidebar, so the transcript
+  // A window too narrow for every open pane hides the sidebar, then the summary, so the transcript
   // keeps DETAIL_MIN; they come back as the window widens (the saved layout is untouched).
   const [windowW, setWindowW] = useState(window.innerWidth);
   useEffect(() => {
@@ -39,8 +39,9 @@ export function useLayout() {
   }, []);
   const layout = { ...saved };
   const left = () => windowW - (layout.sidebar ? layout.sidebarW : 0) - layout.listW - (layout.summary ? layout.summaryW : 0);
-  if (left() < DETAIL_MIN) layout.summary = false;
+  // The sidebar goes first: the summary pane is the one people open on purpose.
   if (left() < DETAIL_MIN) layout.sidebar = false;
+  if (left() < DETAIL_MIN) layout.summary = false;
 
   const clamp = (v: number, r: { min: number; max: number }) => Math.round(Math.min(r.max, Math.max(r.min, v)));
   /** Room left for one pane once the others and the transcript have theirs. */

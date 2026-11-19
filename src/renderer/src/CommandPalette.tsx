@@ -130,7 +130,8 @@ function PaletteBody({
             </button>
           </li>
         ))}
-        {!items.length && <li className="empty">{t("palette.noMatch", { query })}</li>}
+        {/* No verdict while this query's meetings are still on their way. */}
+        {!items.length && results?.query === query && <li className="empty">{t("palette.noMatch", { query })}</li>}
       </ul>
       <div className="palette__foot">
         <span>

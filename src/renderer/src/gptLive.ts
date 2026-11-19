@@ -31,13 +31,24 @@ export function startGptLive(
   startedAt: number,
   meetingId: number,
   onEvent: (track: Track, event: LiveEvent) => void,
+  /** The first session of a track is up; audio before `atSec` of the recording never reached it. */
+  onOpened: (track: Track, atSec: number) => void = () => {},
 ): () => void {
-  const stops = streams.map(([track, stream]) => keepAlive(stream, startedAt, meetingId, (e) => onEvent(track, e)));
+  const stops = streams.map(([track, stream]) =>
+    keepAlive(stream, startedAt, meetingId, (e) => onEvent(track, e), (at) => onOpened(track, at)),
+  );
   return () => stops.forEach((stop) => stop());
 }
 
 /** Keeps one track's session open until stopped, reconnecting after a drop. */
-function keepAlive(stream: MediaStream, startedAt: number, meetingId: number, emit: (e: LiveEvent) => void) {
+function keepAlive(
+  stream: MediaStream,
+  startedAt: number,
+  meetingId: number,
+  emit: (e: LiveEvent) => void,
+  onOpened: (atSec: number) => void,
+) {
+  let opened = false;
   let stopped = false;
   let failures = 0;
   let generation = 0;
@@ -47,7 +58,11 @@ function keepAlive(stream: MediaStream, startedAt: number, meetingId: number, em
     const gen = ++generation;
     try {
       stopSession = await session(stream, startedAt, gen, meetingId, emit, {
-        working: () => (failures = 0),
+        working: (atSec) => {
+          failures = 0;
+          if (!opened) onOpened(atSec);
+          opened = true;
+        },
         lost: () => {
           if (stopped || gen !== generation) return;
           emit({ type: "reconnect" });
@@ -138,7 +153,7 @@ async function session(
   gen: number,
   meetingId: number,
   emit: (e: LiveEvent) => void,
-  on: { working: () => void; lost: () => void },
+  on: { working: (atSec: number) => void; lost: () => void },
 ) {
   const pc = new RTCPeerConnection();
   // A copy of the track, so ending the session never stops the recorder's own capture.
@@ -179,7 +194,7 @@ async function session(
     const turn = e.turn;
     if (e.type === "session.started") {
       if (!anchored) offset = (Date.now() - startedAt) / 1000;
-      on.working();
+      on.working(offset);
     } else if (turn && e.type === "turn.created" && turn.role === "user") {
       userTurns.add(turn.id);
       if (turn.transcript) add(turn.id, turn.transcript, turn);
@@ -228,12 +243,37 @@ export function liveCaptionHooks(meetingId: number, live: { provider: string; mo
   let stopGptLive: (() => void) | null = null;
   let stopped = false;
   const gpt = live.provider === "qgrid" && live.model === GPT_LIVE_MODEL;
+  // A GPT-Live session takes a second or two to connect, and what is said before then never
+  // reaches it. Each track's audio is kept until its session is up; that opening stretch is then
+  // transcribed on its own (as a file) so the first words are not lost.
+  const opening = new Map<Track, Int16Array[]>();
+  const sendOpening = (track: Track, untilSec = Infinity) => {
+    const frames = opening.get(track);
+    opening.set(track, []);
+    if (!frames?.length) return;
+    const pcm = concat(frames).subarray(0, Math.round(untilSec * 16000) || undefined);
+    if (hasSpeech(pcm)) window.api.transcribeOpening(meetingId, track, pcm);
+  };
   const options: Pick<RecordingOptions, "onFrame" | "onStreams"> = gpt
     ? {
         onStreams: (streams) => {
           if (stopped) return;
+          for (const [track] of streams) opening.set(track, []);
           // The recorder's clock starts here, so caption times line up with the saved audio.
-          stopGptLive = startGptLive(streams, Date.now(), meetingId, (track, e) => window.api.sendLiveEvent(meetingId, track, e));
+          stopGptLive = startGptLive(
+            streams,
+            Date.now(),
+            meetingId,
+            (track, e) => window.api.sendLiveEvent(meetingId, track, e),
+            (track, atSec) => {
+              sendOpening(track, atSec);
+              opening.delete(track);
+            },
+          );
+        },
+        onFrame: (track, pcm) => {
+          const frames = opening.get(track);
+          if (frames && frames.length < OPENING_MAX_FRAMES) frames.push(pcm);
         },
       }
     : { onFrame: (track, pcm) => window.api.sendLiveAudio(meetingId, track, pcm) };
@@ -241,7 +281,34 @@ export function liveCaptionHooks(meetingId: number, live: { provider: string; mo
     options,
     stop() {
       stopped = true;
+      // A recording stopped before its session connected: all of it is opening audio.
+      for (const track of [...opening.keys()]) sendOpening(track);
+      opening.clear();
       stopGptLive?.();
     },
   };
+}
+
+/** At most 30 s of 100 ms frames are kept while a session connects. */
+const OPENING_MAX_FRAMES = 300;
+
+function concat(frames: Int16Array[]) {
+  const out = new Int16Array(frames.reduce((n, f) => n + f.length, 0));
+  let at = 0;
+  for (const f of frames) {
+    out.set(f, at);
+    at += f.length;
+  }
+  return out;
+}
+
+/** Any 100 ms stretch above the recorder's silence level. */
+function hasSpeech(pcm: Int16Array) {
+  for (let i = 0; i < pcm.length; i += 1600) {
+    let sq = 0;
+    const end = Math.min(pcm.length, i + 1600);
+    for (let j = i; j < end; j++) sq += (pcm[j] / 32768) ** 2;
+    if (Math.sqrt(sq / (end - i)) >= 0.01) return true;
+  }
+  return false;
 }
