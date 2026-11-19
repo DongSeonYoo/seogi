@@ -23,6 +23,8 @@ export type MeetingRow = {
   starred: boolean;
   /** Recording length; for meetings before it was stored, the last utterance's start. */
   durationSec: number;
+  /** At least one line was transcribed: something to summarize or export. */
+  hasTranscript: boolean;
   /** The summary overview, for the list's second line. */
   preview: string | null;
 };

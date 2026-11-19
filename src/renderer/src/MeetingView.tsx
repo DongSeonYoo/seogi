@@ -53,6 +53,7 @@ export function MeetingView({
   const i18n = useI18n();
   const { t } = i18n;
   const speakers = useMemo(() => [...new Set(m.utterances.map((u) => speakerName(u, t)))], [m.utterances, t]);
+  const shownLines = useMemo(() => joinSplitSentences(m.utterances).length, [m.utterances]);
   // An unrecorded session also takes an audio file, dropped anywhere on the transcript side.
   const importing = useImportProgress(m.id);
   const canImport = m.status === "new" && !recording && !importing;
@@ -230,7 +231,8 @@ export function MeetingView({
           <span>
             {[
               m.durationSec > 0 && duration(m.durationSec, i18n),
-              t("detail.utterances", { n: m.utterances.length }),
+              // Counted as shown: pieces of one sentence are joined into one line on screen.
+              shownLines === 1 ? t("detail.utterance") : t("detail.utterances", { n: shownLines }),
               speakers.length > 1 && speakers.join(" · "),
             ]
               .filter(Boolean)

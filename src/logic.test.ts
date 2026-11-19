@@ -777,3 +777,15 @@ test("GPT-Live waits for the opening boundary and stops converting at that bound
   stoppedEarly.stop();
   assert.deepEqual(received, [2000, 480000, 1664]);
 });
+
+test("caption times past a recording's end are pulled back inside it", async () => {
+  const { openDb } = await import("./main/db.ts");
+  const db = openDb(":memory:");
+  const id = db.createMeeting("t");
+  db.startRecording(id);
+  db.raw.prepare("UPDATE meetings SET started_at = '2026-01-01T00:00:00.000Z', ended_at = '2026-01-01T00:00:07.505Z' WHERE id = ?").run(id);
+  db.addUtterances(id, "mic", [{ startSec: 2, text: "a" }, { startSec: 7.911, text: "b" }]);
+  db.clampUtterances(id);
+  const times = db.getMeeting(id)!.utterances.map((u) => Math.round(u.startSec * 1000) / 1000);
+  assert.deepEqual(times, [2, 7.005]);
+});

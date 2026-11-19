@@ -401,12 +401,12 @@ export function App() {
       { id: "star", label: m.starred ? t("action.unstar") : t("action.star") },
       { label: t("action.moveTo"), submenu: folders },
       // Only a finished meeting has a transcript to summarize or export.
-      { id: "summarize", label: t("action.summarize"), enabled: m.status === "done" && summarizing === null },
+      { id: "summarize", label: t("action.summarize"), enabled: m.status === "done" && m.hasTranscript && summarizing === null },
       {
         label: t("action.export"),
         submenu: [
-          { id: "export:md", label: t("action.exportMarkdown"), enabled: m.status === "done" },
-          { id: "export:txt", label: t("action.exportText"), enabled: m.status === "done" },
+          { id: "export:md", label: t("action.exportMarkdown"), enabled: m.status === "done" && m.hasTranscript },
+          { id: "export:txt", label: t("action.exportText"), enabled: m.status === "done" && m.hasTranscript },
         ],
       },
       { type: "separator" },

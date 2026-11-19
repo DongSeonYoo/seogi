@@ -227,6 +227,7 @@ app.whenReady().then(async () => {
     db.setStatus(id, "processing");
     notify(id);
     const error = await stopLive(id);
+    db.clampUtterances(id);
     if (db.hasUtterances(id)) db.setStatus(id, "done", error);
     else db.setStatus(id, "error", error ?? storedMessage("error.nothingTranscribed"));
     notify(id);
@@ -542,7 +543,8 @@ function gptLiveInstructions(language: string, glossary: string) {
   const name = { ko: "Korean", en: "English", ja: "Japanese" }[language];
   return [
     "You are listening to a meeting only so it can be transcribed. Stay completely silent: never speak, never answer, never ask anything, and never hand anything off.",
-    name && `The meeting is in ${name}. Transcribe what people say in ${name}, exactly as spoken; do not translate.`,
+    name &&
+      `The meeting is in ${name}. Transcribe what people say in ${name}, exactly as spoken, in ${name} script only; do not translate, and never switch to another language or script (a reconnect starts mid-meeting: keep ${name}).`,
     glossary.trim() && `Names and terms that come up: ${glossary.trim()}.`,
   ]
     .filter(Boolean)

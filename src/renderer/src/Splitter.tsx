@@ -41,6 +41,8 @@ export function useLayout() {
   const left = () => windowW - (layout.sidebar ? layout.sidebarW : 0) - layout.listW - (layout.summary ? layout.summaryW : 0);
   // The sidebar goes first: the summary pane is the one people open on purpose.
   if (left() < DETAIL_MIN) layout.sidebar = false;
+  // Then the summary narrows to its minimum (on screen only), and hides only if that is not enough.
+  if (layout.summary && left() < DETAIL_MIN) layout.summaryW = Math.max(SUMMARY_W.min, layout.summaryW - (DETAIL_MIN - left()));
   if (left() < DETAIL_MIN) layout.summary = false;
 
   const clamp = (v: number, r: { min: number; max: number }) => Math.round(Math.min(r.max, Math.max(r.min, v)));

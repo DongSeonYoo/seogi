@@ -15,6 +15,7 @@ type Stage = "transcript" | "merge";
 type Generate = (stage: Stage, prompt: string) => Promise<CitedNotes>;
 
 export const SUMMARY_OUTPUT = 4096;
+const MAX_LINKS = 3;
 /**
  * Transcript bytes per call. The catalog reports no context sizes, and the summary models in use
  * take 128K+ tokens; Korean runs about 4–5 UTF-8 bytes per token (English about 4), so 400 KB is
@@ -134,8 +135,9 @@ export async function summarizeParts(lines: Utterance[], budget: number, generat
     notes = merged;
   }
   const [n] = notes;
+  // At most three links per point, the earliest: dozens after one sentence bury the text.
   const stamp = (text: string, ids: number[]) =>
-    [text, ...new Set(ids.map((id) => `[${clock(lines[id - 1].startSec)}]`))].join(" ");
+    [text, ...[...new Set(ids.map((id) => `[${clock(lines[id - 1].startSec)}]`))].slice(0, MAX_LINKS)].join(" ");
   return {
     title: n.title,
     overview: n.overview.map((p) => stamp(p.text, p.ids)).join(" "),

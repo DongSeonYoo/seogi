@@ -1329,3 +1329,15 @@
   background: var(--color-accent-soft);
   transition: background var(--dur-micro) var(--ease-out);
 }
+
+/* A narrow window must still show the file's language, not only the select's arrow. */
+.import-card__actions > .select {
+  min-width: 112px;
+}
+
+/* The speaker list at the right of the status bar gives way with an ellipsis, not a clip. */
+.statusbar > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

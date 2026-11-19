@@ -87,7 +87,8 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
   const live = "m.deleted_at IS NULL";
   const select = `SELECT m.*, f.id AS live_folder_id,
       COALESCE((julianday(m.ended_at) - julianday(m.started_at)) * 86400,
-               (SELECT MAX(start_sec) FROM utterances u WHERE u.meeting_id = m.id), 0) AS duration_sec
+               (SELECT MAX(start_sec) FROM utterances u WHERE u.meeting_id = m.id), 0) AS duration_sec,
+      EXISTS (SELECT 1 FROM utterances u WHERE u.meeting_id = m.id) AS has_transcript
     FROM meetings m LEFT JOIN folders f ON f.id = m.folder_id AND f.deleted_at IS NULL`;
 
   const toRow = (r: Record<string, unknown>): MeetingRow => ({
@@ -100,6 +101,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
     folderId: r.live_folder_id === null ? null : Number(r.live_folder_id),
     starred: !!r.starred,
     durationSec: Number(r.duration_sec ?? 0),
+    hasTranscript: Boolean(r.has_transcript),
     preview: r.summary ? summaryPreview(String(r.summary)) : null,
   });
 
@@ -175,6 +177,16 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
     },
 
     /** The first stop fixes the length; a resummary keeps it. */
+    /** Live caption times can run a little past the recording's end (a reconnect's late turn). */
+    clampUtterances(id: number) {
+      db.prepare(
+        `UPDATE utterances SET start_sec = (
+           SELECT MAX(0, (julianday(ended_at) - julianday(started_at)) * 86400 - 0.5) FROM meetings WHERE id = ?1)
+         WHERE meeting_id = ?1 AND start_sec > (
+           SELECT (julianday(ended_at) - julianday(started_at)) * 86400 FROM meetings WHERE id = ?1 AND ended_at IS NOT NULL)`,
+      ).run(id);
+    },
+
     setEnded(id: number) {
       db.prepare("UPDATE meetings SET ended_at = COALESCE(ended_at, ?) WHERE id = ?").run(new Date().toISOString(), id);
     },
