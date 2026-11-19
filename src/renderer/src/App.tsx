@@ -15,6 +15,8 @@ import { CommandPalette, type PaletteAction } from "./CommandPalette";
 import { MeetingList } from "./MeetingList";
 import { MeetingView } from "./MeetingView";
 import { useT } from "./i18n";
+import { preparingAudio } from "./importAudio";
+import { encodeOpus } from "./opus";
 import { liveCaptionHooks } from "./gptLive";
 import { NO_SYSTEM_AUDIO, startRecording } from "./recorder";
 import { Sidebar } from "./Sidebar";
@@ -163,7 +165,7 @@ export function App() {
     setNotice(null);
     const { recording: options, live: liveModel } = await api.getSettings();
     // Records into the open session if it has not been recorded yet, else into a new one.
-    const session = current?.status === "new" ? current : null;
+    const session = current?.status === "new" && !preparingAudio(current.id) ? current : null;
     const id = session?.id ?? (await api.createMeeting(typeof view === "number" ? view : null));
     if (!(await api.startMeeting(id))) return;
     // Recording from the press on: the toolbar flips to Stop while capture (and its permission
@@ -177,13 +179,20 @@ export function App() {
     if (cancelRef.current) return void stop(); // pressed again before this point
     const captions = liveCaptionHooks(id, { provider: liveModel.provider, model: session?.liveModel ?? liveModel.model });
     try {
+      let writes = Promise.resolve();
       const stopRecording = await startRecording(
-        (track, startSec, pcm) => api.sendChunk({ meetingId: id, track, startSec, pcm }),
+        (track, startSec, pcm) => {
+          writes = writes.then(async () => {
+            const ogg = await encodeOpus(pcm);
+            api.sendChunk({ meetingId: id, track, startSec, ...(ogg ? { ogg } : { pcm }) });
+          });
+        },
         { ...options, onSystemSilence: setSystemSilent, ...captions.options },
       );
       const stopCapture = async () => {
         captions.stop();
         await stopRecording();
+        await writes;
       };
       // Stopped while capture was starting: the meeting already ended, so end the capture too.
       if (recordingRef.current !== rec) return void stopCapture();
@@ -239,7 +248,7 @@ export function App() {
   }
 
   const current = detail && detail.id === selected ? detail : null;
-  const busy = (m: { status: string } | null) => m?.status === "recording" || m?.status === "processing";
+  const busy = (m: MeetingRow | null) => !!m && (m.status === "recording" || m.status === "processing" || preparingAudio(m.id));
 
   /** Every command, once: the menu bar, toolbar, context menus and ⌘K all run these. */
   const actions: Record<ActionId, PaletteAction> = {

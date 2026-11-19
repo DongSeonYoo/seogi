@@ -114,7 +114,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
 
     /** An imported file is being transcribed; only an unrecorded session takes one. */
     startImport(id: number): boolean {
-      return db.prepare("UPDATE meetings SET status = 'processing' WHERE id = ? AND status = 'new'").run(id).changes > 0;
+      return db.prepare("UPDATE meetings SET status = 'processing' WHERE id = ? AND status = 'new' AND deleted_at IS NULL").run(id).changes > 0;
     },
 
     /** The import is done: its length is the file's, counted from when the session was made. */

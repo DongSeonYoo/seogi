@@ -110,7 +110,8 @@ export const GPT_LIVE_TAIL_MS = 2000;
 export const LIVE_TEST_ID = 0;
 export type LiveView = { lines: LiveLine[]; error: string | null };
 
-export type Chunk = { meetingId: number; track: Track; startSec: number; pcm: Int16Array };
+export type Chunk = { meetingId: number; track: Track; startSec: number } & ({ ogg: Uint8Array } | { pcm: Int16Array });
+export const IMPORT_CHUNK_SEC = 30;
 
 export type LiveProvider = "qgrid" | "openai";
 export type SummaryProvider = "qgrid" | "openai" | "anthropic";
@@ -154,7 +155,7 @@ export type Settings = {
 export type StoredSettings = Omit<Settings, "hasKey">;
 
 /** Where an import is: fetching the speaker models once, finding speakers, then transcribing turns. */
-export type ImportProgress = { phase: "models" | "speakers" } | { phase: "transcribe"; done: number; total: number };
+export type ImportProgress = { phase: "audio" | "models" | "speakers" } | { phase: "transcribe"; done: number; total: number };
 
 export type ConnectionResult = { ok: true; ms: number } | { ok: false; error: string };
 
@@ -192,7 +193,7 @@ export type Api = {
    * speaker turn is transcribed. Resolves once it has started; progress comes via onImportProgress.
    */
   /** `language`: the file's spoken language, or "auto" to let the transcriber detect it. */
-  importFile(id: number, pcm: Int16Array, language: string): Promise<boolean>;
+  importFile(id: number, pcm: Int16Array, language: string, ogg: (Uint8Array | null)[]): Promise<boolean>;
   /** null: the import of `id` ended. */
   onImportProgress(listener: (id: number, progress: ImportProgress | null) => void): () => void;
   /** A session's own live model (null: Settings) or glossary (empty: the shared one). */

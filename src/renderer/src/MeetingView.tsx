@@ -52,7 +52,8 @@ export function MeetingView({
   const { t } = i18n;
   const speakers = useMemo(() => [...new Set(m.utterances.map((u) => speakerName(u, t)))], [m.utterances, t]);
   // An unrecorded session also takes an audio file, dropped anywhere on the transcript side.
-  const canImport = m.status === "new" && !recording;
+  const importing = useImportProgress(m.id);
+  const canImport = m.status === "new" && !recording && !importing;
   const [file, setFile] = useState<AudioFile | null>(null);
   const [reading, setReading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -63,7 +64,6 @@ export function MeetingView({
   // (Korean turns came back as Japanese), so it is the fallback, not the default.
   const [meetingLanguage, setMeetingLanguage] = useState("auto");
   useEffect(() => void window.api.getSettings().then((s) => setMeetingLanguage(s.language)), []);
-  const importing = useImportProgress(m.id);
   // A [mm:ss] clicked in the summary; n makes a second click on the same time scroll again.
   const [focus, setFocus] = useState<{ sec: number; n: number } | null>(null);
   /** Appends a transcript line, with its time, to the end of the summary. */
@@ -113,7 +113,7 @@ export function MeetingView({
           void take(f);
         }}
       >
-        {(m.status === "new" || recording) && (
+        {(canImport || recording) && (
           <div className="detail__head">
             {m.status === "new" && !recording && <SessionOptions meeting={m} />}
             <div className="capsule">
@@ -192,7 +192,7 @@ export function MeetingView({
             <span>
               {importing.phase === "transcribe"
                 ? t("import.progress", { done: importing.done, total: importing.total })
-                : t(importing.phase === "models" ? "import.models" : "import.speakers")}
+                : t(importing.phase === "audio" ? "import.audio" : importing.phase === "models" ? "import.models" : "import.speakers")}
             </span>
           </p>
         )}

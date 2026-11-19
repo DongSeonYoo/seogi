@@ -1,7 +1,7 @@
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, protocol, session, shell, systemPreferences } from "electron";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { GPT_LIVE_MODEL, GPT_LIVE_TAIL_MS, LIVE_TEST_ID, type LiveEvent } from "../shared/types";
+import { GPT_LIVE_MODEL, GPT_LIVE_TAIL_MS, IMPORT_CHUNK_SEC, LIVE_TEST_ID, type LiveEvent } from "../shared/types";
 import type {
   AppInfo,
   AudioRef,
@@ -31,6 +31,7 @@ import { LiveCaptions, openLiveStream } from "./live";
 import { appMenu } from "./menu";
 import { listModels } from "./models";
 import { openSettings } from "./settings";
+import { CHUNK_FILE, playbackResponse } from "./playback";
 import { SAMPLE_RATE, toFloat32, toWav } from "./wav";
 
 // Pinned to the original name so meetings and keys survive any change to the display name.
@@ -45,16 +46,14 @@ let settingsWin: BrowserWindow | null = null;
 const broadcast = (channel: string, ...args: unknown[]) =>
   BrowserWindow.getAllWindows().forEach((w) => w.webContents.send(channel, ...args));
 
-// Chunk WAVs are served to the renderer as seogi-audio://audio/<meetingId>/<file>.
+// Playback chunks are served to the renderer as seogi-audio://audio/<meetingId>/<file>.
 const AUDIO_SCHEME = "seogi-audio";
-/** Imported files: saved for playback in pieces this long, transcribed this many turns at once. */
-const IMPORT_CHUNK_SEC = 30;
+/** Imported files are transcribed this many turns at once. */
 const IMPORT_PARALLEL = 5;
 /** Audio added either side of a speaker turn before it is transcribed. */
 const TURN_PAD_SEC = 0.2;
 /** How far before a line's time its playback starts. */
 const PLAYBACK_LEAD_SEC = 1;
-const CHUNK_FILE = /^(mic|system)-(\d+(?:\.\d+)?)\.wav$/;
 protocol.registerSchemesAsPrivileged([
   { scheme: AUDIO_SCHEME, privileges: { stream: true, supportFetchAPI: true } },
 ]);
@@ -141,10 +140,13 @@ app.whenReady().then(async () => {
   }
 
   /** Audio is kept for playback only; the transcript comes from the live captions. */
-  function saveChunk({ meetingId, track, startSec, pcm }: Chunk) {
+  function saveChunk(chunk: Chunk) {
+    const { meetingId, track, startSec } = chunk;
     const dir = path.join(audioDir, String(meetingId));
     mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, `${track}-${startSec.toFixed(1)}.wav`), toWav(pcm));
+    const name = `${track}-${startSec.toFixed(1)}`;
+    if ("ogg" in chunk) writeFileSync(path.join(dir, name + ".ogg"), chunk.ogg);
+    else writeFileSync(path.join(dir, name + ".wav"), toWav(chunk.pcm));
   }
 
   /** Stops a meeting's captions once they have stored the last words; resolves the drops seen. */
@@ -228,10 +230,14 @@ app.whenReady().then(async () => {
   // line gets its voice and the time that voice started; without diarization (no models, no
   // network) it falls back to plain 30 s windows with no speakers.
   const importProgress = (id: number, p: ImportProgress | null) => broadcast("import-progress", id, p);
-  async function importFile(id: number, pcm: Int16Array, language: string) {
+  async function importFile(id: number, pcm: Int16Array, language: string, ogg: (Uint8Array | null)[]) {
     const durationSec = pcm.length / SAMPLE_RATE;
-    for (let at = 0; at < pcm.length; at += IMPORT_CHUNK_SEC * SAMPLE_RATE)
-      saveChunk({ meetingId: id, track: "system", startSec: at / SAMPLE_RATE, pcm: pcm.subarray(at, at + IMPORT_CHUNK_SEC * SAMPLE_RATE) });
+    const chunkSamples = IMPORT_CHUNK_SEC * SAMPLE_RATE;
+    for (let at = 0; at < pcm.length; at += chunkSamples) {
+      const encoded = ogg[at / chunkSamples];
+      const data = encoded ? { ogg: encoded } : { pcm: pcm.subarray(at, at + chunkSamples) };
+      saveChunk({ meetingId: id, track: "system", startSec: at / SAMPLE_RATE, ...data });
+    }
 
     let turns: { start: number; end: number; speaker?: number }[];
     try {
@@ -274,10 +280,10 @@ app.whenReady().then(async () => {
     importProgress(id, null);
     notify(id);
   }
-  ipcMain.handle("importFile", (_e, id: number, pcm: Int16Array, language: string) => {
+  ipcMain.handle("importFile", (_e, id: number, pcm: Int16Array, language: string, ogg: (Uint8Array | null)[]) => {
     if (!db.startImport(id)) return false;
     notify(id);
-    void importFile(id, pcm, language);
+    void importFile(id, pcm, language, ogg);
     return true;
   });
   ipcMain.handle("abortMeeting", async (_e, id: number) => {
@@ -372,14 +378,9 @@ app.whenReady().then(async () => {
   protocol.handle(AUDIO_SCHEME, (req) => {
     const [, id, file] = new URL(req.url).pathname.split("/");
     if (!/^\d+$/.test(id ?? "") || !CHUNK_FILE.test(file ?? "")) return new Response(null, { status: 404 });
-    // Whole file with its length: a streamed file: response has no duration and seeks unreliably.
-    // Chunks are at most ~1 MB (35 s of 16 kHz PCM16).
     const full = path.join(audioDir, id, file);
     if (!existsSync(full)) return new Response(null, { status: 404 });
-    const body = readFileSync(full);
-    return new Response(body, {
-      headers: { "content-type": "audio/wav", "content-length": String(body.byteLength) },
-    });
+    return playbackResponse(readFileSync(full), file, req.headers.get("range"));
   });
   ipcMain.handle("getSettings", () => settings.view());
   ipcMain.handle("patchSettings", (_e, patch: Partial<StoredSettings>) => {

@@ -297,3 +297,75 @@ test("speaker turns join a voice's close segments, cap their length, and number 
     { start: 20.5, end: 40, speaker: 2 },
   ]);
 });
+
+test("Ogg Opus pages round-trip headers, packet lacing, CRCs and trimmed 48 kHz granules", async () => {
+  const { muxOpus } = await import("./renderer/src/opus.ts");
+  const packets = Array.from({ length: 26 }, (_, i) => new Uint8Array(i ? 30 : 255).fill(i + 1));
+  const bytes = muxOpus(packets, 8160, 312);
+  const table = Array.from({ length: 256 }, (_, index) => {
+    let value = index << 24;
+    for (let bit = 0; bit < 8; bit++) value = (value << 1) ^ (value < 0 ? 0x04c11db7 : 0);
+    return value >>> 0;
+  });
+  const parsed: Uint8Array[] = [];
+  const flags = [], granules = [], serials = [];
+  for (let at = 0; at < bytes.length;) {
+    const view = new DataView(bytes.buffer, at);
+    assert.equal(new TextDecoder().decode(bytes.subarray(at, at + 4)), "OggS");
+    assert.equal(view.getUint8(4), 0);
+    assert.equal(view.getUint32(18, true), flags.length);
+    flags.push(view.getUint8(5));
+    granules.push(Number(view.getBigUint64(6, true)));
+    serials.push(view.getUint32(14, true));
+    const lacing = bytes.subarray(at + 27, at + 27 + view.getUint8(26));
+    let pos = at + 27 + lacing.length;
+    let start = pos;
+    for (const n of lacing) {
+      pos += n;
+      if (n < 255) {
+        parsed.push(bytes.subarray(start, pos));
+        start = pos;
+      }
+    }
+    assert.equal(start, pos);
+    const expected = view.getUint32(22, true);
+    const page = bytes.slice(at, pos);
+    page.fill(0, 22, 26);
+    const crc = page.reduce((sum, n) => ((sum << 8) ^ table[(sum >>> 24) ^ n]) >>> 0, 0);
+    assert.equal(crc, expected);
+    at = pos;
+  }
+  assert.equal(new Set(serials).size, 1);
+  assert.deepEqual(flags, [2, 0, 0, 4]);
+  assert.deepEqual(granules, [0, 0, 24000, 24792]);
+  const [head, tags, ...audio] = parsed;
+  assert.equal(Buffer.from(head.subarray(0, 8)).toString(), "OpusHead");
+  assert.deepEqual([...head.subarray(8, 12)], [1, 1, 56, 1]);
+  assert.equal(Buffer.from(head).readUInt32LE(12), 16000);
+  assert.equal(Buffer.from(tags.subarray(0, 8)).toString(), "OpusTags");
+  assert.equal(Buffer.from(tags).readUInt32LE(8), 5);
+  assert.equal(Buffer.from(tags.subarray(12, 17)).toString(), "Seogi");
+  assert.equal(Buffer.from(tags).readUInt32LE(17), 0);
+  assert.deepEqual(audio, packets);
+});
+
+test("playback serves both chunk formats and byte ranges for seeking", async () => {
+  const { CHUNK_FILE, playbackResponse } = await import("./main/playback.ts");
+  const bytes = Uint8Array.of(1, 2, 3, 4);
+  for (const [name, mime] of [["mic-0.0.wav", "audio/wav"], ["system-30.0.ogg", "audio/ogg"]]) {
+    assert.ok(CHUNK_FILE.test(name));
+    const response = playbackResponse(bytes, name, "bytes=2-");
+    assert.equal(response.status, 206);
+    assert.equal(response.headers.get("content-type"), mime);
+    assert.equal(response.headers.get("content-range"), "bytes 2-3/4");
+    assert.deepEqual(await response.bytes(), Uint8Array.of(3, 4));
+  }
+  assert.equal(playbackResponse(bytes, "mic-0.0.wav", null).status, 200);
+  assert.equal(playbackResponse(bytes, "mic-0.0.ogg", "bytes=4-").status, 416);
+});
+
+test("unavailable Opus encoding selects the PCM fallback", async () => {
+  const { encodeOpus } = await import("./renderer/src/opus.ts");
+  // The Node test environment has no AudioEncoder.
+  assert.equal(await encodeOpus(new Int16Array(320)), null);
+});

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import type { ImportProgress } from "../../shared/types";
+import { IMPORT_CHUNK_SEC, type ImportProgress } from "../../shared/types";
+import { encodeOpus } from "./opus";
 
 /** The audio files a session takes; Chromium decodes all of them, so nothing extra ships. */
 export const IMPORT_EXTENSIONS = ["m4a", "mp4", "mp3", "wav"];
@@ -50,17 +51,29 @@ export async function readAudioFile(file: File): Promise<AudioFile> {
 /** Each import's progress, kept here so a view that opens mid-import still shows it. */
 const progress = new Map<number, ImportProgress>();
 const listeners = new Set<() => void>();
-window.api.onImportProgress((id, p) => {
+function setProgress(id: number, p: ImportProgress | null) {
   if (p) progress.set(id, p);
   else progress.delete(id);
   listeners.forEach((l) => l());
-});
+}
+window.api.onImportProgress(setProgress);
+
+export const preparingAudio = (id: number) => progress.get(id)?.phase === "audio";
 
 /** Hands the decoded file to the app, which tells speakers apart and transcribes each turn. */
 export async function importAudio(meetingId: number, file: AudioFile, language: string) {
-  const pcm = new Int16Array(file.samples.length);
-  for (let i = 0; i < pcm.length; i++) pcm[i] = Math.max(-1, Math.min(1, file.samples[i])) * 0x7fff;
-  await window.api.importFile(meetingId, pcm, language);
+  if (progress.has(meetingId)) return;
+  setProgress(meetingId, { phase: "audio" });
+  try {
+    const pcm = new Int16Array(file.samples.length);
+    for (let i = 0; i < pcm.length; i++) pcm[i] = Math.max(-1, Math.min(1, file.samples[i])) * 0x7fff;
+    const ogg = [];
+    const size = IMPORT_CHUNK_SEC * RATE;
+    for (let i = 0; i < pcm.length; i += size) ogg.push(await encodeOpus(pcm.subarray(i, i + size)));
+    await window.api.importFile(meetingId, pcm, language, ogg);
+  } finally {
+    if (preparingAudio(meetingId)) setProgress(meetingId, null);
+  }
 }
 
 /** The progress of a session's import while it runs. */
