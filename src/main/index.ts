@@ -19,7 +19,7 @@ import type {
   StoredSettings,
   Track,
 } from "../shared/types";
-import { INTL_LOCALE, storedMessage, translator, type Locale } from "../shared/i18n";
+import { INTL_LOCALE, showStored, storedMessage, translator, type Locale } from "../shared/i18n";
 import { meetingDocument, summaryMarkdown } from "../shared/summary";
 import { joinSplitSentences } from "../shared/transcript";
 import { glossaryPrompt, isPromptEcho, splitUtterances, summarize, testConnection, transcribeFile } from "./ai";
@@ -43,7 +43,7 @@ const modelsDir = path.join(dataDir, "models");
 let win: BrowserWindow | null = null;
 let settingsWin: BrowserWindow | null = null;
 
-/** Every window hears library and live-caption events (the settings window runs its own test). */
+/** Shared settings and library events go to both windows. */
 const broadcast = (channel: string, ...args: unknown[]) =>
   BrowserWindow.getAllWindows().forEach((w) => w.webContents.send(channel, ...args));
 
@@ -96,14 +96,36 @@ app.whenReady().then(async () => {
   app.on("before-quit", purge);
 
   /** `tailMs`: how long a stop waits for captions the renderer still sends (GPT-Live). */
-  const live = new Map<number, { captions: LiveCaptions; tailMs: number }>();
-  const sendLive = (id: number) => broadcast("live", id, live.get(id)?.captions.view() ?? { lines: [], error: null });
+  type LiveSession = {
+    captions: LiveCaptions; tailMs: number; token?: number;
+    openings: Set<Promise<void>>; abort: AbortController; openingError: string | null;
+    stopping?: Promise<void>;
+  };
+  const live = new Map<number, LiveSession>();
+  let testToken = 0;
+  const sessionFor = (id: number, token?: number) => {
+    const entry = live.get(id);
+    return entry?.token === token ? entry : undefined;
+  };
+  function openSettingsWindow() {
+    showSettingsWindow(() => {
+      live.get(LIVE_TEST_ID)?.abort.abort();
+      void stopLive(LIVE_TEST_ID);
+    });
+  }
+  const sendLive = (id: number, token?: number) => {
+    const entry = sessionFor(id, token);
+    if (!entry) return;
+    const view = entry.captions.view();
+    if (entry.openingError) view.error = showStored(entry.openingError, tr());
+    (id === LIVE_TEST_ID ? settingsWin : win)?.webContents.send("live", id, view, token);
+  };
 
   /**
    * Live captions are the meeting record: each finished segment is stored as it comes. The settings
    * test (LIVE_TEST_ID) stores nothing. `override` picks another live model for that test.
    */
-  function startLive(id: number, override?: Settings["live"]) {
+  function startLive(id: number, override?: Settings["live"], token?: number) {
     const s = settings.get();
     const { provider, model } = override ?? { provider: s.live.provider, model: liveModelFor(id) };
     const glossary = glossaryFor(id);
@@ -120,7 +142,7 @@ app.whenReady().then(async () => {
             : { provider: "openai", apiKey: settings.key("openai"), model, language, prompt, t: tr() },
           onEvent,
         ),
-      () => sendLive(id),
+      () => sendLive(id, token),
       id === LIVE_TEST_ID
         ? null
         : (track, segment) => {
@@ -129,7 +151,10 @@ app.whenReady().then(async () => {
             storeUtterances(id, track, [segment]);
           },
     );
-    live.set(id, { captions, tailMs: rendererDriven ? GPT_LIVE_TAIL_MS + 1000 : 0 });
+    live.set(id, {
+      captions, token, tailMs: rendererDriven ? GPT_LIVE_TAIL_MS + 1000 : 0,
+      openings: new Set(), abort: new AbortController(), openingError: null,
+    });
   }
 
   /** A session's glossary overrides the shared one; the settings test uses the shared one. */
@@ -150,24 +175,45 @@ app.whenReady().then(async () => {
     else writeFileSync(path.join(dir, name + ".wav"), toWav(chunk.pcm));
   }
 
-  /** Stops a meeting's captions once they have stored the last words; resolves the drops seen. */
+  /** A provider can hang even after cancellation. Ignore its late result once the deadline passes. */
+  async function drainOpenings(entry: LiveSession) {
+    if (!entry.openings.size) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.all(entry.openings),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            entry.openingError = storedMessage("error.openingTimeout");
+            entry.abort.abort();
+            resolve();
+          }, 20_000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function stopLive(id: number) {
     const entry = live.get(id);
-    if (!entry) return 0;
-    await entry.captions.stop(entry.tailMs);
-    live.delete(id);
-    sendLive(id);
-    return entry.captions.drops;
+    if (!entry) return null;
+    await (entry.stopping ??= Promise.all([entry.captions.stop(entry.tailMs), drainOpenings(entry)]).then(() => {
+      if (live.get(id) !== entry) return;
+      sendLive(id, entry.token);
+      live.delete(id);
+      if (id !== LIVE_TEST_ID) win?.webContents.send("live", id, { lines: [], error: null });
+    }));
+    return entry.openingError ?? entry.captions.lastGap ?? (entry.captions.drops ? storedMessage("error.captionsDropped", { n: entry.captions.drops }) : null);
   }
 
   /** Ends a recording once its last captions are stored; summarizing is a separate step. */
   async function finish(id: number) {
     db.setStatus(id, "processing");
     notify(id);
-    const drops = await stopLive(id);
-    if (db.hasUtterances(id))
-      db.setStatus(id, "done", drops ? storedMessage("error.captionsDropped", { n: drops }) : null);
-    else db.setStatus(id, "error", storedMessage("error.nothingTranscribed"));
+    const error = await stopLive(id);
+    if (db.hasUtterances(id)) db.setStatus(id, "done", error);
+    else db.setStatus(id, "error", error ?? storedMessage("error.nothingTranscribed"));
     notify(id);
   }
 
@@ -288,13 +334,25 @@ app.whenReady().then(async () => {
     void importFile(id, pcm, language, ogg);
     return true;
   });
-  ipcMain.on("transcribeOpening", async (_e, id: number, track: Track, pcm: Int16Array) => {
-    try {
-      const t = await transcribeFile(settings, toWav(pcm), glossaryFor(id));
-      if (t.text) storeUtterances(id, track, splitUtterances(t, 0, pcm.length / SAMPLE_RATE));
-    } catch (e) {
-      console.warn("[seogi] opening audio not transcribed:", e);
-    }
+  ipcMain.handle("transcribeOpening", async (_e, id: number, track: Track, pcm: Int16Array, token?: number) => {
+    const entry = sessionFor(id, token);
+    if (!entry || entry.stopping) return;
+    const work = transcribeFile(settings, toWav(pcm), glossaryFor(id), undefined, entry.abort.signal)
+      .then((t) => {
+        if (!t.text || live.get(id) !== entry || entry.abort.signal.aborted) return;
+        const lines = splitUtterances(t, 0, pcm.length / SAMPLE_RATE);
+        if (id !== LIVE_TEST_ID) return storeUtterances(id, track, lines);
+        lines.forEach((line, i) => entry.captions.onEvent(track, {
+          type: "segment", id: `opening-${i}`, ...line, endSec: lines[i + 1]?.startSec ?? pcm.length / SAMPLE_RATE,
+        }));
+      })
+      .catch((e) => {
+        if (entry.abort.signal.aborted) return;
+        entry.openingError = storedMessage("error.openingAudio", { reason: e instanceof Error ? e.message : String(e) });
+        sendLive(id, token);
+      });
+    entry.openings.add(work);
+    try { await work; } finally { entry.openings.delete(work); }
   });
   ipcMain.handle("abortMeeting", async (_e, id: number) => {
     await stopLive(id);
@@ -302,22 +360,26 @@ app.whenReady().then(async () => {
     notify(id);
   });
   ipcMain.handle("startLiveTest", (_e, model?: Settings["live"]) => {
-    void live.get(LIVE_TEST_ID)?.captions.stop();
-    startLive(LIVE_TEST_ID, model);
-    sendLive(LIVE_TEST_ID);
+    const previous = live.get(LIVE_TEST_ID);
+    previous?.abort.abort();
+    void stopLive(LIVE_TEST_ID);
+    const token = ++testToken;
+    startLive(LIVE_TEST_ID, model, token);
+    return token;
   });
-  // The test's lines stay on screen after it stops, so its captions are not dropped here.
-  ipcMain.handle("stopLiveTest", async () => {
-    const entry = live.get(LIVE_TEST_ID);
-    await entry?.captions.stop(entry.tailMs);
+  ipcMain.handle("stopLiveTest", async (_e, token: number) => {
+    if (sessionFor(LIVE_TEST_ID, token)) await stopLive(LIVE_TEST_ID);
   });
-  ipcMain.on("liveAudio", (_e, id: number, track: Track, pcm: Int16Array) => live.get(id)?.captions.audio(track, pcm));
-  ipcMain.on("liveEvent", (_e, id: number, track: Track, event: LiveEvent) => live.get(id)?.captions.onEvent(track, event));
+  ipcMain.handle("liveView", (_e, id: number) => id === LIVE_TEST_ID ? null : live.get(id)?.captions.view() ?? null);
+  ipcMain.on("liveAudio", (_e, id: number, track: Track, pcm: Int16Array, token?: number) => sessionFor(id, token)?.captions.audio(track, pcm));
+  ipcMain.on("liveEvent", (_e, id: number, track: Track, event: LiveEvent, token?: number) => sessionFor(id, token)?.captions.onEvent(track, event));
   ipcMain.handle("setSessionOptions", (_e, id: number, o: { liveModel?: string | null; glossary?: string }) => {
     db.setSessionOptions(id, o);
     notify(id);
   });
-  ipcMain.handle("liveCall", async (_e, sdp: string, meetingId: number) => {
+  ipcMain.handle("liveCall", async (_e, sdp: string, meetingId: number, token?: number) => {
+    const entry = sessionFor(meetingId, token);
+    if (!entry || entry.stopping) return { ok: false, error: tr()("error.nothingTranscribed") };
     try {
       const res = await fetch(`${settings.get().qgridUrl.replace(/\/$/, "")}/api/qgrid/liveCall`, {
         method: "POST",
@@ -331,7 +393,7 @@ app.whenReady().then(async () => {
             logger: false,
           },
         }),
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.any([entry.abort.signal, AbortSignal.timeout(15_000)]),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.message ?? `qgrid ${res.status}`);
@@ -484,7 +546,7 @@ function load(w: BrowserWindow, hash?: string) {
 }
 
 /** macOS-style settings window: one instance, toolbar tabs, no zoom or full screen. */
-function openSettingsWindow() {
+function showSettingsWindow(onClose: () => void) {
   if (settingsWin) return settingsWin.focus();
   settingsWin = new BrowserWindow({
     width: 760,
@@ -503,7 +565,10 @@ function openSettingsWindow() {
     webPreferences: { preload: path.join(import.meta.dirname, "../preload/index.cjs"), sandbox: true },
   });
   load(settingsWin, "settings");
-  settingsWin.on("closed", () => (settingsWin = null));
+  settingsWin.on("closed", () => {
+    settingsWin = null;
+    onClose();
+  });
 }
 
 /**

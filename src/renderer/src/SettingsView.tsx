@@ -600,7 +600,8 @@ function TranscriptionTest({ s }: { s: Settings }) {
   const [running, setRunning] = useState(false);
   const [view, setView] = useState<LiveView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const stopRef = useRef<(() => Promise<void>) | null>(null);
+  const stopRef = useRef<(() => void) | null>(null);
+  const viewToken = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     void window.api
@@ -608,34 +609,66 @@ function TranscriptionTest({ s }: { s: Settings }) {
       .then((r) => setModels(r.ok ? r.models.filter((m) => m.available) : []));
   }, [s.live.provider, s.qgridUrl]);
   useEffect(() => setModel(s.live.model), [s.live.model]);
-  useEffect(() => window.api.onLive((id, v) => id === LIVE_TEST_ID && setView(v)), []);
-  useEffect(() => () => void stopRef.current?.(), []);
+  useEffect(() => window.api.onLive((id, v, token) => {
+    if (id === LIVE_TEST_ID && token !== undefined && token === viewToken.current) setView(v);
+  }), []);
+  useEffect(() => () => {
+    viewToken.current = undefined;
+    stopRef.current?.();
+    stopRef.current = null;
+  }, []);
 
   async function start() {
+    if (stopRef.current) return;
+    setRunning(true);
     setError(null);
     setView(null);
+    viewToken.current = undefined;
     const live = { provider: s.live.provider, model };
+    let token: number | undefined;
+    let captions: ReturnType<typeof liveCaptionHooks> | undefined;
+    let stopRecording: (() => Promise<void>) | undefined;
+    const controller = new AbortController();
+    async function finish() {
+      const testToken = token;
+      try {
+        await stopRecording?.();
+      } finally {
+        captions?.stop();
+        if (testToken !== undefined) await window.api.stopLiveTest(testToken);
+      }
+    }
+    stopRef.current = () => {
+      controller.abort();
+      void finish().catch((e) => {
+        if (token !== undefined && viewToken.current === token) setError(e instanceof Error ? e.message : String(e));
+      });
+    };
     try {
-      await window.api.startLiveTest(live);
-      const captions = liveCaptionHooks(LIVE_TEST_ID, live);
-      const stopRecording = await startRecording(() => {}, { micDeviceId: s.recording.micDeviceId, systemAudio: false, ...captions.options });
-      stopRef.current = async () => {
-        captions.stop();
-        await stopRecording();
-        await window.api.stopLiveTest();
-      };
-      setRunning(true);
+      token = await window.api.startLiveTest(live);
+      if (controller.signal.aborted) {
+        await window.api.stopLiveTest(token);
+        return;
+      }
+      viewToken.current = token;
+      captions = liveCaptionHooks(LIVE_TEST_ID, live, token);
+      stopRecording = await startRecording(() => {}, {
+        micDeviceId: s.recording.micDeviceId, systemAudio: false, signal: controller.signal, ...captions.options,
+      });
+      // Permission may arrive after Stop or after the user has left this tab.
+      if (controller.signal.aborted) await stopRecording();
     } catch (e) {
-      await window.api.stopLiveTest();
-      setError(e instanceof Error ? e.message : String(e));
+      if (!controller.signal.aborted) {
+        setError(e instanceof Error ? e.message : String(e));
+        stop();
+      }
     }
   }
 
-  async function stop() {
-    const stopIt = stopRef.current;
+  function stop() {
+    stopRef.current?.();
     stopRef.current = null;
     setRunning(false);
-    await stopIt?.();
   }
 
   const text = view?.lines.map((l) => l.text).join(" ") ?? "";

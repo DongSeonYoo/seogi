@@ -195,7 +195,7 @@ export type Api = {
    */
   /** `language`: the file's spoken language, or "auto" to let the transcriber detect it. */
   /** Transcribes a track's opening audio (16 kHz mono from 0 s) that reached no live session. */
-  transcribeOpening(id: number, track: Track, pcm: Int16Array): void;
+  transcribeOpening(id: number, track: Track, pcm: Int16Array, token?: number): Promise<void>;
   importFile(id: number, pcm: Int16Array, language: string, ogg: (Uint8Array | null)[]): Promise<boolean>;
   /** null: the import of `id` ended. */
   onImportProgress(listener: (id: number, progress: ImportProgress | null) => void): () => void;
@@ -203,17 +203,18 @@ export type Api = {
   setSessionOptions(id: number, options: { liveModel?: string | null; glossary?: string }): Promise<void>;
   sendChunk(chunk: Chunk): void;
   /** About 100 ms of 16 kHz PCM16 for the live captions, every frame from the track's start. */
-  sendLiveAudio(meetingId: number, track: Track, pcm: Int16Array): void;
+  sendLiveAudio(meetingId: number, track: Track, pcm: Int16Array, token?: number): void;
   /** Caption events the renderer produced itself (GPT-Live over WebRTC). */
-  sendLiveEvent(meetingId: number, track: Track, event: LiveEvent): void;
+  sendLiveEvent(meetingId: number, track: Track, event: LiveEvent, token?: number): void;
   /** Exchanges a WebRTC offer for a GPT-Live session through qgrid; resolves to the answer. */
   /** Session options for `meetingId` (glossary) shape the GPT-Live instructions. */
-  liveCall(sdp: string, meetingId: number): Promise<{ ok: true; sdp: string } | { ok: false; error: string }>;
+  liveCall(sdp: string, meetingId: number, token?: number): Promise<{ ok: true; sdp: string } | { ok: false; error: string }>;
   stopMeeting(id: number): Promise<void>;
   /** Live captions for the settings test under LIVE_TEST_ID; nothing is saved. */
   /** `model` overrides the saved live model. */
-  startLiveTest(model?: Settings["live"]): Promise<void>;
-  stopLiveTest(): Promise<void>;
+  startLiveTest(model?: Settings["live"]): Promise<number>;
+  stopLiveTest(token: number): Promise<void>;
+  liveView(id: number): Promise<LiveView | null>;
   /** Writes the summary with `model` (of the summary provider) or the one in Settings. */
   summarize(id: number, model?: string): Promise<{ ok: true } | { ok: false; error: string }>;
   setSummaryText(id: number, markdown: string): Promise<void>;
@@ -236,5 +237,5 @@ export type Api = {
   onUtterancesAdded(listener: (meetingId: number, rows: Utterance[]) => void): () => void;
   /** The UI language changed in settings. */
   onLocale(listener: (locale: Locale) => void): () => void;
-  onLive(listener: (meetingId: number, view: LiveView) => void): () => void;
+  onLive(listener: (meetingId: number, view: LiveView, token?: number) => void): () => void;
 };

@@ -20,6 +20,7 @@ type Emit = (track: Track, startSec: number, pcm: Int16Array) => void;
 export type RecordingOptions = {
   micDeviceId: string;
   systemAudio: boolean;
+  signal?: AbortSignal;
   /** Called with true once the system track has been all zeros for a while, false when sound returns. */
   onSystemSilence?: (silent: boolean) => void;
   /** Every ~100 ms of each track as 16 kHz PCM16, for live captions. */
@@ -35,8 +36,9 @@ export type RecordingOptions = {
  */
 export async function startRecording(
   emit: Emit,
-  { micDeviceId, systemAudio, onSystemSilence, onFrame, onStreams }: RecordingOptions,
+  { micDeviceId, systemAudio, signal, onSystemSilence, onFrame, onStreams }: RecordingOptions,
 ): Promise<() => Promise<void>> {
+  signal?.throwIfAborted();
   const mic = await navigator.mediaDevices.getUserMedia({
     // "ideal" falls back to the default input when the chosen device is unplugged.
     audio: {
@@ -45,60 +47,81 @@ export async function startRecording(
       ...(micDeviceId && { deviceId: { ideal: micDeviceId } }),
     },
   });
-  const display = systemAudio
-    ? await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }).catch(() => {
-        mic.getTracks().forEach((t) => t.stop());
-        throw new Error(NO_SYSTEM_AUDIO);
-      })
-    : null;
-  display?.getVideoTracks().forEach((t) => t.stop());
-  if (display && !display.getAudioTracks().length) {
-    mic.getTracks().forEach((t) => t.stop());
-    throw new Error(NO_SYSTEM_AUDIO);
-  }
-
-  const ctx = new AudioContext({ sampleRate: RATE });
-  await ctx.audioWorklet.addModule(
-    URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" })),
-  );
-
-  const tracks: [Track, MediaStream][] = [["mic", mic]];
-  if (display) tracks.push(["system", new MediaStream(display.getAudioTracks())]);
-  onStreams?.(tracks);
-  const flushers = tracks.map(([track, stream]) => {
-    const node = new AudioWorkletNode(ctx, "tap");
-    ctx.createMediaStreamSource(stream).connect(node);
-    const chunker = new Chunker((startSec, pcm) => emit(track, startSec, pcm));
-    const watch =
-      track === "system" && onSystemSilence
-        ? new SilenceWatch(SYSTEM_SILENCE_HINT_SEC * RATE, onSystemSilence)
-        : null;
-    let batch: Float32Array[] = [];
-    let batched = 0;
-    node.port.onmessage = (e: MessageEvent<Float32Array>) => {
-      chunker.push(e.data);
-      watch?.push(e.data);
-      if (!onFrame) return;
-      batch.push(e.data);
-      batched += e.data.length;
-      if (batched < RATE / 10) return;
-      onFrame(track, toPcm16(batch, batched));
-      batch = [];
-      batched = 0;
-    };
-    return () => {
-      node.port.onmessage = null;
-      if (batched) onFrame?.(track, toPcm16(batch, batched));
-      chunker.flush();
-    };
-  });
-
-  return async () => {
+  let display: MediaStream | null = null;
+  let context: AudioContext | null = null;
+  const stopDevices = () => {
     mic.getTracks().forEach((t) => t.stop());
     display?.getTracks().forEach((t) => t.stop());
-    await ctx.close();
-    flushers.forEach((f) => f());
   };
+
+  signal?.addEventListener("abort", stopDevices, { once: true });
+  try {
+    signal?.throwIfAborted();
+    if (systemAudio) {
+      display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }).catch(() => {
+        throw new Error(NO_SYSTEM_AUDIO);
+      });
+      signal?.throwIfAborted();
+      display.getVideoTracks().forEach((t) => t.stop());
+      if (!display.getAudioTracks().length) throw new Error(NO_SYSTEM_AUDIO);
+    }
+
+    const ctx = new AudioContext({ sampleRate: RATE });
+    context = ctx;
+    const url = URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" }));
+    try {
+      await ctx.audioWorklet.addModule(url);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    signal?.throwIfAborted();
+
+    const tracks: [Track, MediaStream][] = [["mic", mic]];
+    if (display) tracks.push(["system", new MediaStream(display.getAudioTracks())]);
+    const flushers = tracks.map(([track, stream]) => {
+      const node = new AudioWorkletNode(ctx, "tap");
+      ctx.createMediaStreamSource(stream).connect(node);
+      const chunker = new Chunker((startSec, pcm) => emit(track, startSec, pcm));
+      const watch =
+        track === "system" && onSystemSilence
+          ? new SilenceWatch(SYSTEM_SILENCE_HINT_SEC * RATE, onSystemSilence)
+          : null;
+      let batch: Float32Array[] = [];
+      let batched = 0;
+      node.port.onmessage = (e: MessageEvent<Float32Array>) => {
+        chunker.push(e.data);
+        watch?.push(e.data);
+        if (!onFrame) return;
+        batch.push(e.data);
+        batched += e.data.length;
+        if (batched < RATE / 10) return;
+        onFrame(track, toPcm16(batch, batched));
+        batch = [];
+        batched = 0;
+      };
+      return () => {
+        node.port.onmessage = null;
+        if (batched) onFrame?.(track, toPcm16(batch, batched));
+        chunker.flush();
+      };
+    });
+    onStreams?.(tracks);
+
+    return async () => {
+      stopDevices();
+      try {
+        flushers.forEach((flush) => flush());
+      } finally {
+        await ctx.close();
+      }
+    };
+  } catch (e) {
+    stopDevices();
+    await context?.close();
+    throw e;
+  } finally {
+    signal?.removeEventListener("abort", stopDevices);
+  }
 }
 
 /**

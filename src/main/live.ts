@@ -21,127 +21,204 @@ export type LiveConfig = { model: string; language?: string; prompt?: string; t:
   | { provider: "openai"; apiKey: string }
 );
 
-export function openLiveStream(config: LiveConfig, onEvent: (e: LiveEvent) => void): LiveStream {
-  return config.provider === "qgrid" ? qgridStream(config, onEvent) : openaiStream(config, onEvent);
-}
+type CaptionEvent = LiveEvent | { type: "gap"; message: string };
+type Emit = (event: CaptionEvent) => void;
+type Session = {
+  start(): void;
+  receive(data: string): void;
+  audio(pcm: Int16Array, start: number): void;
+  stop(): void;
+};
 
 const b64 = (pcm: Int16Array) => Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).toString("base64");
 
-/**
- * qgrid's transcribeStream does the segmenting; this is a thin socket client. A socket that drops
- * mid-meeting is reopened; segment times of the new session count from where it joined.
- */
-function qgridStream(
-  config: LiveConfig & { provider: "qgrid" },
-  onEvent: (e: LiveEvent) => void,
-): LiveStream {
-  let ws: WebSocket;
-  let queue: string[] = [];
+export function openLiveStream(config: LiveConfig, emit: Emit): LiveStream {
+  const queue: Int16Array[] = [];
+  let samples = 0;
+  let queued = 0;
+  let gapStart: number | undefined;
+  let socket: WebSocket | undefined;
+  let session: Session | undefined;
+  let generation = 0;
   let ready = false;
   let stopped = false;
+  let stopSent = false;
   let failures = 0;
-  let samples = 0; // input clock, 16 kHz
-  let baseSec = 0; // where the current session joined the input clock
-  let closed: () => void = () => {};
-  const done = new Promise<void>((r) => (closed = r));
-  const send = (event: string, data: unknown) => ws.send(JSON.stringify({ event, data }));
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  let drain: ReturnType<typeof setTimeout> | undefined;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const { promise: done, resolve } = Promise.withResolvers<void>();
+
+  function reportGap(end: number) {
+    if (gapStart === undefined) return;
+    emit({ type: "gap", message: config.t("error.captionGap", {
+      from: (gapStart / IN_RATE).toFixed(1), to: (end / IN_RATE).toFixed(1),
+    }) });
+    gapStart = undefined;
+  }
+
+  function close() {
+    clearTimeout(drain);
+    clearTimeout(deadline);
+    clearTimeout(retry);
+    if (queued) gapStart ??= samples - queued;
+    reportGap(samples);
+    queued = queue.length = 0;
+    const old = socket;
+    socket = undefined; // ignore close and late transcript events for this generation
+    session = undefined;
+    old?.close();
+    resolve();
+  }
+
+  function pump() {
+    if (!ready || !socket || !session || stopSent) return;
+    clearTimeout(drain);
+    while (queue.length && socket.bufferedAmount < 256 * 1024) {
+      const start = samples - queued;
+      reportGap(start);
+      const pcm = queue.shift()!;
+      queued -= pcm.length;
+      session.audio(pcm, start);
+    }
+    if (queue.length) drain = setTimeout(pump, 25);
+    else if (stopped) {
+      stopSent = true;
+      session.stop();
+    }
+  }
 
   function connect() {
-    ws = new WebSocket(`${config.url.replace(/^http/, "ws").replace(/\/$/, "")}/api/qgrid/transcribeStream`);
-    ready = false;
-    baseSec = samples / IN_RATE;
-    ws.onopen = () =>
-      send("start", {
-        sampleRate: IN_RATE,
-        model: config.model,
-        language: config.language,
-        prompt: config.prompt,
-        logger: QGRID_LOGGER,
-        projectName: PROJECT_NAME,
-      });
-    ws.onmessage = (e) => {
-      const { event, data } = JSON.parse(String(e.data));
-      if (event === "ready") {
-        ready = true;
-        failures = 0;
-        for (const pcm of queue.splice(0)) send("audio", { pcm });
-        if (stopped) send("stop", {});
-      } else if (event === "delta")
-        onEvent({ type: "delta", id: `${baseSec}:${data.segmentId}`, text: data.text, atSec: samples / IN_RATE });
-      else if (event === "segment")
-        onEvent({
-          type: "segment",
-          id: `${baseSec}:${data.segmentId}`,
-          text: data.text,
-          startSec: baseSec + data.startMs / 1000,
-          endSec: baseSec + data.endMs / 1000,
-        });
-      else if (event === "error") onEvent({ type: "error", message: data.message });
+    if (stopped) return;
+    const ws = config.provider === "qgrid"
+      ? new WebSocket(`${config.url.replace(/^http/, "ws").replace(/\/$/, "")}/api/qgrid/transcribeStream`)
+      // Node's WebSocket accepts headers; the DOM type only knows the protocols argument.
+      : new WebSocket(OPENAI_URL, { headers: { Authorization: `Bearer ${config.apiKey}` } } as unknown as string[]);
+    socket = ws;
+    generation++;
+    const onReady = () => {
+      ready = true;
+      failures = 0;
+      pump();
     };
+    const send = (msg: unknown) => ws.send(JSON.stringify(msg));
+    const onDone = () => { if (stopSent) close(); };
+    session = config.provider === "qgrid"
+      ? qgridSession(config, generation, send, emit, onReady, onDone)
+      : openaiSession(config, generation, send, emit, onReady, onDone);
+    ws.onopen = () => { if (socket === ws && !stopped) session!.start(); };
+    ws.onmessage = (e) => { if (socket === ws) session!.receive(String(e.data)); };
     ws.onclose = (e) => {
-      const lost = ready; // a working session dropped, not just a failed attempt
+      if (socket !== ws) return;
+      socket = undefined;
+      session = undefined;
+      clearTimeout(drain);
+      const lost = ready;
       ready = false;
-      if (stopped) return closed();
-      // Captions are the meeting record: keep trying, and say so once it is more than a blip.
-      if (++failures > 2) onEvent({ type: "error", message: config.t("error.qgridClosed", { code: e.code }) });
-      // Audio queued from here on goes to the new session.
-      queue = [];
-      if (lost) onEvent({ type: "reconnect" });
-      setTimeout(connect, backoffMs(failures));
+      if (stopped) return close();
+      if (lost) emit({ type: "reconnect" });
+      if (++failures > 2) emit({ type: "error", message: config.provider === "qgrid"
+        ? config.t("error.qgridClosed", { code: e.code })
+        : config.t("error.openaiLiveFailed", { code: e.code, reason: e.reason }) });
+      retry = setTimeout(connect, backoffMs(failures));
     };
   }
 
   connect();
   return {
     audio(pcm) {
-      if (stopped) return;
+      if (stopped || !pcm.length) return;
       samples += pcm.length;
-      if (ready) send("audio", { pcm: b64(pcm) });
-      else queue.push(b64(pcm));
+      queued += pcm.length;
+      queue.push(pcm);
+      while (queued > 30 * IN_RATE) {
+        gapStart ??= samples - queued;
+        const head = queue[0];
+        const excess = Math.min(head.length, queued - 30 * IN_RATE);
+        if (excess === head.length) queue.shift();
+        else queue[0] = head.slice(excess); // release the discarded samples' backing store
+        queued -= excess;
+      }
+      pump();
     },
     stop() {
       if (!stopped) {
         stopped = true;
-        // qgrid finishes the outstanding segments, sends done and closes.
-        if (ready) send("stop", {});
-        else ws.close();
+        clearTimeout(retry);
+        if (!ready) close();
+        else {
+          deadline = setTimeout(close, STOP_WAIT_MS);
+          pump();
+        }
       }
-      return Promise.race([done, sleep(STOP_WAIT_MS)]);
+      return done;
     },
   };
 }
 
-/**
- * OpenAI realtime transcription with the user's key. gpt-live-transcribe takes no server VAD, so
- * segments are cut here by CommitPolicy and bound to items by the commit acks, in order.
- */
-function openaiStream(
-  config: LiveConfig & { provider: "openai" },
-  onEvent: (e: LiveEvent) => void,
-): LiveStream {
+/** qgrid timestamps count only samples delivered to this socket, even across a backlog gap. */
+function qgridSession(
+  config: LiveConfig, generation: number, send: (msg: unknown) => void, emit: Emit, onReady: () => void, onDone: () => void,
+): Session {
+  const offsets: { sent: number; offset: number }[] = [];
+  let sent = 0;
+  let end = 0;
+  const at = (ms: number, ending = false) => {
+    const sample = Math.round(ms * IN_RATE / 1000);
+    const offset = offsets.findLast((p) => ending ? p.sent < sample : p.sent <= sample) ?? offsets[0];
+    return (sample + (offset?.offset ?? 0)) / IN_RATE;
+  };
+  return {
+    start() {
+      send({ event: "start", data: { sampleRate: IN_RATE, model: config.model, language: config.language,
+        prompt: config.prompt, logger: QGRID_LOGGER, projectName: PROJECT_NAME } });
+    },
+    audio(pcm, start) {
+      if (!sent || start !== end) offsets.push({ sent, offset: start - sent });
+      sent += pcm.length;
+      end = start + pcm.length;
+      send({ event: "audio", data: { pcm: b64(pcm) } });
+    },
+    receive(raw) {
+      const { event, data } = JSON.parse(raw);
+      if (event === "ready") onReady();
+      else if (event === "done") onDone();
+      else if (event === "error") emit({ type: "error", message: data.message });
+      else if (event === "delta")
+        emit({ type: "delta", id: `q${generation}:${data.segmentId}`, text: data.text, atSec: end / IN_RATE });
+      else if (event === "segment")
+        emit({ type: "segment", id: `q${generation}:${data.segmentId}`, text: data.text, startSec: at(data.startMs), endSec: at(data.endMs, true) });
+    },
+    stop() { send({ event: "stop", data: {} }); },
+  };
+}
+
+/** OpenAI takes no server VAD here. Commit acknowledgements bind segments to items in order. */
+function openaiSession(
+  config: LiveConfig, generation: number, send: (msg: unknown) => void, emit: Emit, onReady: () => void, onDone: () => void,
+): Session {
   type Segment = { id: string; startSec: number; speechSec?: number; endSec?: number };
   const policy = new CommitPolicy();
-  let ws: WebSocket;
-  let open = false;
-  let stopped = false;
-  let failures = 0;
-  let samples = 0; // input clock, 16 kHz
+  let end = 0;
   let nextId = 0;
   let current: Segment | undefined;
-  let awaitingAck: Segment[] = [];
+  const awaitingAck: Segment[] = [];
   const byItem = new Map<string, Segment>();
-  const queue: Int16Array[] = [];
-  const send = (msg: unknown) => ws.send(JSON.stringify(msg));
-  let closed: () => void = () => {};
-  const done = new Promise<void>((r) => (closed = r));
 
-  function connect() {
-    // Node's WebSocket (undici) takes headers; the DOM typing does not know that option.
-    ws = new WebSocket(OPENAI_URL, {
-      headers: { Authorization: `Bearer ${config.apiKey}` },
-    } as unknown as string[]);
-    ws.onopen = () => {
-      open = true;
+  function commit() {
+    if (!current || !policy.hasSpeech) return;
+    current.endSec = end / IN_RATE;
+    awaitingAck.push(current);
+    current = undefined;
+    policy.reset();
+    send({ type: "input_audio_buffer.commit" });
+  }
+  function finishIfIdle() {
+    if (!awaitingAck.length && !byItem.size) onDone();
+  }
+
+  return {
+    start() {
       send({
         type: "session.update",
         session: {
@@ -151,11 +228,8 @@ function openaiStream(
               format: { type: "audio/pcm", rate: OPENAI_RATE },
               transcription: {
                 model: config.model,
-                // gpt-transcribe and gpt-live-transcribe take a list; sending both fields is an error.
-                ...(config.language &&
-                  (/^gpt-(live-)?transcribe/.test(config.model)
-                    ? { languages: [config.language] }
-                    : { language: config.language })),
+                ...(config.language && (/^gpt-(live-)?transcribe/.test(config.model)
+                  ? { languages: [config.language] } : { language: config.language })),
                 ...(config.prompt && { prompt: config.prompt }),
               },
               turn_detection: null,
@@ -163,13 +237,11 @@ function openaiStream(
           },
         },
       });
-      for (const pcm of queue.splice(0)) push(pcm);
-    };
-    ws.onmessage = (e) => {
-      const msg = JSON.parse(String(e.data));
-      // Only a configured session counts as a working connection for the retry budget.
-      if (msg.type === "session.updated") failures = 0;
+    },
+    receive(raw) {
+      const msg = JSON.parse(raw);
       switch (msg.type) {
+        case "session.updated": onReady(); return;
         case "input_audio_buffer.committed": {
           const seg = awaitingAck.shift();
           if (seg) byItem.set(msg.item_id, seg);
@@ -177,87 +249,50 @@ function openaiStream(
         }
         case "conversation.item.input_audio_transcription.delta": {
           let seg = byItem.get(msg.item_id);
-          if (!seg && current) byItem.set(msg.item_id, (seg = current)); // streamed before the commit
-          if (seg && msg.delta) onEvent({ type: "delta", id: seg.id, text: msg.delta, atSec: seg.speechSec ?? seg.startSec });
-          return;
-        }
-        case "conversation.item.input_audio_transcription.completed": {
-          const seg = byItem.get(msg.item_id);
-          if (seg && msg.transcript?.trim())
-            onEvent({
-              type: "segment",
-              id: seg.id,
-              text: msg.transcript.trim(),
-              startSec: seg.speechSec ?? seg.startSec,
-              endSec: seg.endSec ?? samples / IN_RATE,
-            });
-          byItem.delete(msg.item_id);
+          if (!seg && current) byItem.set(msg.item_id, (seg = current));
+          if (seg && msg.delta) emit({ type: "delta", id: seg.id, text: msg.delta, atSec: seg.speechSec ?? seg.startSec });
           return;
         }
         case "conversation.item.input_audio_transcription.failed":
+        case "conversation.item.input_audio_transcription.completed": {
+          const seg = byItem.get(msg.item_id);
+          byItem.delete(msg.item_id);
+          // An empty final also removes the failed item's draft from the view.
+          if (seg) emit({ type: "segment", id: seg.id, text: msg.transcript?.trim() ?? "",
+            startSec: seg.speechSec ?? seg.startSec, endSec: seg.endSec ?? end / IN_RATE });
+          if (msg.type.endsWith(".failed")) emit({ type: "error", message: msg.error?.message ?? msg.type });
+          finishIfIdle();
+          return;
+        }
         case "error":
-          if (msg.error?.code !== "input_audio_buffer_commit_empty")
-            onEvent({ type: "error", message: msg.error?.message ?? msg.type });
+          if (msg.error?.code !== "input_audio_buffer_commit_empty") emit({ type: "error", message: msg.error?.message ?? msg.type });
       }
-    };
-    ws.onclose = (e) => {
-      const lost = open; // a working session dropped, not just a failed attempt
-      open = false;
-      if (stopped) return;
-      // A new session: audio sent to the old one but not transcribed is lost.
-      current = undefined;
-      awaitingAck = [];
-      byItem.clear();
-      policy.reset();
-      if (++failures > 2)
-        onEvent({ type: "error", message: config.t("error.openaiLiveFailed", { code: e.code, reason: e.reason }) });
-      if (lost) onEvent({ type: "reconnect" });
-      setTimeout(connect, backoffMs(failures));
-    };
-  }
-
-  function push(pcm: Int16Array) {
-    const start = samples;
-    samples += pcm.length;
-    current ??= { id: `o${nextId++}`, startSec: start / IN_RATE };
-    send({ type: "input_audio_buffer.append", audio: b64(resample(pcm, IN_RATE, OPENAI_RATE)) });
-    const decision = policy.push(pcm);
-    if (current.speechSec === undefined && policy.hasSpeech) current.speechSec = start / IN_RATE;
-    if (decision === "commit") commit();
-    else if (decision === "clear") {
-      current = undefined;
-      policy.reset();
-      send({ type: "input_audio_buffer.clear" });
-    }
-  }
-
-  function commit() {
-    if (!current || !policy.hasSpeech) return;
-    current.endSec = samples / IN_RATE;
-    awaitingAck.push(current);
-    current = undefined;
-    policy.reset();
-    send({ type: "input_audio_buffer.commit" });
-  }
-
-  connect();
-  return {
-    audio(pcm) {
-      if (stopped) return;
-      if (open) push(pcm);
-      else queue.push(pcm);
+    },
+    audio(pcm, start) {
+      if (current && start !== end) {
+        // Start a fresh item after an omitted interval so its speech offset stays meaningful.
+        if (policy.hasSpeech) commit();
+        else {
+          current = undefined;
+          policy.reset();
+          send({ type: "input_audio_buffer.clear" });
+        }
+      }
+      end = start + pcm.length;
+      current ??= { id: `o${generation}:${nextId++}`, startSec: start / IN_RATE };
+      send({ type: "input_audio_buffer.append", audio: b64(resample(pcm, IN_RATE, OPENAI_RATE)) });
+      const decision = policy.push(pcm);
+      if (current.speechSec === undefined && policy.hasSpeech) current.speechSec = start / IN_RATE;
+      if (decision === "commit") commit();
+      else if (decision === "clear") {
+        current = undefined;
+        policy.reset();
+        send({ type: "input_audio_buffer.clear" });
+      }
     },
     stop() {
-      if (!stopped) {
-        if (open) commit();
-        stopped = true;
-        // Leave time for the last transcript, then close.
-        setTimeout(() => {
-          ws.close();
-          closed();
-        }, 5000);
-      }
-      return Promise.race([done, sleep(STOP_WAIT_MS)]);
+      commit();
+      finishIfIdle();
     },
   };
 }
@@ -324,17 +359,18 @@ export class LiveCaptions {
   private readonly finished: LiveLine[] = [];
   private readonly streams = new Map<Track, LiveStream>();
   private error: string | null = null;
+  lastGap: string | null = null;
   private stopped = false;
   /** Times a stream lost its connection; the meeting notes it once finished. */
   drops = 0;
 
-  private readonly open: (onEvent: (e: LiveEvent) => void) => LiveStream;
+  private readonly open: (onEvent: Emit) => LiveStream;
   private readonly changed: () => void;
   private readonly store: ((track: Track, segment: Segment) => void) | null;
 
   /** `store` receives each finished segment; without one the view keeps them instead. */
   constructor(
-    open: (onEvent: (e: LiveEvent) => void) => LiveStream,
+    open: (onEvent: Emit) => LiveStream,
     changed: () => void,
     store: ((track: Track, segment: Segment) => void) | null,
   ) {
@@ -345,7 +381,19 @@ export class LiveCaptions {
 
   private onSegment(track: Track, key: string, segment: Segment) {
     if (this.store) this.store(track, segment);
-    else this.finished.push({ key, track, ...segment });
+    else {
+      this.finished.push({ key, track, ...segment });
+      this.finished.sort((a, b) => a.startSec - b.startSec);
+      if (this.finished.length > 50) this.finished.shift();
+    }
+  }
+
+  private flushDrafts(track?: Track) {
+    for (const d of [...this.drafts.values()].sort((a, b) => a.startSec - b.startSec)) {
+      if (track && d.track !== track) continue;
+      this.drafts.delete(d.key);
+      if (d.text.trim()) this.onSegment(d.track, d.key, { startSec: d.startSec, text: d.text.trim() });
+    }
   }
 
   audio(track: Track, pcm: Int16Array) {
@@ -363,9 +411,12 @@ export class LiveCaptions {
     stream.audio(pcm);
   }
 
-  onEvent(track: Track, e: LiveEvent) {
+  onEvent(track: Track, e: CaptionEvent) {
     if (e.type === "error") this.error = e.message;
-    else if (e.type === "reconnect") this.drops++;
+    else if (e.type === "reconnect") {
+      this.drops++;
+      this.flushDrafts(track);
+    } else if (e.type === "gap") this.lastGap = e.message;
     else {
       this.error = null; // captions are flowing again
       const key = `${track}:${e.id}`;
@@ -387,9 +438,7 @@ export class LiveCaptions {
   async stop(tailMs = 0) {
     this.stopped = true;
     await Promise.all([...[...this.streams.values()].map((s) => s.stop()), sleep(tailMs)]);
-    for (const d of [...this.drafts.values()].sort((a, b) => a.startSec - b.startSec))
-      if (d.text.trim()) this.onSegment(d.track, d.key, { startSec: d.startSec, text: d.text.trim() });
-    this.drafts.clear();
+    this.flushDrafts();
     this.changed();
   }
 
@@ -398,7 +447,7 @@ export class LiveCaptions {
       .filter((d) => d.text.trim())
       .sort((a, b) => a.startSec - b.startSec)
       .map((d) => ({ ...d, text: d.text.trim() }));
-    return { lines, error: this.error };
+    return { lines, error: this.error ?? this.lastGap };
   }
 }
 

@@ -33,9 +33,10 @@ export function startGptLive(
   onEvent: (track: Track, event: LiveEvent) => void,
   /** The first session of a track is up; audio before `atSec` of the recording never reached it. */
   onOpened: (track: Track, atSec: number) => void = () => {},
+  testToken?: number,
 ): () => void {
   const stops = streams.map(([track, stream]) =>
-    keepAlive(stream, startedAt, meetingId, (e) => onEvent(track, e), (at) => onOpened(track, at)),
+    keepAlive(stream, startedAt, meetingId, (e) => onEvent(track, e), (at) => onOpened(track, at), testToken),
   );
   return () => stops.forEach((stop) => stop());
 }
@@ -47,46 +48,49 @@ function keepAlive(
   meetingId: number,
   emit: (e: LiveEvent) => void,
   onOpened: (atSec: number) => void,
+  testToken?: number,
 ) {
   let opened = false;
   let stopped = false;
   let failures = 0;
   let generation = 0;
-  let stopSession: (() => void) | null = null;
+  let controller: AbortController;
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
   async function open() {
-    const gen = ++generation;
+    controller = new AbortController();
+    const { signal } = controller;
     try {
-      stopSession = await session(stream, startedAt, gen, meetingId, emit, {
+      await session(stream, startedAt, ++generation, meetingId, signal, emit, {
         working: (atSec) => {
+          if (signal.aborted) return;
           failures = 0;
           if (!opened) onOpened(atSec);
           opened = true;
         },
         lost: () => {
-          if (stopped || gen !== generation) return;
+          if (signal.aborted) return;
           emit({ type: "reconnect" });
           retry();
         },
-      });
-      if (stopped) stopSession();
+      }, testToken);
     } catch (e) {
-      if (stopped) return;
+      if (signal.aborted) return;
       failures++;
       emit({ type: "error", message: e instanceof Error ? e.message : String(e) });
       retry();
     }
   }
   function retry() {
-    stopSession?.();
-    stopSession = null;
-    setTimeout(() => !stopped && void open(), 1000 * Math.min(MAX_BACKOFF_SEC, Math.max(1, failures)));
+    controller.abort();
+    timer = setTimeout(() => !stopped && void open(), 1000 * Math.min(MAX_BACKOFF_SEC, Math.max(1, failures)));
   }
 
   void open();
   return () => {
     stopped = true;
-    stopSession?.();
+    clearTimeout(timer);
+    controller.abort();
   };
 }
 
@@ -152,30 +156,54 @@ async function session(
   startedAt: number,
   gen: number,
   meetingId: number,
+  signal: AbortSignal,
   emit: (e: LiveEvent) => void,
   on: { working: (atSec: number) => void; lost: () => void },
+  testToken?: number,
 ) {
   const pc = new RTCPeerConnection();
-  // A copy of the track, so ending the session never stops the recorder's own capture.
-  for (const t of stream.getAudioTracks()) pc.addTrack(t.clone());
-  const channel = pc.createDataChannel("oai-events");
+  const clones: MediaStreamTrack[] = [];
+  let channel: RTCDataChannel | undefined;
   // Event times are milliseconds of session audio, which starts flowing once the peer connects;
   // session.started arrives about a second later, so it only sets the origin if that was missed.
   let offset = (Date.now() - startedAt) / 1000;
   let anchored = false;
   const userTurns = new Set<string>();
   const segments = new Segmenter(`g${gen}`, emit);
-  let closing = false;
-  const lost = () => {
-    if (closing) return;
-    closing = true;
-    segments.cut();
+  let closed = false;
+  const stopClones = () => clones.splice(0).forEach((track) => track.stop());
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    signal.removeEventListener("abort", stop);
+    stopClones();
+    channel?.close();
     pc.close();
+    segments.cut();
+  };
+  const stop = () => {
+    stopClones();
+    if (channel?.readyState !== "open") return close();
+    // Give the last words time to arrive, then end billing before disconnecting the peer.
+    setTimeout(() => {
+      if (closed || channel?.readyState !== "open") return close();
+      segments.cut();
+      try {
+        channel.send(JSON.stringify({ type: "session.close" }));
+      } finally {
+        setTimeout(close, 500);
+      }
+    }, GPT_LIVE_TAIL_MS);
+  };
+  const lost = () => {
+    if (closed) return;
+    close();
     on.lost();
   };
 
   type Timed = { start_ms?: number; end_ms?: number };
-  channel.addEventListener("message", (msg) => {
+  const message = (msg: MessageEvent) => {
+    if (closed) return;
     let e: Timed & {
       type?: string;
       turn?: Timed & { id: string; role: string; transcript: string };
@@ -201,45 +229,45 @@ async function session(
     } else if (e.type === "turn.delta" && e.turn_id && e.delta && userTurns.has(e.turn_id)) add(e.turn_id, e.delta, e);
     else if ((e.type === "turn.done" || e.type === "turn.completed") && turn && userTurns.delete(turn.id)) segments.finish(turn.id);
     else if (e.type === "session.closed") lost();
-  });
-  channel.addEventListener("close", lost);
-  pc.addEventListener("connectionstatechange", () => {
-    if (pc.connectionState === "connected" && !anchored) {
-      offset = (Date.now() - startedAt) / 1000;
-      anchored = true;
-    }
-    if (pc.connectionState === "failed" || pc.connectionState === "closed") lost();
-  });
-
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  const answer = await window.api.liveCall(offer.sdp ?? "", meetingId);
-  if (!answer.ok) {
-    closing = true;
-    pc.close();
-    throw new Error(answer.error);
-  }
-  await pc.setRemoteDescription({ type: "answer", sdp: answer.sdp });
-
-  return () => {
-    if (closing) return;
-    closing = true;
-    // No more audio, but the transcript of the last words is still on its way.
-    pc.getSenders().forEach((s) => s.track?.stop());
-    setTimeout(() => {
-      segments.cut();
-      // session.close ends billing at once; a peer that only disconnects lingers about 30 s.
-      if (channel.readyState === "open") channel.send(JSON.stringify({ type: "session.close" }));
-      setTimeout(() => pc.close(), 500);
-    }, GPT_LIVE_TAIL_MS);
   };
+
+  signal.addEventListener("abort", stop, { once: true });
+  try {
+    // Own the clone even if addTrack throws.
+    for (const track of stream.getAudioTracks()) {
+      const clone = track.clone();
+      clones.push(clone);
+      pc.addTrack(clone);
+    }
+    channel = pc.createDataChannel("oai-events");
+    channel.addEventListener("message", message);
+    channel.addEventListener("close", lost);
+    pc.addEventListener("connectionstatechange", () => {
+      if (pc.connectionState === "connected" && !anchored) {
+        offset = (Date.now() - startedAt) / 1000;
+        anchored = true;
+      }
+      if (pc.connectionState === "failed" || pc.connectionState === "closed") lost();
+    });
+    const offer = await pc.createOffer();
+    if (signal.aborted) return;
+    await pc.setLocalDescription(offer);
+    if (signal.aborted) return;
+    const answer = await window.api.liveCall(offer.sdp ?? "", meetingId, testToken);
+    if (signal.aborted) return;
+    if (!answer.ok) throw new Error(answer.error);
+    await pc.setRemoteDescription({ type: "answer", sdp: answer.sdp });
+  } catch (e) {
+    close();
+    throw e;
+  }
 }
 
 /**
  * Recorder hooks that feed live captions for `meetingId`: PCM frames to the main process for the
  * streaming providers, or WebRTC sessions for GPT-Live. Call `stop` when the recording ends.
  */
-export function liveCaptionHooks(meetingId: number, live: { provider: string; model: string }) {
+export function liveCaptionHooks(meetingId: number, live: { provider: string; model: string }, testToken?: number) {
   let stopGptLive: (() => void) | null = null;
   let stopped = false;
   const gpt = live.provider === "qgrid" && live.model === GPT_LIVE_MODEL;
@@ -249,10 +277,10 @@ export function liveCaptionHooks(meetingId: number, live: { provider: string; mo
   const opening = new Map<Track, Int16Array[]>();
   const sendOpening = (track: Track, untilSec = Infinity) => {
     const frames = opening.get(track);
-    opening.set(track, []);
+    opening.delete(track);
     if (!frames?.length) return;
-    const pcm = concat(frames).subarray(0, Math.round(untilSec * 16000) || undefined);
-    if (hasSpeech(pcm)) window.api.transcribeOpening(meetingId, track, pcm);
+    const pcm = concat(frames).subarray(0, Math.round(untilSec * 16000));
+    if (hasSpeech(pcm)) void window.api.transcribeOpening(meetingId, track, pcm, testToken);
   };
   const options: Pick<RecordingOptions, "onFrame" | "onStreams"> = gpt
     ? {
@@ -264,11 +292,9 @@ export function liveCaptionHooks(meetingId: number, live: { provider: string; mo
             streams,
             Date.now(),
             meetingId,
-            (track, e) => window.api.sendLiveEvent(meetingId, track, e),
-            (track, atSec) => {
-              sendOpening(track, atSec);
-              opening.delete(track);
-            },
+            (track, e) => window.api.sendLiveEvent(meetingId, track, e, testToken),
+            sendOpening,
+            testToken,
           );
         },
         onFrame: (track, pcm) => {
@@ -276,14 +302,13 @@ export function liveCaptionHooks(meetingId: number, live: { provider: string; mo
           if (frames && frames.length < OPENING_MAX_FRAMES) frames.push(pcm);
         },
       }
-    : { onFrame: (track, pcm) => window.api.sendLiveAudio(meetingId, track, pcm) };
+    : { onFrame: (track, pcm) => window.api.sendLiveAudio(meetingId, track, pcm, testToken) };
   return {
     options,
     stop() {
       stopped = true;
       // A recording stopped before its session connected: all of it is opening audio.
-      for (const track of [...opening.keys()]) sendOpening(track);
-      opening.clear();
+      for (const track of opening.keys()) sendOpening(track);
       stopGptLive?.();
     },
   };

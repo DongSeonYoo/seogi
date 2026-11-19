@@ -12,7 +12,7 @@ const FILE_MODEL = { qgrid: "openai/gpt-transcribe", openai: "gpt-4o-transcribe"
 export type Transcript = { text: string; words: { startSecond: number }[] };
 
 /** One piece of an imported file, with the meeting's glossary; `lang` "auto" lets the model detect it. */
-export async function transcribeFile(store: SettingsStore, wav: Uint8Array, glossary: string, lang = store.get().language): Promise<Transcript> {
+export async function transcribeFile(store: SettingsStore, wav: Uint8Array, glossary: string, lang = store.get().language, abortSignal?: AbortSignal): Promise<Transcript> {
   const s = store.get();
   const id = FILE_MODEL[s.live.provider];
   // Detecting the language, a hint in another language (Korean names under "용어:") pulls short
@@ -24,7 +24,7 @@ export async function transcribeFile(store: SettingsStore, wav: Uint8Array, glos
       : createOpenAI({ apiKey: store.key("openai") }).transcription(id);
   // "auto" leaves language detection to the model.
   const language = lang === "auto" ? {} : { language: lang };
-  const r = await transcribe({ model, audio: wav, providerOptions: { openai: { ...language, ...(prompt && { prompt }) } }, maxRetries: 2 });
+  const r = await transcribe({ model, audio: wav, providerOptions: { openai: { ...language, ...(prompt && { prompt }) } }, maxRetries: 2, abortSignal });
   const text = prompt && isPromptEcho(r.text, prompt) ? "" : r.text.trim();
   return { text, words: r.segments };
 }

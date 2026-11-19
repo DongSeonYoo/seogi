@@ -133,7 +133,20 @@ export function App() {
       offChange();
     };
   }, [selected]);
-  useEffect(() => api.onLive((id, v) => setLive({ id, view: v })), []);
+  useEffect(() => {
+    setLive(null);
+    if (selected === null) return;
+    let acceptSnapshot = true;
+    const off = api.onLive((id, view) => {
+      if (id !== selected) return;
+      acceptSnapshot = false;
+      setLive({ id, view });
+    });
+    void api.liveView(selected).then((view) => {
+      if (acceptSnapshot && view) setLive({ id: selected, view });
+    });
+    return () => { acceptSnapshot = false; off(); };
+  }, [selected]);
 
   // The selection follows the macOS accent colour.
   useEffect(() => {
@@ -202,7 +215,7 @@ export function App() {
     void refreshList();
     setSelected(id);
     setGuide(false);
-    if (cancelRef.current) return void stop(); // pressed again before this point
+    if (cancelRef.current) return endRecording(rec);
     const captions = liveCaptionHooks(id, { provider: liveModel.provider, model: session?.liveModel ?? liveModel.model });
     try {
       let writes = Promise.resolve();
@@ -215,14 +228,14 @@ export function App() {
         },
         { ...options, onSystemSilence: setSystemSilent, ...captions.options },
       );
-      const stopCapture = async () => {
-        captions.stop();
-        await stopRecording();
-        await writes;
+      stopRef.current = async () => {
+        try {
+          await stopRecording();
+        } finally {
+          captions.stop();
+          await writes;
+        }
       };
-      // Stopped while capture was starting: the meeting already ended, so end the capture too.
-      if (recordingRef.current !== rec) return void stopCapture();
-      stopRef.current = stopCapture;
     } catch (e) {
       captions.stop();
       if (recordingRef.current !== rec) return; // already stopped; nothing to report
@@ -231,7 +244,9 @@ export function App() {
       await api.abortMeeting(id);
       const message = e instanceof Error ? e.message : String(e);
       setNotice(t("notice.startFailed", { error: message === NO_SYSTEM_AUDIO ? t("error.noSystemAudio") : message }));
+      return;
     }
+    if (cancelRef.current) await endRecording(rec);
   }
 
   /** Writes the summary on request; an existing (possibly edited) one is replaced only if confirmed. */
@@ -260,17 +275,24 @@ export function App() {
   /** Ends the recording at once; a capture still starting is ended when it comes up (see begin). */
   async function stop() {
     const rec = recordingRef.current;
-    if (!rec) {
+    if (!rec || !stopRef.current) {
       if (startingRef.current) cancelRef.current = true;
       return;
     }
+    await endRecording(rec);
+  }
+
+  async function endRecording(rec: Recording) {
     recordingRef.current = null;
     setRecording(null);
     setSystemSilent(false);
     const stopCapture = stopRef.current;
     stopRef.current = null;
-    await stopCapture?.();
-    await api.stopMeeting(rec.id);
+    try {
+      await stopCapture?.();
+    } finally {
+      await api.stopMeeting(rec.id);
+    }
   }
 
   const current = detail && detail.id === selected ? detail : null;

@@ -143,6 +143,79 @@ test("live captions store finished segments, show what is still spoken, and flus
   assert.deepEqual(t.view().lines.map((l) => l.text), ["시험", "중"]);
 });
 
+test("the mic test keeps the latest 50 finished lines, including drafts finalized on a drop", async () => {
+  const { LiveCaptions } = await import("./main/live.ts");
+  const c = new LiveCaptions(() => { throw Error("unused"); }, () => {}, null);
+  for (let i = 0; i < 60; i++) c.onEvent("mic", { type: "segment", id: String(i), text: String(i), startSec: i, endSec: i + 1 });
+  c.onEvent("mic", { type: "delta", id: "tail", text: "60", atSec: 60 });
+  c.onEvent("mic", { type: "reconnect" });
+  c.onEvent("mic", { type: "segment", id: "opening", text: "late opening", startSec: 0, endSec: 1 });
+  await c.stop();
+  assert.deepEqual(c.view().lines.map((line) => line.text), Array.from({ length: 50 }, (_, i) => String(i + 11)));
+});
+
+test("caption sockets retain 30 s on their original clock and ignore stale callbacks after stop", async (t) => {
+  const { openLiveStream } = await import("./main/live.ts");
+  const { translator } = await import("./shared/i18n.ts");
+  const sockets: Socket[] = [];
+  class Socket {
+    bufferedAmount = 0;
+    audioBytes = 0;
+    onopen?: () => void;
+    onmessage?: (e: { data: string }) => void;
+    onclose?: (e: { code: number; reason: string }) => void;
+    constructor() { sockets.push(this); }
+    send(data: string) {
+      const msg = JSON.parse(data);
+      const pcm = msg.audio ?? msg.data?.pcm;
+      if (pcm) this.audioBytes += Buffer.byteLength(pcm, "base64");
+    }
+    receive(msg: unknown) { this.onmessage?.({ data: JSON.stringify(msg) }); }
+    close() { this.onclose?.({ code: 1000, reason: "" }); }
+  }
+  const original = globalThis.WebSocket;
+  globalThis.WebSocket = Socket as unknown as typeof WebSocket;
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    for (const provider of ["qgrid", "openai"] as const) {
+      const events: Parameters<Parameters<typeof openLiveStream>[1]>[0][] = [];
+      const stream = openLiveStream({ provider, url: "http://fixture", apiKey: "", model: "fixture", t: translator("en") }, (e) => events.push(e));
+      for (let i = 0; i < 32; i++) stream.audio(new Int16Array(RATE).fill(i < 22 ? 3000 : 0));
+      const old = sockets.at(-1)!;
+      old.close();
+      t.mock.timers.tick(1000);
+      const ws = sockets.at(-1)!;
+      assert.notEqual(ws, old);
+      ws.onopen?.();
+      assert.equal(ws.audioBytes, 0);
+      ws.bufferedAmount = 512 * 1024;
+      ws.receive(provider === "qgrid" ? { event: "ready" } : { type: "session.updated" });
+      assert.equal(ws.audioBytes, 0);
+      ws.bufferedAmount = 0;
+      t.mock.timers.tick(25);
+      if (provider === "qgrid") {
+        ws.receive({ event: "segment", data: { segmentId: 1, text: "words", startMs: 0, endMs: 30000 } });
+      } else {
+        ws.receive({ type: "input_audio_buffer.committed", item_id: "1" });
+        ws.receive({ type: "conversation.item.input_audio_transcription.completed", item_id: "1", transcript: "words" });
+      }
+      assert.equal(ws.audioBytes, 30 * 2 * (provider === "qgrid" ? RATE : 24000));
+      assert.deepEqual(events.filter((e) => e.type === "gap").map((e) => e.message), ["Captions missed audio from 0.0 s to 2.0 s."]);
+      assert.deepEqual(events.filter((e) => e.type === "segment").map((e) => [e.startSec, e.endSec]), [[2, provider === "qgrid" ? 32 : 22]]);
+      ws.close();
+      const count = sockets.length;
+      await stream.stop();
+      t.mock.timers.tick(15000);
+      assert.equal(sockets.length, count);
+      const seen = events.length;
+      ws.receive(provider === "qgrid" ? { event: "error", data: { message: "stale" } } : { type: "error" });
+      assert.equal(events.length, seen);
+    }
+  } finally {
+    globalThis.WebSocket = original;
+  }
+});
+
 test("GPT-Live turns are cut into segments at sentence ends, pauses and on demand", async () => {
   const { Segmenter } = await import("./renderer/src/gptLive.ts");
   const out: string[] = [];
