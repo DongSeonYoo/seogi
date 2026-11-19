@@ -1,4 +1,4 @@
-import { PanelLeft, PanelRight, Plus, RefreshCw, Search, Star } from "lucide-react";
+import { PanelLeft, PanelRight, Plus, Search, Sparkles, Star } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { MeetingDetail } from "../../shared/types";
 import { clock, duration, fullDate } from "./format";
@@ -14,21 +14,21 @@ export function Toolbar({
   renaming,
   sidebar,
   summary,
-  canResummarize,
+  canSummarize,
   onToggleSidebar,
   onToggleSummary,
   onRename,
   onStartRename,
   onNewSession,
   onStar,
-  onResummarize,
+  onSummarize,
   onPalette,
 }: {
   meeting: MeetingDetail | null;
   renaming: boolean;
   sidebar: boolean;
   summary: boolean;
-  canResummarize: boolean;
+  canSummarize: boolean;
   onToggleSidebar: () => void;
   onToggleSummary: () => void;
   /** null: the edit was cancelled. */
@@ -36,7 +36,7 @@ export function Toolbar({
   onStartRename: () => void;
   onNewSession: () => void;
   onStar: () => void;
-  onResummarize: () => void;
+  onSummarize: () => void;
   onPalette: () => void;
 }) {
   const i18n = useI18n();
@@ -74,8 +74,8 @@ export function Toolbar({
           <IconButton label={`${m?.starred ? t("action.unstar") : t("action.star")} (⌘D)`} aria-pressed={!!m?.starred} disabled={!m} onClick={onStar}>
             <Star aria-hidden fill={m?.starred ? "currentColor" : "none"} />
           </IconButton>
-          <IconButton label={`${t("action.resummarize")} (⇧⌘S)`} disabled={!canResummarize} onClick={onResummarize}>
-            <RefreshCw aria-hidden />
+          <IconButton label={`${t("action.summarize")} (⇧⌘S)`} disabled={!canSummarize} onClick={onSummarize}>
+            <Sparkles aria-hidden />
           </IconButton>
         </div>
         <div className="capsule">

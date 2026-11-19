@@ -54,7 +54,9 @@ export type ActionId =
   | "palette"
   | "rename"
   | "star"
-  | "resummarize"
+  | "summarize"
+  | "exportMarkdown"
+  | "exportText"
   | "delete"
   | "toggleSidebar"
   | "toggleSummary"
@@ -73,7 +75,8 @@ export type AudioRef = { url: string; offsetSec: number };
 export type Utterance = { id: number; track: Track; startSec: number; text: string };
 
 export type MeetingDetail = MeetingRow & {
-  summary: Summary | null;
+  /** Markdown, written by Summarize and edited by the user. */
+  summary: string | null;
   error: string | null;
   /** This session's live model; null uses the one in Settings. */
   liveModel: string | null;
@@ -175,6 +178,13 @@ export type Api = {
   createMeeting(folderId?: number | null): Promise<number>;
   /** Starts recording a `new` session; false when it is not one. */
   startMeeting(id: number): Promise<boolean>;
+  /** Capture never started: the session goes back to `new`, ready for another try. */
+  abortMeeting(id: number): Promise<void>;
+  /** Imports an audio file into a `new` session: start, then each 16 kHz chunk, then finish. */
+  startImport(id: number): Promise<boolean>;
+  importChunk(id: number, startSec: number, pcm: Int16Array): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** `error`: the last failed chunk, if any; the session errors only when nothing was transcribed. */
+  finishImport(id: number, durationSec: number, error: string | null): Promise<void>;
   /** A session's own live model (null: Settings) or glossary (empty: the shared one). */
   setSessionOptions(id: number, options: { liveModel?: string | null; glossary?: string }): Promise<void>;
   sendChunk(chunk: Chunk): void;
@@ -190,7 +200,11 @@ export type Api = {
   /** `model` overrides the saved live model. */
   startLiveTest(model?: Settings["live"]): Promise<void>;
   stopLiveTest(): Promise<void>;
-  resummarize(id: number): Promise<void>;
+  /** Writes the summary with `model` (of the summary provider) or the one in Settings. */
+  summarize(id: number, model?: string): Promise<{ ok: true } | { ok: false; error: string }>;
+  setSummaryText(id: number, markdown: string): Promise<void>;
+  /** Save dialog, then the meeting as Markdown or plain text; false when cancelled. */
+  exportMeeting(id: number, format: "md" | "txt"): Promise<boolean>;
   markOpened(id: number): Promise<void>;
   audioFor(meetingId: number, track: Track, startSec: number): Promise<AudioRef | null>;
   getSettings(): Promise<Settings>;

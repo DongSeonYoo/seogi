@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, protocol, session, shell, systemPreferences } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, protocol, session, shell, systemPreferences } from "electron";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { GPT_LIVE_MODEL, GPT_LIVE_TAIL_MS, LIVE_TEST_ID, type LiveEvent } from "../shared/types";
@@ -13,13 +13,15 @@ import type {
   MenuSpec,
   ModelRole,
   StorageInfo,
+  Summary,
   Settings,
   StoredSettings,
   Track,
 } from "../shared/types";
 import { INTL_LOCALE, translator, type Locale } from "../shared/i18n";
+import { meetingDocument, summaryMarkdown } from "../shared/summary";
 import { joinSplitSentences } from "../shared/transcript";
-import { glossaryPrompt, isPromptEcho, summarize, testConnection } from "./ai";
+import { glossaryPrompt, isPromptEcho, splitUtterances, summarize, testConnection, transcribeFile } from "./ai";
 import { openDb } from "./db";
 import { History, perform } from "./library";
 import { LiveCaptions, openLiveStream } from "./live";
@@ -132,23 +134,39 @@ app.whenReady().then(async () => {
     return entry.captions.drops;
   }
 
+  /** Ends a recording once its last captions are stored; summarizing is a separate step. */
   async function finish(id: number) {
     db.setStatus(id, "processing");
     notify(id);
     const drops = await stopLive(id);
+    if (db.getMeeting(id)?.utterances.length)
+      db.setStatus(id, "done", drops ? tr()("error.captionsDropped", { n: drops }) : null);
+    else db.setStatus(id, "error", tr()("error.nothingTranscribed"));
+    notify(id);
+  }
+
+  /** Writes the summary on request, with `model` or the one in Settings. */
+  async function summarizeMeeting(id: number, model?: string): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
       const m = db.getMeeting(id);
       if (!m?.utterances.length) throw new Error(tr()("error.nothingTranscribed"));
       const transcript = joinSplitSentences(m.utterances)
         .map((u) => `[${clock(u.startSec)}] ${u.track === "mic" ? "Me" : "Others"}: ${u.text}`)
         .join("\n");
-      db.setSummary(id, await summarize(settings, transcript, glossaryFor(id)));
-      db.setOpened(id, false);
-      db.setStatus(id, "done", drops ? tr()("error.captionsDropped", { n: drops }) : null);
+      const s = await summarize(settings, transcript, glossaryFor(id), model);
+      db.setSummary(id, s.title, summaryMarkdown(s, tr()));
+      return { ok: true };
     } catch (e) {
-      db.setStatus(id, "error", e instanceof Error ? e.message : String(e));
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    } finally {
+      notify(id);
     }
-    notify(id);
+  }
+
+  // Summaries saved as the model's JSON before they became editable Markdown.
+  for (const { id, json } of db.legacySummaries()) {
+    const s = JSON.parse(json) as Summary;
+    db.setSummaryText(id, summaryMarkdown(s, tr()));
   }
 
   ipcMain.handle("listMeetings", (_e, view: LibraryView, query?: string) => db.listMeetings(view, query));
@@ -180,6 +198,35 @@ app.whenReady().then(async () => {
     startLive(id);
     notify(id);
     return true;
+  });
+  // An audio file dropped on an unrecorded session: the renderer decodes it and sends it in
+  // pause-cut chunks, each saved for playback and transcribed here. It is one mixed track, kept as
+  // "system" (the other side), since nobody in it is the person at this Mac.
+  ipcMain.handle("startImport", (_e, id: number) => {
+    const ok = db.startImport(id);
+    notify(id);
+    return ok;
+  });
+  ipcMain.handle("importChunk", async (_e, id: number, startSec: number, pcm: Int16Array) => {
+    saveChunk({ meetingId: id, track: "system", startSec, pcm });
+    try {
+      const t = await transcribeFile(settings, toWav(pcm), glossaryFor(id));
+      if (t.text) db.addUtterances(id, "system", splitUtterances(t, startSec, pcm.length / 16000));
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    } finally {
+      notify(id);
+    }
+  });
+  ipcMain.handle("finishImport", (_e, id: number, durationSec: number, error: string | null) => {
+    db.finishImport(id, durationSec, error);
+    notify(id);
+  });
+  ipcMain.handle("abortMeeting", async (_e, id: number) => {
+    await stopLive(id);
+    db.setStatus(id, "new");
+    notify(id);
   });
   ipcMain.handle("startLiveTest", (_e, model?: Settings["live"]) => {
     void live.get(LIVE_TEST_ID)?.captions.stop();
@@ -226,7 +273,24 @@ app.whenReady().then(async () => {
     db.setEnded(id);
     return finish(id);
   });
-  ipcMain.handle("resummarize", (_e, id: number) => finish(id));
+  ipcMain.handle("summarize", (_e, id: number, model?: string) => summarizeMeeting(id, model));
+  ipcMain.handle("setSummaryText", (_e, id: number, markdown: string) => {
+    db.setSummaryText(id, markdown);
+    notify(-1); // the list preview follows the edit
+  });
+  ipcMain.handle("exportMeeting", async (_e, id: number, format: "md" | "txt") => {
+    const m = db.getMeeting(id);
+    if (!m || !win) return false;
+    const { locale } = settings.get();
+    const date = new Date(m.startedAt).toLocaleString(INTL_LOCALE[locale], { dateStyle: "long", timeStyle: "short" });
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      defaultPath: `${m.title.replace(/[/:\\]/g, "-")}.${format}`,
+      filters: [format === "md" ? { name: "Markdown", extensions: ["md"] } : { name: "Plain Text", extensions: ["txt"] }],
+    });
+    if (canceled || !filePath) return false;
+    writeFileSync(filePath, meetingDocument(m, format, tr(), date));
+    return true;
+  });
   ipcMain.handle("markOpened", (_e, id: number) => db.setOpened(id, true));
   ipcMain.handle("audioFor", (_e, id: number, track: Track, startSec: number): AudioRef | null => {
     const dir = path.join(audioDir, String(id));
@@ -290,7 +354,12 @@ app.whenReady().then(async () => {
       callback({ video: screen, audio: "loopback" });
     } catch (e) {
       console.warn("[seogi] system audio unavailable:", e);
-      callback({});
+      // Electron has no explicit deny: an empty answer rejects getDisplayMedia but throws here too.
+      try {
+        callback({});
+      } catch {
+        // expected
+      }
     }
   });
 

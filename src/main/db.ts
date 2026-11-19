@@ -5,10 +5,10 @@ import type {
   LibraryView,
   MeetingRow,
   MeetingStatus,
-  Summary,
   Track,
   Utterance,
 } from "../shared/types";
+import { summaryPreview } from "../shared/summary.ts";
 
 export type Db = ReturnType<typeof openDb>;
 
@@ -63,8 +63,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
   const live = "m.deleted_at IS NULL";
   const select = `SELECT m.*, f.id AS live_folder_id,
       COALESCE((julianday(m.ended_at) - julianday(m.started_at)) * 86400,
-               (SELECT MAX(start_sec) FROM utterances u WHERE u.meeting_id = m.id), 0) AS duration_sec,
-      json_extract(m.summary, '$.overview') AS preview
+               (SELECT MAX(start_sec) FROM utterances u WHERE u.meeting_id = m.id), 0) AS duration_sec
     FROM meetings m LEFT JOIN folders f ON f.id = m.folder_id AND f.deleted_at IS NULL`;
 
   const toRow = (r: Record<string, unknown>): MeetingRow => ({
@@ -77,7 +76,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
     folderId: r.live_folder_id === null ? null : Number(r.live_folder_id),
     starred: !!r.starred,
     durationSec: Number(r.duration_sec ?? 0),
-    preview: r.preview ? String(r.preview) : null,
+    preview: r.summary ? summaryPreview(String(r.summary)) : null,
   });
 
   const viewWhere: Record<Exclude<LibraryView, number>, string> = {
@@ -110,6 +109,18 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
         db.prepare("UPDATE meetings SET glossary = ? WHERE id = ?").run(o.glossary.trim() || null, id);
     },
 
+    /** An imported file is being transcribed; only an unrecorded session takes one. */
+    startImport(id: number): boolean {
+      return db.prepare("UPDATE meetings SET status = 'processing' WHERE id = ? AND status = 'new'").run(id).changes > 0;
+    },
+
+    /** The import is done: its length is the file's, counted from when the session was made. */
+    finishImport(id: number, durationSec: number, error: string | null) {
+      const r = db.prepare("SELECT started_at FROM meetings WHERE id = ?").get(id);
+      const ended = new Date(Date.parse(String(r?.started_at)) + durationSec * 1000).toISOString();
+      db.prepare("UPDATE meetings SET status = ?, error = ?, ended_at = ? WHERE id = ?").run(error && !this.getMeeting(id)?.utterances.length ? "error" : "done", error, ended, id);
+    },
+
     /** Recording starts the clock, so the length leaves out the time before it. */
     startRecording(id: number): boolean {
       const r = db
@@ -135,10 +146,24 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       db.prepare("UPDATE meetings SET ended_at = COALESCE(ended_at, ?) WHERE id = ?").run(new Date().toISOString(), id);
     },
 
-    setSummary(id: number, summary: Summary) {
+    /** A new summary (Markdown) and its title; a title the user typed stays. */
+    setSummary(id: number, title: string, markdown: string) {
       db.prepare(
         "UPDATE meetings SET title = CASE WHEN title_edited THEN title ELSE ? END, summary = ? WHERE id = ?",
-      ).run(summary.title, JSON.stringify(summary), id);
+      ).run(title, markdown, id);
+    },
+
+    /** The user's edit of the summary text. */
+    setSummaryText(id: number, markdown: string) {
+      db.prepare("UPDATE meetings SET summary = ? WHERE id = ?").run(markdown.trim() ? markdown : null, id);
+    },
+
+    /** Summaries stored before they became Markdown, as the model's JSON. */
+    legacySummaries(): { id: number; json: string }[] {
+      return db
+        .prepare("SELECT id, summary FROM meetings WHERE summary LIKE '{%'")
+        .all()
+        .map((r) => ({ id: Number(r.id), json: String(r.summary) }));
     },
 
     addUtterances(meetingId: number, track: Track, rows: { startSec: number; text: string }[]) {
@@ -202,7 +227,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
         );
       return {
         ...toRow(r),
-        summary: r.summary ? (JSON.parse(String(r.summary)) as Summary) : null,
+        summary: r.summary ? String(r.summary) : null,
         error: r.error ? String(r.error) : null,
         liveModel: r.live_model ? String(r.live_model) : null,
         glossary: r.glossary ? String(r.glossary) : "",

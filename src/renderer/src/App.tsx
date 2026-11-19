@@ -50,6 +50,11 @@ export function App() {
   /** The live recording and a start in progress, read by handlers that may run before a re-render. */
   const recordingRef = useRef<Recording | null>(null);
   const startingRef = useRef<Promise<void> | null>(null);
+  /** The meeting whose summary is being written, and the last summarize failure. */
+  const [summarizing, setSummarizing] = useState<number | null>(null);
+  const [summaryError, setSummaryError] = useState<{ id: number; error: string } | null>(null);
+  /** The summary model picked in the pane; null uses the one in Settings. */
+  const [summaryModel, setSummaryModel] = useState<string | null>(null);
   /** Set when Stop is pressed before the start has a meeting to stop. */
   const cancelRef = useRef(false);
 
@@ -158,10 +163,22 @@ export function App() {
       if (recordingRef.current !== rec) return; // already stopped; nothing to report
       recordingRef.current = null;
       setRecording(null);
-      await api.stopMeeting(id);
+      await api.abortMeeting(id);
       const message = e instanceof Error ? e.message : String(e);
       setNotice(t("notice.startFailed", { error: message === NO_SYSTEM_AUDIO ? t("error.noSystemAudio") : message }));
     }
+  }
+
+  /** Writes the summary on request; an existing (possibly edited) one is replaced only if confirmed. */
+  async function summarizeMeeting(m: { id: number; summary?: string | null }) {
+    if (summarizing !== null) return;
+    if (m.summary?.trim() && !window.confirm(t("summary.replaceConfirm"))) return;
+    if (!panes.layout.summary) panes.toggleSummary();
+    setSummarizing(m.id);
+    setSummaryError(null);
+    const r = await api.summarize(m.id, summaryModel ?? undefined);
+    setSummarizing(null);
+    if (!r.ok) setSummaryError({ id: m.id, error: r.error });
   }
 
   /** A new, empty session in the folder on view, opened and ready to record. */
@@ -231,11 +248,22 @@ export function App() {
       enabled: !!current,
       run: () => void (current && run({ type: "star", ids: [current.id], starred: !current.starred })),
     },
-    resummarize: {
-      label: t("action.resummarize"),
+    summarize: {
+      label: t("action.summarize"),
       shortcut: "⇧⌘S",
-      enabled: !!current && !busy(current) && current.utterances.length > 0,
-      run: () => void (current && api.resummarize(current.id)),
+      enabled: !!current && !busy(current) && current.utterances.length > 0 && summarizing === null,
+      run: () => void (current && summarizeMeeting(current)),
+    },
+    exportMarkdown: {
+      label: t("action.exportMarkdown"),
+      shortcut: "⇧⌘E",
+      enabled: !!current && !busy(current),
+      run: () => void (current && api.exportMeeting(current.id, "md")),
+    },
+    exportText: {
+      label: t("action.exportText"),
+      enabled: !!current && !busy(current),
+      run: () => void (current && api.exportMeeting(current.id, "txt")),
     },
     delete: {
       label: t("action.delete"),
@@ -273,7 +301,14 @@ export function App() {
       { id: "rename", label: t("action.rename") },
       { id: "star", label: m.starred ? t("action.unstar") : t("action.star") },
       { label: t("action.moveTo"), submenu: folders },
-      { id: "resummarize", label: t("action.resummarize"), enabled: !locked },
+      { id: "summarize", label: t("action.summarize"), enabled: !locked && summarizing === null },
+      {
+        label: t("action.export"),
+        submenu: [
+          { id: "export:md", label: t("action.exportMarkdown"), enabled: !locked },
+          { id: "export:txt", label: t("action.exportText"), enabled: !locked },
+        ],
+      },
       { type: "separator" },
       { id: "delete", label: t("action.delete"), enabled: !locked },
     ]);
@@ -284,7 +319,8 @@ export function App() {
     }
     if (chosen === "rename") return setRenaming(true);
     if (chosen === "star") return void run({ type: "star", ids: [m.id], starred: !m.starred });
-    if (chosen === "resummarize") return void api.resummarize(m.id);
+    if (chosen === "summarize") return void summarizeMeeting(await api.getMeeting(m.id) ?? m);
+    if (chosen === "export:md" || chosen === "export:txt") return void api.exportMeeting(m.id, chosen === "export:md" ? "md" : "txt");
     if (chosen === "delete") {
       const i = meetings.findIndex((x) => x.id === m.id);
       const r = await run({ type: "delete", ids: [m.id] });
@@ -360,9 +396,9 @@ export function App() {
         onStartRename={() => perform("rename")}
         onNewSession={() => perform("newSession")}
         onStar={() => perform("star")}
-        onResummarize={() => perform("resummarize")}
+        onSummarize={() => perform("summarize")}
         onPalette={() => perform("palette")}
-        canResummarize={actions.resummarize.enabled !== false}
+        canSummarize={actions.summarize.enabled !== false}
       />
       <MeetingList
         title={viewTitle}
@@ -387,6 +423,12 @@ export function App() {
               width: panes.layout.summaryW,
               onResize: panes.resizeSummary,
               onReset: panes.resetSummary,
+              model: summaryModel,
+              onModel: setSummaryModel,
+              busy: summarizing === current.id,
+              error: summaryError?.id === current.id ? summaryError.error : null,
+              onSummarize: () => void summarizeMeeting(current),
+              onExport: (format) => void api.exportMeeting(current.id, format),
             }}
             onRecord={() => perform("record")}
           />

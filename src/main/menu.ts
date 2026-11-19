@@ -38,6 +38,9 @@ export function appMenu(history: History, send: (id: ActionId) => void, openSett
         item("record", t("menu.recordToggle"), "Cmd+Shift+R"),
         item("newFolder", t("action.newFolder"), "Cmd+Shift+N"),
         { type: "separator" },
+        item("exportMarkdown", `${t("action.exportMarkdown")}…`, "Cmd+Shift+E"),
+        item("exportText", `${t("action.exportText")}…`),
+        { type: "separator" },
         { role: "close", label: t("menu.closeWindow") },
       ],
     },
@@ -61,7 +64,7 @@ export function appMenu(history: History, send: (id: ActionId) => void, openSett
       submenu: [
         item("rename", t("action.rename")),
         item("star", t("action.star"), "Cmd+D"),
-        item("resummarize", t("action.resummarize"), "Cmd+Shift+S"),
+        item("summarize", t("action.summarize"), "Cmd+Shift+S"),
         { type: "separator" },
         item("delete", t("action.delete"), "Cmd+Backspace"),
       ],

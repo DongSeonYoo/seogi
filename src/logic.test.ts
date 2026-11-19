@@ -149,7 +149,6 @@ test("library changes undo and redo, deletes purge for real, and a resummary kee
   const history = new History();
   const run = (op: Parameters<typeof perform>[2]) => perform(db, history, op, translator("ko"));
   const titles = () => db.listMeetings("all").map((m) => m.title);
-  const summary = { title: "요약 제목", overview: "", decisions: [], actionItems: [], topics: [] };
 
   const a = db.createMeeting("회의 A");
   const b = db.createMeeting("회의 B");
@@ -160,7 +159,8 @@ test("library changes undo and redo, deletes purge for real, and a resummary kee
   db.setStatus(b, "done");
 
   run({ type: "rename", id: a, title: "내 제목" });
-  db.setSummary(a, summary);
+  db.setSummary(a, "요약 제목", "## 개요\n\n요약 본문");
+  assert.equal(db.listMeetings("all").find((m) => m.id === a)?.preview, "요약 본문");
   assert.equal(db.getMeeting(a)?.title, "내 제목");
   history.undo();
   assert.equal(db.getMeeting(a)?.title, "회의 A");
@@ -212,4 +212,25 @@ test("appendDelta spaces a new sentence but not a decimal or a delta that brings
   assert.equal(appendDelta("버전 2.", "23"), "버전 2.23");
   assert.equal(appendDelta("Hello.", " World"), "Hello. World");
   assert.equal(appendDelta("오늘은", " 큐그리드"), "오늘은 큐그리드");
+});
+
+test("summaries become editable Markdown, export as Markdown or plain text", async () => {
+  const { summaryMarkdown, summaryPreview, meetingDocument } = await import("./shared/summary.ts");
+  const { translator } = await import("./shared/i18n.ts");
+  const t = translator("en");
+  const md = summaryMarkdown(
+    { title: "T", overview: "We shipped.", decisions: ["Ship Friday"], actionItems: [{ owner: "Lee", task: "Tag release", due: "Fri" }], topics: [{ title: "Infra", points: ["Load test"] }] },
+    t,
+  );
+  assert.equal(md, "## Overview\n\nWe shipped.\n\n## Decisions\n\n- Ship Friday\n\n## Action Items\n\n- [ ] Tag release — Lee, Fri\n\n## Topics\n\n### Infra\n- Load test");
+  assert.equal(summaryPreview(md), "We shipped.");
+  assert.equal(summaryPreview("## Overview\n\nWe shipped [01:05]. Then left [1:02:03]."), "We shipped. Then left.");
+  const m = { title: "Sync", startedAt: "", summary: md, utterances: [{ id: 1, track: "mic" as const, startSec: 65, text: "Hello." }] };
+  const doc = meetingDocument(m, "md", t, "Nov 19");
+  assert.ok(doc.startsWith("# Sync\n\nNov 19\n\n## Summary\n\n### Overview"));
+  assert.ok(doc.includes("- `01:05` **Me**: Hello."));
+  const txt = meetingDocument(m, "txt", t, "Nov 19");
+  assert.ok(txt.startsWith("Sync\n\nNov 19\n\nSummary\n\nOverview"));
+  assert.ok(txt.includes("☐ Tag release — Lee, Fri"));
+  assert.ok(txt.includes("• 01:05 Me: Hello."));
 });

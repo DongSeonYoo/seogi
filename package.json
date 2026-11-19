@@ -33,7 +33,7 @@
     "start": "electron-vite preview",
     "typecheck": "tsc",
     "test": "node --test src/",
-    "dist": "electron-vite build && electron-builder --mac --dir"
+    "dist": "electron-vite build && electron-builder --mac --dir && sh scripts/sign-mac.sh dist/mac-arm64/Seogi.app"
   },
   "build": {
     "appId": "io.github.dongseonyoo.seogi",
@@ -51,7 +51,7 @@
         "NSMicrophoneUsageDescription": "Seogi records your voice in meetings to transcribe it.",
         "NSAudioCaptureUsageDescription": "Seogi records the other side of a call to transcribe it."
       },
-      "identity": "-",
+      "identity": null,
       "hardenedRuntime": false,
       "extraResources": [
         {

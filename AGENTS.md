@@ -7,6 +7,7 @@ Electron + React meeting recorder for macOS: records mic and system audio, write
 - The root `mise.toml` pins Node and pnpm. Run raw `node`, `npm`, `npx`, or `pnpm` commands with `mise exec -- <command>`; never use the host Node.js toolchain.
 - `mise run dev` starts the app with hot reload. `mise run check` runs typecheck, tests, and build; run it before committing.
 - Electron 45 downloads its binary on first run, not at install time.
+- `pnpm dist` signs the app with a fixed self-signed certificate (`scripts/sign-mac.sh`, made once in its own keychain) so macOS keeps Screen & System Audio Recording permission across reinstalls; ad-hoc signing changed identity every build.
 
 # Layout
 
