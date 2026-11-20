@@ -378,7 +378,7 @@
 }
 
 .list__rows:focus .row[aria-selected="true"] :is(.row__date, .row__meta, .row__preview, .row__status, .row__star) {
-  color: rgb(255 255 255 / 0.85);
+  color: var(--color-on-accent);
 }
 
 .list__rows:focus .row[aria-selected="true"] .row__dot {
@@ -541,6 +541,7 @@
 
 /* ── Transcript as message groups ───────────────────────────────────── */
 .transcript {
+  container: transcript / inline-size;
   flex: 1;
   overflow-y: auto;
   padding: var(--space-2) 0 var(--space-8);
@@ -556,8 +557,8 @@
   position: relative;
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr);
-  /* The right side keeps room for the hover actions (4 buttons) so they never cover text. */
-  padding: var(--space-half) calc(var(--space-5) + 124px) var(--space-half) 0;
+  /* The right side keeps room for the hover actions (up to 5 buttons) so they never cover text. */
+  padding: var(--space-half) calc(var(--space-5) + 152px) var(--space-half) 0;
   transition: background-color var(--dur-micro) var(--ease-out);
 }
 
@@ -926,6 +927,16 @@
   padding: var(--space-1) var(--space-2) var(--space-2);
 }
 
+.palette__list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.palette__item {
+  cursor: default;
+}
+
 .palette__group {
   padding: var(--space-2) var(--space-3) var(--space-1);
   color: var(--color-ink-3);
@@ -959,11 +970,11 @@
 }
 
 .palette__item[aria-selected="true"] :is(svg, .palette__item-meta) {
-  color: rgb(255 255 255 / 0.85);
+  color: var(--color-on-accent);
 }
 
 .palette__item[aria-selected="true"] .kbd {
-  background: rgb(255 255 255 / 0.2);
+  background: color-mix(in srgb, var(--color-on-accent) 18%, transparent);
   color: var(--color-on-accent);
 }
 
@@ -1272,6 +1283,17 @@
   background: var(--color-accent);
 }
 
+/* Focused from the keyboard: the divider line thickens so it is clearly the thing being moved. */
+.splitter:focus-visible {
+  outline: none;
+}
+
+.splitter:focus-visible::after {
+  left: 2px;
+  width: 3px;
+  background: var(--color-focus);
+}
+
 /* ── Session: transcript beside the summary pane ───────────────────── */
 .session {
   position: relative;
@@ -1326,8 +1348,22 @@
 
 .session-options {
   display: grid;
-  gap: var(--space-2);
-  width: min(520px, 100%);
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  width: min(560px, 100%);
+}
+
+/* A short visible name beside a field, so a model id or a glossary says what it is for. */
+.field-label {
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.summary-pane__label {
+  display: block;
+  margin-bottom: calc(var(--space-1) * -1); /* sits with its field, not a full gap above it */
 }
 
 /* ── Summary pane: model, Summarize, Export over an editable Markdown text ── */
@@ -1544,4 +1580,57 @@
 .import-pick:focus-within {
   outline: 3px solid var(--color-focus);
   outline-offset: 1px;
+}
+
+/* A narrow (or zoomed) Settings window: tabs wrap into a grid and each row stacks its control
+ * under its label, so nothing runs off the right edge. */
+@media (max-width: 36rem) {
+  .prefs__tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .prefs__tab {
+    min-width: 0;
+  }
+
+  .settings {
+    padding: var(--space-4);
+  }
+
+  .setting-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+}
+
+/* The row actions folded into one menu: shown only in a narrow transcript. */
+.msg__more {
+  display: none;
+}
+
+.msg__time {
+  white-space: nowrap;
+}
+
+/* A narrow transcript (the summary pane open in a small window): a slimmer gutter, and the
+ * actions folded into one ⋯ menu so speech keeps the room the five buttons reserved. */
+@container transcript (max-width: 24rem) {
+  .msg {
+    grid-template-columns: 40px minmax(0, 1fr);
+    padding-right: calc(var(--space-3) + 30px);
+  }
+
+  .msg__actions {
+    right: var(--space-2);
+  }
+
+  .msg__actions > .icon-btn:not(.msg__more) {
+    display: none;
+  }
+
+  .msg__actions > .msg__more {
+    display: inline-flex;
+  }
 }

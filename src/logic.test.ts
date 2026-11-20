@@ -134,6 +134,13 @@ test("a finished meeting records on with its end unset, and only a finished one"
   assert.equal(Math.round(db.getMeeting(id)!.durationSec), 35);
 });
 
+test("text on the macOS accent is black or white, whichever reads better", async () => {
+  const { onAccent } = await import("./renderer/src/format.ts");
+  assert.equal(onAccent("#007aff"), "#000000"); // system blue: black 5.2:1 beats white 4.0:1
+  assert.equal(onAccent("#1d1d1f"), "#ffffff");
+  assert.equal(onAccent("#ffcc00"), "#000000");
+});
+
 test("a hand edit replaces a shown line's text and removes the pieces joined to it", async () => {
   const { openDb } = await import("./main/db.ts");
   const db = openDb(":memory:");

@@ -155,17 +155,20 @@ export function Switch({
   label,
   disabled,
   className = "",
+  id,
 }: {
   checked: boolean;
   onChange: (next: boolean) => void;
   label: string;
   disabled?: boolean;
   className?: string;
+  id?: string;
 }) {
   return (
     <button
       type="button"
       role="switch"
+      id={id}
       className={`switch ${className}`}
       aria-checked={checked}
       aria-label={label}
@@ -279,3 +282,4 @@ export function useAppStyle() {
     return window.api.onStyle(apply);
   }, []);
 }
+

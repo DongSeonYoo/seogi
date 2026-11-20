@@ -30,7 +30,7 @@
   --color-accent: var(--system-accent);
   --color-accent-text: color-mix(in oklab, var(--system-accent) 78%, black); /* 4.5:1 on chrome and selected backgrounds */
   --color-accent-soft: color-mix(in srgb, var(--system-accent) 14%, transparent);
-  --color-on-accent: #ffffff;
+  --color-on-accent: var(--system-on-accent, #ffffff); /* black or white, whichever reads on the accent */
   --color-focus: var(--color-accent); /* opaque: 3:1+ on window and chrome */
 
   --color-record: #ff3b30; /* the record control and live dot, as in Voice Memos */

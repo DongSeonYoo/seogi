@@ -1,4 +1,4 @@
-import { AlertCircle, BookmarkPlus, BookPlus, X, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
+import { AlertCircle, BookmarkPlus, BookPlus, Ellipsis, RotateCcw, X, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { GPT_LIVE_MODEL, type LiveView, type Track, type MeetingDetail, type ModelOption, type Settings, type SpeakerNames, type Utterance } from "../../shared/types";
 import { clock, speakerKey, speakerName } from "../../shared/summary";
@@ -8,7 +8,7 @@ import { useI18n, useT } from "./i18n";
 import { showStored } from "../../shared/i18n";
 import { Elapsed, type Recording } from "./Toolbar";
 import { IMPORT_EXTENSIONS, importAudio, readAudioFile, separateSpeakers, useImportProgress, type AudioFile } from "./importAudio";
-import { Splitter } from "./Splitter";
+import { Splitter, SUMMARY_W } from "./Splitter";
 import { SummaryDoc } from "./SummaryDoc";
 import { Button, CommitInput, IconButton, Select } from "./ui";
 
@@ -22,6 +22,8 @@ export type SummaryPane = {
   model: string | null;
   onModel: (model: string | null) => void;
   busy: boolean;
+  /** Another meeting is being summarized (one at a time). */
+  elsewhere: boolean;
   error: string | null;
   onSummarize: () => void;
   onSave: (id: number, markdown: string) => void;
@@ -268,6 +270,7 @@ export function MeetingView({
             line={playback.now?.line ?? null}
             at={playback.spot.startSec}
             playing={playback.playing}
+            failure={playback.failure}
             onToggle={() => (playback.playing ? playback.pause() : playback.paused && playback.play({ ...playback.paused, exact: true }))}
             onSeek={(sec) => playback.seek(playback.spot!.track, sec)}
             onClose={playback.close}
@@ -312,6 +315,7 @@ export function MeetingView({
           <Splitter
             side="right"
             at={summary.width}
+            range={SUMMARY_W}
             label={t("detail.resizeSummary")}
             onResize={summary.onResize}
             onReset={summary.onReset}
@@ -351,7 +355,9 @@ function SessionOptions({ meeting: m, running }: { meeting: MeetingDetail; runni
   const model = m.liveModel ?? saved;
   return (
     <div className="session-options">
+      {!running && <label className="field-label" htmlFor={`caption-model-${m.id}`}>{t("session.modelShort")}</label>}
       {!running && <Select
+        id={`caption-model-${m.id}`}
         aria-label={t("session.model")}
         value={model}
         onChange={(e) => void window.api.setSessionOptions(m.id, { liveModel: e.target.value === saved ? null : e.target.value })}
@@ -363,7 +369,9 @@ function SessionOptions({ meeting: m, running }: { meeting: MeetingDetail; runni
           </option>
         ))}
       </Select>}
+      <label className="field-label" htmlFor={`glossary-${m.id}`}>{t("session.glossaryShort")}</label>
       <CommitInput
+        id={`glossary-${m.id}`}
         disabled={running && model !== GPT_LIVE_MODEL}
         title={running && model !== GPT_LIVE_MODEL ? t("session.glossaryLocked") : undefined}
         aria-label={t("session.glossary")}
@@ -671,6 +679,15 @@ const Message = memo(function Message({
                 if (el && naming && document.activeElement !== el) startEditing(el);
               }}
               onClick={() => !u.draft && setNaming(true)}
+              // A button for the keyboard too: Enter or Space renames.
+              role={u.draft || naming ? undefined : "button"}
+              tabIndex={u.draft || naming ? undefined : 0}
+              onKeyDown={naming ? undefined : (e) => {
+                if (u.draft || (e.key !== "Enter" && e.key !== " ")) return;
+                e.preventDefault();
+                e.stopPropagation();
+                setNaming(true);
+              }}
               {...(naming && editKeys(
                 (el) => {
                   setNaming(false);
@@ -760,6 +777,28 @@ const Message = memo(function Message({
         </p>
       </div>
       {!u.draft && (hovered || hasFocus) && <div className="msg__actions">
+        {/* A narrow transcript folds the actions into one menu (see .transcript's container query). */}
+        <IconButton
+          className="msg__more"
+          label={t("detail.lineActions")}
+          onClick={async () => {
+            const word = cursor !== null ? parts[cursor] : "";
+            const pick = await window.api.showMenu([
+              { id: "play", label: playing ? t("detail.pause") : t("detail.play") },
+              { id: "copy", label: t("detail.copy") },
+              { id: "edit", label: t("edit.line") },
+              { id: "stamp", label: t("detail.stamp") },
+              ...(word ? [{ id: "term", label: t("edit.addTermWord", { word }) }] : []),
+            ]);
+            if (pick === "play") void (playing ? player.pause() : player.play(u));
+            else if (pick === "copy") void navigator.clipboard.writeText(u.text);
+            else if (pick === "edit") setEditing("line");
+            else if (pick === "stamp") onStamp(u);
+            else if (pick === "term") onTerm(word.replace(/[.,!?…"'()]+$/u, ""));
+          }}
+        >
+          <Ellipsis aria-hidden />
+        </IconButton>
         <IconButton label={playing ? t("detail.pause") : t("detail.play")} onClick={() => (playing ? player.pause() : player.play(u))}>
           {playing ? <Pause aria-hidden /> : <Play aria-hidden />}
         </IconButton>
@@ -773,6 +812,12 @@ const Message = memo(function Message({
         >
           {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
         </IconButton>
+        {cursor !== null && parts[cursor] && (
+          // The keyboard's way to the glossary icon a pointer gets on the word.
+          <IconButton label={t("edit.addTermWord", { word: parts[cursor] })} onClick={() => onTerm(parts[cursor].replace(/[.,!?…"'()]+$/u, ""))}>
+            <BookPlus aria-hidden />
+          </IconButton>
+        )}
         <IconButton label={t("edit.line")} onClick={() => setEditing("line")}>
           <Pencil aria-hidden />
         </IconButton>
@@ -795,8 +840,9 @@ const Message = memo(function Message({
  * Shown while a line plays (or is paused): play/pause, where in the meeting, who is speaking and
  * what; the line jumps the transcript to it, the track seeks.
  */
-function PlaybackBar({ meeting: m, line, at, playing, onToggle, onSeek, onClose }: {
+function PlaybackBar({ meeting: m, line, at, playing, failure, onToggle, onSeek, onClose }: {
   meeting: MeetingDetail;
+  failure: "missing" | "failed" | null;
   /** null between captions (before the first one, say). */
   line: Utterance | null;
   at: number;
@@ -809,10 +855,14 @@ function PlaybackBar({ meeting: m, line, at, playing, onToggle, onSeek, onClose 
   const total = Math.max(m.durationSec, at, 1);
   return (
     <div className="playbar" role="region" aria-label={t("player.label")}>
-      <IconButton label={playing ? t("detail.pause") : t("detail.play")} onClick={onToggle}>
-        {playing ? <Pause aria-hidden /> : <Play aria-hidden />}
+      <IconButton label={playing ? t("detail.pause") : failure ? t("player.retry") : t("detail.play")} onClick={onToggle}>
+        {playing ? <Pause aria-hidden /> : failure ? <RotateCcw aria-hidden /> : <Play aria-hidden />}
       </IconButton>
-      {line ? (
+      {failure ? (
+        <span className="playbar__line playbar__text" role="status">
+          {t(failure === "missing" ? "player.missing" : "player.failed")}
+        </span>
+      ) : line ? (
         <button
           type="button"
           className="playbar__line"
@@ -909,6 +959,8 @@ const HEARD_LEAD_SEC = 1.2;
 function usePlayer(meetingId: number, lines: Utterance[]) {
   const [run, setRun] = useState<{ meetingId: number; at: Cue } | null>(null);
   const [paused, setPaused] = useState<Cue | null>(null);
+  /** Why playback stopped on its own when it was not the end: no audio there, or it would not play. */
+  const [failure, setFailure] = useState<"missing" | "failed" | null>(null);
   /** Where in the audio playback is (audio time, not caption time). */
   const [heard, setHeard] = useState<Cue | null>(null);
   const heardRef = useRef<Cue | null>(null);
@@ -918,6 +970,7 @@ function usePlayer(meetingId: number, lines: Utterance[]) {
   };
   const play = useCallback((at: Cue) => {
     setPaused(null);
+    setFailure(null);
     hear({ track: at.track, startSec: at.exact ? at.startSec : at.startSec - HEARD_LEAD_SEC, exact: true });
     setRun({ meetingId, at });
   }, [meetingId]);
@@ -941,6 +994,7 @@ function usePlayer(meetingId: number, lines: Utterance[]) {
     setRun(null);
     setPaused(null);
     setHeard(null);
+    setFailure(null);
   }, []);
   useEffect(close, [meetingId, close]);
 
@@ -957,16 +1011,19 @@ function usePlayer(meetingId: number, lines: Utterance[]) {
       audio.load();
       audio = null;
     }
-    function finish() {
+    /** The end of the audio (quietly), or a failure: the bar stays, paused there, saying why. */
+    function finish(why?: "missing" | "failed") {
       if (!active) return;
       setRun((r) => (r === run ? null : r));
-      setHeard(null);
+      if (!why) return setHeard(null);
+      setFailure(why);
+      setPaused(heardRef.current ?? run!.at);
     }
     async function play(at: number, previousUrl?: string) {
       try {
         const ref = await window.api.audioFor(meetingId, track, at, exact);
         if (!active) return;
-        if (!ref || ref.url === previousUrl) return finish();
+        if (!ref || ref.url === previousUrl) return finish(previousUrl ? undefined : "missing");
         release();
         const a = new Audio();
         audio = a;
@@ -974,15 +1031,15 @@ function usePlayer(meetingId: number, lines: Utterance[]) {
           a.onloadedmetadata = null;
           const offset = previousUrl ? 0 : ref.offsetSec;
           a.currentTime = offset < a.duration ? offset : Math.max(0, a.duration - 2);
-          void a.play().catch(() => { if (audio === a) finish(); });
+          void a.play().catch(() => { if (audio === a) finish("failed"); });
         };
         a.ontimeupdate = () => hear({ track, startSec: ref.chunkStartSec + a.currentTime, exact: true });
         a.onended = () => { void play(ref.chunkStartSec + a.duration + 0.05, ref.url); };
         a.onpause = () => { if (!a.ended) finish(); };
-        a.onerror = finish;
+        a.onerror = () => finish("failed");
         a.src = ref.url;
       } catch {
-        finish();
+        finish("failed");
       }
     }
     void play(startSec);
@@ -1007,7 +1064,7 @@ function usePlayer(meetingId: number, lines: Utterance[]) {
   }, [lines, spot]);
   const playingId = run ? (now?.line.id ?? null) : null;
   const controls = useMemo(() => ({ playingId, play, pause }), [playingId, play, pause]);
-  return { controls, now, spot, playing: !!run, paused, play, pause, seek, close };
+  return { controls, now, spot, playing: !!run, paused, failure, play, pause, seek, close };
 }
 
 
@@ -1033,8 +1090,10 @@ function SummaryView({ meeting: m, pane, onTime }: { meeting: MeetingDetail; pan
   const recorded = m.utterances.length > 0 && m.status !== "recording" && m.status !== "processing";
   return (
     <div className="summary-pane">
+      <label className="field-label summary-pane__label" htmlFor={`summary-model-${m.id}`}>{t("summary.model")}</label>
       <div className="summary-pane__bar">
         <Select
+          id={`summary-model-${m.id}`}
           aria-label={t("summary.model")}
           value={model}
           disabled={pane.busy}
@@ -1047,7 +1106,13 @@ function SummaryView({ meeting: m, pane, onTime }: { meeting: MeetingDetail; pan
             </option>
           ))}
         </Select>
-        <Button icon={<Sparkles aria-hidden />} state={pane.busy ? "loading" : undefined} disabled={!recorded} onClick={pane.onSummarize}>
+        <Button
+          icon={<Sparkles aria-hidden />}
+          state={pane.busy ? "loading" : undefined}
+          disabled={!recorded || pane.elsewhere}
+          title={pane.elsewhere ? t("summary.elsewhere") : undefined}
+          onClick={pane.onSummarize}
+        >
           {pane.busy ? t("summary.writing") : m.summary ? t("summary.again") : t("action.summarize")}
         </Button>
         <IconButton

@@ -662,6 +662,7 @@ app.whenReady().then(async () => {
     version: app.getVersion(),
     electron: process.versions.electron,
     platform: `macOS ${process.getSystemVersion()}`,
+    packaged: app.isPackaged,
   }));
 
   // getDisplayMedia in the renderer gets system audio through Core Audio tap (Electron 39+,

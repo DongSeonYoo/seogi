@@ -55,6 +55,13 @@ export function MeetingList({
         aria-label={title}
         aria-activedescendant={selected !== null ? `meeting-${selected}` : undefined}
         onKeyDown={(e) => {
+          // The selected meeting's menu (rename, star, move to folder, delete) from the keyboard.
+          if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+            const m = meetings.find((x) => x.id === selected);
+            if (!m) return;
+            e.preventDefault();
+            return void Promise.resolve(onMenu(m)).finally(() => list.current?.focus());
+          }
           // ⌘⌫ is the menu's Delete accelerator; handling it here too would delete twice.
           const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
           if (!step || !meetings.length) return;

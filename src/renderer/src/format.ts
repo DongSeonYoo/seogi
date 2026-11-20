@@ -90,3 +90,13 @@ export function insertDrafts<T extends Utterance>(confirmed: T[][], drafts: T[])
   return groups;
 }
 
+
+/** Black or white, whichever has the higher WCAG contrast on `hex` (the user's macOS accent). */
+export function onAccent(hex: string): string {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return (l + 0.05) / 0.05 > 1.05 / (l + 0.05) ? "#000000" : "#ffffff";
+}

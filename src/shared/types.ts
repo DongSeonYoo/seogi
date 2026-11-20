@@ -176,7 +176,8 @@ export type ConnectionResult = { ok: true; ms: number } | { ok: false; error: st
 
 export type StorageInfo = { path: string; bytes: number; audio: number; database: number; models: number; meetings: number };
 
-export type AppInfo = { version: string; electron: string; platform: string };
+/** `packaged`: an installed build (keys go to the keychain), not a development one (plain file). */
+export type AppInfo = { version: string; electron: string; platform: string; packaged: boolean };
 
 export type Api = {
   /** A query (even empty) searches for up to 50 palette results. Omit it to list the whole view. */

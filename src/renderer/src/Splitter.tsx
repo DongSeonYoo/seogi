@@ -5,9 +5,9 @@ export type Layout = { sidebar: boolean; sidebarW: number; listW: number; summar
 
 const KEY = "seogi.layout";
 const DEFAULT: Layout = { sidebar: true, sidebarW: 232, listW: 320, summary: true, summaryW: 380 };
-const SIDEBAR_W = { min: 180, max: 360 };
-const LIST_W = { min: 240, max: 560 };
-const SUMMARY_W = { min: 280, max: 720 };
+export const SIDEBAR_W = { min: 180, max: 360 };
+export const LIST_W = { min: 240, max: 560 };
+export const SUMMARY_W = { min: 280, max: 720 };
 /** Dragging a side pane narrower than this hides it, like Finder. */
 const COLLAPSE_BELOW = 120;
 /** The transcript keeps at least this much room (so list + summary still fit a 900 px window). */
@@ -58,7 +58,14 @@ export function useLayout() {
     layout,
     style: { "--sidebar-w": `${layout.sidebarW}px`, "--list-w": `${layout.listW}px` } as CSSProperties,
     // Toggles act on what is on screen, so one press always shows or hides the pane.
-    toggleSidebar: () => setLayout((l) => ({ ...l, sidebar: !layout.sidebar })),
+    // Opening the sidebar where it and the summary cannot both fit closes the summary: the pane
+    // asked for wins (else the narrow-window rule would hide the sidebar again at once).
+    toggleSidebar: () =>
+      setLayout((l) => {
+        if (layout.sidebar) return { ...l, sidebar: false };
+        const fits = windowW - l.sidebarW - l.listW - (layout.summary ? SUMMARY_W.min : 0) >= DETAIL_MIN;
+        return { ...l, sidebar: true, summary: fits ? l.summary : false };
+      }),
     toggleSummary: () => setLayout((l) => ({ ...l, summary: !layout.summary })),
     resizeSidebar: (w: number) =>
       setLayout((l) =>
@@ -88,6 +95,8 @@ export function Splitter({
   side = "left",
   label,
   className,
+  value,
+  range,
   onResize,
   onReset,
 }: {
@@ -95,6 +104,9 @@ export function Splitter({
   side?: "left" | "right";
   label: string;
   className?: string;
+  /** The pane's width, for assistive technology (defaults to `at`). */
+  value?: number;
+  range: { min: number; max: number };
   onResize: (width: number) => void;
   onReset: () => void;
 }) {
@@ -105,6 +117,18 @@ export function Splitter({
       role="separator"
       aria-orientation="vertical"
       aria-label={label}
+      // Focusable, so the keyboard resizes too: arrows by 16 px (toward the pane grows it), Enter resets.
+      tabIndex={0}
+      aria-valuenow={Math.round(value ?? at)}
+      aria-valuemin={range.min}
+      aria-valuemax={range.max}
+      onKeyDown={(e) => {
+        const step = e.key === "ArrowRight" ? 16 : e.key === "ArrowLeft" ? -16 : 0;
+        if (step) onResize(at + (side === "left" ? step : -step));
+        else if (e.key === "Enter") onReset();
+        else return;
+        e.preventDefault();
+      }}
       data-dragging={dragging || undefined}
       data-side={side}
       style={side === "left" ? { left: at } : { right: at - 4 }}

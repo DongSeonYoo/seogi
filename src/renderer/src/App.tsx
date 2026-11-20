@@ -23,9 +23,10 @@ import { encodeOpus } from "./opus";
 import { liveCaptionHooks } from "./gptLive";
 import { NO_SYSTEM_AUDIO, startRecording } from "./recorder";
 import { Sidebar } from "./Sidebar";
-import { Splitter, useLayout } from "./Splitter";
+import { LIST_W, SIDEBAR_W, Splitter, useLayout } from "./Splitter";
 import { Toolbar, type Recording } from "./Toolbar";
 import { useAppStyle } from "./ui";
+import { onAccent } from "./format";
 
 const api = window.api;
 const StyleGuide = import.meta.env.DEV
@@ -156,7 +157,10 @@ export function App() {
 
   // The selection follows the macOS accent colour.
   useEffect(() => {
-    const apply = (hex: string) => document.documentElement.style.setProperty("--system-accent", hex);
+    const apply = (hex: string) => {
+      document.documentElement.style.setProperty("--system-accent", hex);
+      document.documentElement.style.setProperty("--system-on-accent", onAccent(hex));
+    };
     void api.accentColor().then(apply);
     return api.onAccentColor(apply);
   }, []);
@@ -542,6 +546,7 @@ export function App() {
       {sidebar && (
         <Splitter
           at={panes.layout.sidebarW}
+          range={SIDEBAR_W}
           label={t("sidebar.resize")}
           onResize={panes.resizeSidebar}
           onReset={panes.resetSidebar}
@@ -549,6 +554,8 @@ export function App() {
       )}
       <Splitter
         at={(sidebar ? panes.layout.sidebarW : 0) + panes.layout.listW}
+        value={panes.layout.listW}
+        range={LIST_W}
         label={t("sidebar.resizeList")}
         className="splitter--list"
         onResize={(w) => panes.resizeList(w - (sidebar ? panes.layout.sidebarW : 0))}
@@ -618,6 +625,7 @@ export function App() {
               model: summaryModel,
               onModel: setSummaryModel,
               busy: summarizing === current.id,
+              elsewhere: summarizing !== null && summarizing !== current.id,
               error: summaryError?.id === current.id ? summaryError.error : null,
               onSummarize: () => void summarizeMeeting(current),
               onExport: (format) => void api.exportMeeting(current.id, format),
@@ -629,8 +637,18 @@ export function App() {
           />
         ) : (
           <div className="placeholder">
-            <strong>{meetings.length ? t("placeholder.pick") : t("placeholder.empty")}</strong>
-            <span>{t("placeholder.hint")}</span>
+            {/* An empty Starred or folder says how to fill it; recording does not put anything there. */}
+            <strong>
+              {meetings.length ? t("placeholder.pick")
+                : view === "starred" ? t("placeholder.emptyStarred")
+                : typeof view === "number" ? t("placeholder.emptyFolder")
+                : t("placeholder.empty")}
+            </strong>
+            <span>
+              {!meetings.length && view === "starred" ? t("placeholder.emptyStarredHint")
+                : !meetings.length && typeof view === "number" ? t("placeholder.emptyFolderHint")
+                : t("placeholder.hint")}
+            </span>
           </div>
         )}
       </main>

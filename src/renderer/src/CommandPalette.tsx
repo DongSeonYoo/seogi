@@ -109,31 +109,39 @@ function PaletteBody({
         }}
       />
       <ul className="palette__list" id="palette-list" role="listbox" aria-label={t("palette.results")}>
-        {items.map((item, i) => (
-          <li key={item.kind === "action" ? item.id : item.meeting.id}>
-            {(i === 0 || items[i - 1].kind !== item.kind) && (
-              <div className="palette__group">{item.kind === "action" ? t("palette.commands") : t("palette.meetings")}</div>
-            )}
-            <button
-              type="button"
-              id={`palette-${i}`}
-              role="option"
-              className="palette__item"
-              aria-selected={i === active}
-              tabIndex={-1}
-              onMouseMove={() => setActive(i)}
-              onClick={() => pick(item)}
-            >
-              {item.kind === "action" ? <ChevronRight aria-hidden /> : <FileText aria-hidden />}
-              <span className="palette__item-title">{item.kind === "action" ? item.action.label : item.meeting.title}</span>
-              {item.kind === "action" ? (
-                item.action.shortcut && <Kbd>{item.action.shortcut}</Kbd>
-              ) : (
-                <span className="palette__item-meta tnum">{fullDate(item.meeting.startedAt, i18n)}</span>
-              )}
-            </button>
-          </li>
-        ))}
+        {(["action", "meeting"] as const).map((kind) => {
+          const group = items.flatMap((item, i) => (item.kind === kind ? [{ item, i }] : []));
+          if (!group.length) return null;
+          return (
+            <li key={kind} role="group" aria-labelledby={`palette-group-${kind}`}>
+              <div className="palette__group" id={`palette-group-${kind}`}>
+                {kind === "action" ? t("palette.commands") : t("palette.meetings")}
+              </div>
+              <ul role="presentation">
+                {group.map(({ item, i }) => (
+                  // Options are the items themselves; focus stays in the search field (aria-activedescendant).
+                  <li
+                    key={item.kind === "action" ? item.id : item.meeting.id}
+                    id={`palette-${i}`}
+                    role="option"
+                    className="palette__item"
+                    aria-selected={i === active}
+                    onMouseMove={() => setActive(i)}
+                    onClick={() => pick(item)}
+                  >
+                    {item.kind === "action" ? <ChevronRight aria-hidden /> : <FileText aria-hidden />}
+                    <span className="palette__item-title">{item.kind === "action" ? item.action.label : item.meeting.title}</span>
+                    {item.kind === "action" ? (
+                      item.action.shortcut && <Kbd>{item.action.shortcut}</Kbd>
+                    ) : (
+                      <span className="palette__item-meta tnum">{fullDate(item.meeting.startedAt, i18n)}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </li>
+          );
+        })}
         {/* No verdict while this query's meetings are still on their way. */}
         {!items.length && results?.query === query && <li className="empty">{t("palette.noMatch", { query })}</li>}
       </ul>

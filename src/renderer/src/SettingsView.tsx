@@ -1,5 +1,5 @@
 import { Cpu, FolderOpen, HardDrive, Info, Languages, Mic, Plug, SlidersHorizontal, Square } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useId, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   DEFAULT_MODELS,
   LIVE_TEST_ID,
@@ -24,6 +24,7 @@ import { startRecording } from "./recorder";
 import { useT } from "./i18n";
 import { LOCALES, showStored, type Locale, type MessageKey } from "../../shared/i18n";
 import { Button, CommitInput, Kbd, Segmented, Select, Switch, useAppStyle } from "./ui";
+import { onAccent } from "./format";
 
 const SECTIONS = [
   { id: "general", label: "settings.general", icon: SlidersHorizontal },
@@ -51,7 +52,10 @@ export function SettingsView() {
     return window.api.onMeetingChanged(load);
   }, []);
   useEffect(() => {
-    const apply = (hex: string) => document.documentElement.style.setProperty("--system-accent", hex);
+    const apply = (hex: string) => {
+      document.documentElement.style.setProperty("--system-accent", hex);
+      document.documentElement.style.setProperty("--system-on-accent", onAccent(hex));
+    };
     void window.api.accentColor().then(apply);
     return window.api.onAccentColor(apply);
   }, []);
@@ -88,14 +92,32 @@ export function SettingsView() {
     <div className="prefs">
       <header className="prefs__toolbar drag">
         <h1 className="prefs__title">{t(SECTIONS.find((x) => x.id === section)!.label)}</h1>
-        <nav className="prefs__tabs" role="tablist" aria-label={t("settings.tabs")}>
+        <nav
+          className="prefs__tabs"
+          role="tablist"
+          aria-label={t("settings.tabs")}
+          // One tab stop: arrows move between tabs (and select them), Home/End jump to the ends.
+          onKeyDown={(e) => {
+            const i = SECTIONS.findIndex((x) => x.id === section);
+            const n = SECTIONS.length;
+            const next =
+              e.key === "ArrowRight" ? (i + 1) % n : e.key === "ArrowLeft" ? (i - 1 + n) % n : e.key === "Home" ? 0 : e.key === "End" ? n - 1 : -1;
+            if (next < 0) return;
+            e.preventDefault();
+            setSection(SECTIONS[next].id);
+            document.getElementById(`tab-${SECTIONS[next].id}`)?.focus();
+          }}
+        >
           {SECTIONS.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
+              id={`tab-${id}`}
               type="button"
               role="tab"
               className="prefs__tab"
               aria-selected={id === section}
+              aria-controls="settings-panel"
+              tabIndex={id === section ? 0 : -1}
               onClick={() => setSection(id)}
             >
               <Icon aria-hidden />
@@ -104,7 +126,7 @@ export function SettingsView() {
           ))}
         </nav>
       </header>
-      <div className="settings selectable">
+      <div className="settings selectable" id="settings-panel" role="tabpanel" aria-labelledby={`tab-${section}`}>
         <div className="settings__inner">
           {saveError && (
             <p className="notice" role="alert">
@@ -147,15 +169,24 @@ function Row({
   stack?: boolean;
   children: ReactNode;
 }) {
+  const id = useId();
   return (
     <div className={stack ? "setting-row setting-row--stack" : "setting-row"}>
       <div className="setting-row__text">
-        <label className="setting-row__label" htmlFor={htmlFor}>
+        <label className="setting-row__label" id={`${id}-label`} htmlFor={htmlFor}>
           {label}
         </label>
-        {description && <p className="setting-row__desc">{description}</p>}
+        {description && <p className="setting-row__desc" id={`${id}-desc`}>{description}</p>}
       </div>
-      <div className="setting-row__control">{children}</div>
+      {/* The control is named and described by this row, whatever kind of control it is. */}
+      <div
+        className="setting-row__control"
+        role="group"
+        aria-labelledby={`${id}-label`}
+        aria-describedby={description ? `${id}-desc` : undefined}
+      >
+        {children}
+      </div>
     </div>
   );
 }
@@ -216,6 +247,14 @@ function General({ s, patch }: SectionProps) {
       </Row>
     </Group>
   );
+}
+
+/** Where keys are kept, as the storage really does it: a development build keeps them in a plain file. */
+function KeysNote() {
+  const t = useT();
+  const [packaged, setPackaged] = useState(true);
+  useEffect(() => void window.api.appInfo().then((i) => setPackaged(i.packaged)), []);
+  return <p className="settings-group__note">{t(packaged ? "settings.keysNote" : "settings.keysNoteDev")}</p>;
 }
 
 const PROVIDER_NAME: Record<string, string> = { qgrid: "qgrid", openai: "OpenAI", anthropic: "Anthropic" };
@@ -375,7 +414,7 @@ function Models({ s, patch, setS }: SectionProps & { setS: (s: Settings) => void
       <Group title={t("settings.apiKeys")}>
         <KeyRow name="openai" label="OpenAI" placeholder="sk-…" stored={s.hasKey.openai} onChange={setS} />
         <KeyRow name="anthropic" label="Anthropic" placeholder="sk-ant-…" stored={s.hasKey.anthropic} onChange={setS} />
-        <p className="settings-group__note">{t("settings.keysNote")}</p>
+        <KeysNote />
       </Group>
     </>
   );
@@ -541,8 +580,10 @@ function RecordingSection({ s, patch, recording }: SectionProps & { recording: b
       <Row
         label={t("settings.systemAudio")}
         description={t("settings.systemAudioDesc", { later })}
+        htmlFor="system-audio"
       >
         <Switch
+          id="system-audio"
           label={t("settings.systemAudio")}
           checked={s.recording.systemAudio}
           onChange={(systemAudio) => patch({ recording: { ...s.recording, systemAudio } })}
