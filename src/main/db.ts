@@ -295,6 +295,26 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       else delete names[key];
       db.prepare("UPDATE meetings SET speaker_names = ? WHERE id = ?").run(Object.keys(names).length ? JSON.stringify(names) : null, id);
     },
+    /** Lines as stored, for putting them back after an edit is undone. */
+    linesById(meetingId: number, ids: number[]): Utterance[] {
+      const get = db.prepare("SELECT id, track, start_sec, text, speaker FROM utterances WHERE id = ? AND meeting_id = ?");
+      return ids.flatMap((id) => {
+        const r = get.get(id, meetingId);
+        return r ? [{ id: Number(r.id), track: r.track as Track, startSec: Number(r.start_sec), text: String(r.text), speaker: r.speaker === null ? null : Number(r.speaker) }] : [];
+      });
+    },
+    /** Puts lines back exactly as they were, ids included. */
+    restoreLines(meetingId: number, lines: Utterance[]) {
+      const put = db.prepare("INSERT OR REPLACE INTO utterances (id, meeting_id, track, start_sec, text, speaker) VALUES (?, ?, ?, ?, ?, ?)");
+      db.exec("BEGIN");
+      try {
+        for (const u of lines) put.run(u.id, meetingId, u.track, u.startSec, u.text, u.speaker);
+        db.exec("COMMIT");
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+      }
+    },
     /** A line corrected by hand, with the pieces that were shown joined to it removed. */
     editUtterance(meetingId: number, id: number, text: string, joined: number[] = []) {
       const remove = db.prepare("DELETE FROM utterances WHERE id = ? AND meeting_id = ?");

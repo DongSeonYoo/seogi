@@ -112,6 +112,17 @@ app.whenReady().then(async () => {
     db.setSpeakers(id, named);
     notify(id);
   }
+  /** A hand correction of a stored line, undoable (⌘Z) like library changes. */
+  function editLine(meetingId: number, id: number, text: string, joined: number[] = []) {
+    const before = db.linesById(meetingId, [id, ...joined]);
+    if (!before.length) return;
+    const redo = () => db.editUtterance(meetingId, id, text, joined);
+    redo();
+    history.push({ label: (t) => t("undo.editLine"), redo, undo: () => db.restoreLines(meetingId, before) });
+    rebuildMenu();
+    notify(meetingId);
+  }
+
   async function nameVoice(meetingId: number, utteranceId: number, name: string) {
     const m = db.getMeeting(meetingId);
     const u = m?.utterances.find((x) => x.id === utteranceId);
@@ -119,7 +130,13 @@ app.whenReady().then(async () => {
     name = name.trim();
     // After the recording, or for the recorder's own track, a name is the whole voice's.
     if (!m || !u || !entry || u.track !== "system" || !name) {
-      if (u) db.setSpeakerName(meetingId, speakerKey(u), name);
+      if (!m || !u) return;
+      const key = speakerKey(u);
+      const before = m.speakerNames[key] ?? "";
+      const redo = () => db.setSpeakerName(meetingId, key, name);
+      redo();
+      history.push({ label: (t) => t("undo.renameSpeaker"), redo, undo: () => db.setSpeakerName(meetingId, key, before) });
+      rebuildMenu();
       return notify(meetingId);
     }
     // During it, this line is that voice: an existing name keeps its number, a new one takes the next.
@@ -491,9 +508,7 @@ app.whenReady().then(async () => {
     if (!to.trim() || from === to || live.get(id)?.captions.fix(key, index, from, to)) return;
     const track = key.split(":")[0];
     const line = db.getMeeting(id)?.utterances.findLast((u) => u.track === track && u.text.includes(from));
-    if (!line) return;
-    db.editUtterance(id, line.id, line.text.replace(from, to));
-    notify(id);
+    if (line) editLine(id, line.id, line.text.replace(from, to));
   });
   ipcMain.handle("nameVoice", (_e, meetingId: number, utteranceId: number, name: string) => nameVoice(meetingId, utteranceId, name));
   ipcMain.on("liveEvent", (_e, id: number, track: Track, event: LiveEvent, token?: number) => sessionFor(id, token)?.captions.onEvent(track, event));
@@ -505,9 +520,7 @@ app.whenReady().then(async () => {
     if (o.glossary !== undefined && live.get(id)?.rendererDriven) win?.webContents.send("live-glossary", id, glossaryFor(id));
   });
   ipcMain.handle("editUtterance", (_e, meetingId: number, id: number, text: string, joined?: number[]) => {
-    if (!text.trim()) return;
-    db.editUtterance(meetingId, id, text.trim(), joined);
-    notify(meetingId);
+    if (text.trim()) editLine(meetingId, id, text.trim(), joined);
   });
   ipcMain.handle("liveCall", async (_e, sdp: string, meetingId: number, token?: number) => {
     const entry = sessionFor(meetingId, token);

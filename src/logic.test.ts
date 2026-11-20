@@ -139,8 +139,11 @@ test("a hand edit replaces a shown line's text and removes the pieces joined to 
   const db = openDb(":memory:");
   const id = db.createMeeting("Sync");
   const [a, b] = db.addUtterances(id, "system", [{ startSec: 1, text: "큐 그리드는" }, { startSec: 3, text: "목요일 배포." }]);
+  const before = db.linesById(id, [a.id, b.id]);
   db.editUtterance(id, a.id, "큐그리드는 목요일 배포.", [b.id]);
   assert.deepEqual(db.getMeeting(id)!.utterances.map((u) => [u.id, u.startSec, u.text]), [[a.id, 1, "큐그리드는 목요일 배포."]]);
+  db.restoreLines(id, before); // undo puts both pieces back, ids and times included
+  assert.deepEqual(db.getMeeting(id)!.utterances.map((u) => [u.id, u.startSec, u.text]), [[a.id, 1, "큐 그리드는"], [b.id, 3, "목요일 배포."]]);
 });
 
 test("caption inserts merge with a snapshot in time and id order, once per stored row", async () => {
