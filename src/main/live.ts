@@ -366,6 +366,10 @@ export class LiveCaptions {
    */
   private readonly carry = new Map<Track, LiveLine & { endSec: number }>();
   private readonly bySentence: boolean;
+  /** Lines being corrected while spoken: their finished text, once it has come (see hold). */
+  private readonly held = new Map<string, (Segment & { endSec: number }) | null>();
+  /** Corrections made to lines still being spoken, applied again to their finished text. */
+  private readonly fixes = new Map<string, [string, string][]>();
   /** Finished lines, kept in the view only when nothing else shows them (the settings test). */
   private readonly finished: LiveLine[] = [];
   private readonly streams = new Map<Track, LiveStream>();
@@ -430,6 +434,7 @@ export class LiveCaptions {
     for (const d of [...this.drafts.values()].sort((a, b) => a.startSec - b.startSec)) {
       if (track && d.track !== track) continue;
       this.drafts.delete(d.key);
+      this.held.delete(d.key);
       if (d.text.trim()) this.onSegment(d.track, d.key, { startSec: d.startSec, text: d.text.trim() });
     }
   }
@@ -461,14 +466,70 @@ export class LiveCaptions {
       const d = this.drafts.get(key);
       if (e.type === "delta")
         this.drafts.set(key, { key, track, startSec: d?.startSec ?? e.atSec, text: appendDelta(d?.text ?? "", e.text) });
-      else {
+      else if (this.held.has(key)) {
+        // Being corrected: it stays on screen, finished, until the correction is saved or dropped.
+        // The screen keeps the text being edited; the finished text waits with the hold.
+        this.held.set(key, { startSec: e.startSec, endSec: e.endSec, text: e.text });
+      } else {
         this.drafts.delete(key);
-        const text = e.text.trim();
-        if (text && this.bySentence) this.onPiece(track, key, { startSec: e.startSec, endSec: e.endSec, text });
-        else if (text) this.onSegment(track, key, { startSec: e.startSec, text, endSec: e.endSec });
+        this.finish(track, key, { startSec: e.startSec, endSec: e.endSec, text: e.text });
       }
     }
     this.changed();
+  }
+
+  private finish(track: Track, key: string, segment: Segment & { endSec: number }) {
+    let text = segment.text.trim();
+    for (const [from, to] of this.fixes.get(key) ?? []) text = text.replace(from, to);
+    this.fixes.delete(key);
+    if (text && this.bySentence) this.onPiece(track, key, { ...segment, text });
+    else if (text) this.onSegment(track, key, { ...segment, text });
+  }
+
+  /**
+   * A line still being spoken that the user started correcting: when it finishes it is held back
+   * (still shown) so the correction lands on it rather than on a line that has moved on.
+   */
+  hold(key: string) {
+    if (this.drafts.has(key)) this.held.set(key, null);
+  }
+
+  /** Lets a held line go as it is (the correction was cancelled). */
+  release(key: string) {
+    const done = this.held.get(key);
+    this.held.delete(key);
+    if (!done) return;
+    this.drafts.delete(key);
+    this.finish(key.split(":")[0] as Track, key, done);
+    this.changed();
+  }
+
+  /**
+   * Word `index` of the line `key` (still spoken, held, or an unfinished sentence waiting for the
+   * next piece) corrected from `from` to `to`. Later text from the model keeps coming after it;
+   * the finished text gets the same correction. False when the line is no longer live.
+   */
+  fix(key: string, index: number, from: string, to: string): boolean {
+    const replace = (text: string) => {
+      const parts = text.split(/(\s+)/);
+      if (parts[index] !== from) return text.replace(from, to);
+      parts[index] = to;
+      return parts.join("");
+    };
+    const done = this.held.get(key);
+    this.held.delete(key);
+    const d = this.drafts.get(key);
+    const held = [...this.carry.values()].find((c) => c.key === key);
+    if (done) {
+      this.drafts.delete(key);
+      this.finish(key.split(":")[0] as Track, key, { ...done, text: replace(done.text.trim()) });
+    } else if (d) {
+      d.text = replace(d.text);
+      this.fixes.set(key, [...(this.fixes.get(key) ?? []), [from, to]]);
+    } else if (held) held.text = replace(held.text);
+    else return false;
+    this.changed();
+    return true;
   }
 
   /**
@@ -478,6 +539,7 @@ export class LiveCaptions {
   async stop(tailMs = 0) {
     this.stopped = true;
     await Promise.all([...[...this.streams.values()].map((s) => s.stop()), sleep(tailMs)]);
+    for (const key of [...this.held.keys()]) this.release(key);
     this.flushDrafts();
     this.changed();
   }

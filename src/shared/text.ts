@@ -26,3 +26,12 @@ export function finishedSentences(text: string, at: (i: number) => number) {
   const rest = text.slice(from).trim();
   return { lines, rest, restStartSec: at(text.length - text.slice(from).trimStart().length) };
 }
+
+/**
+ * A caption as it is kept: sound tags the live models write ("[sigh ]", "[chuckle]") are dropped,
+ * and a line left with no letter or digit (a lone "." a model starts a turn with) is no line.
+ */
+export function cleanCaption(text: string): string {
+  const clean = text.replace(/\[[a-z][a-z _-]*\]\s*/gi, "").trim();
+  return /[\p{L}\p{N}]/u.test(clean) ? clean : "";
+}

@@ -219,6 +219,11 @@ export type Api = {
    * back to the default name).
    */
   nameVoice(meetingId: number, utteranceId: number, name: string): Promise<void>;
+  /** Holds a line still being spoken while the user corrects it, so it does not move on. */
+  holdDraft(meetingId: number, key: string): void;
+  releaseDraft(meetingId: number, key: string): void;
+  /** Corrects word `index` of a line still being spoken. */
+  fixDraft(meetingId: number, key: string, index: number, from: string, to: string): Promise<void>;
   /** The other side's audio while GPT-Live captions it, so its voices can be named live. */
   sendVoiceAudio(meetingId: number, pcm: Int16Array): void;
   /** A transcript line as corrected by hand; `joined` pieces shown with it are removed. */

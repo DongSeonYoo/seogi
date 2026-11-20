@@ -35,6 +35,7 @@ import { listModels } from "./models";
 import { openSettings } from "./settings";
 import { CHUNK_FILE, ChunkIndex, playbackResponse } from "./playback";
 import { SAMPLE_RATE, toFloat32, toWav } from "./wav";
+import { cleanCaption } from "../shared/text";
 
 // Pinned to the original name so meetings and keys survive any change to the display name.
 // Unpackaged runs (pnpm dev) get their own folder so they never touch the installed app's data.
@@ -71,7 +72,11 @@ app.whenReady().then(async () => {
   const db = openDb(path.join(dataDir, "seogi.db"), storedMessage("error.appQuit"));
   const history = new History();
   const notify = (id: number) => broadcast("meeting-changed", id);
-  function storeUtterances(id: number, track: Track, segments: (Parameters<typeof db.addUtterances>[2][number] & { endSec?: number })[]) {
+  function storeUtterances(id: number, track: Track, all: (Parameters<typeof db.addUtterances>[2][number] & { endSec?: number })[]) {
+    const segments = all.flatMap((s) => {
+      const text = cleanCaption(s.text);
+      return text ? [{ ...s, text }] : [];
+    });
     const rows = db.addUtterances(id, track, segments);
     if (rows.length) win?.webContents.send("utterances-added", id, rows);
     if (track === "system" && voiceBook.get(id)?.size)
@@ -478,6 +483,18 @@ app.whenReady().then(async () => {
   });
   // GPT-Live sends no PCM for captions, so the other side's audio comes separately for voices.
   ipcMain.on("voiceAudio", (_e, id: number, pcm: Int16Array) => live.get(id)?.voice.push(pcm));
+  // Correcting a line still being spoken (see LiveCaptions.hold/fix). A line that finished and was
+  // stored meanwhile is corrected where it is stored: its track's latest line with that word.
+  ipcMain.on("holdDraft", (_e, id: number, key: string) => live.get(id)?.captions.hold(key));
+  ipcMain.on("releaseDraft", (_e, id: number, key: string) => live.get(id)?.captions.release(key));
+  ipcMain.handle("fixDraft", (_e, id: number, key: string, index: number, from: string, to: string) => {
+    if (!to.trim() || from === to || live.get(id)?.captions.fix(key, index, from, to)) return;
+    const track = key.split(":")[0];
+    const line = db.getMeeting(id)?.utterances.findLast((u) => u.track === track && u.text.includes(from));
+    if (!line) return;
+    db.editUtterance(id, line.id, line.text.replace(from, to));
+    notify(id);
+  });
   ipcMain.handle("nameVoice", (_e, meetingId: number, utteranceId: number, name: string) => nameVoice(meetingId, utteranceId, name));
   ipcMain.on("liveEvent", (_e, id: number, track: Track, event: LiveEvent, token?: number) => sessionFor(id, token)?.captions.onEvent(track, event));
   ipcMain.handle("setSessionOptions", (_e, id: number, o: { liveModel?: string | null; glossary?: string }) => {

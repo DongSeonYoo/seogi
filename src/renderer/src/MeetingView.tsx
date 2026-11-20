@@ -367,6 +367,11 @@ function Transcript({
   const player = usePlayer(m.id);
   const edit = useCallback((u: Line, text: string) => void window.api.editUtterance(m.id, u.id, text, u.joined), [m.id]);
   const rename = useCallback((u: Line, name: string) => void window.api.nameVoice(m.id, u.id, name), [m.id]);
+  const draftFix = useMemo<DraftFix>(() => ({
+    hold: (u) => u.key && window.api.holdDraft(m.id, u.key),
+    release: (u) => u.key && window.api.releaseDraft(m.id, u.key),
+    fix: (u, index, from, to) => void (u.key && window.api.fixDraft(m.id, u.key, index, from, to)),
+  }), [m.id]);
   /** Adds a corrected word to this session's glossary, starting from the shared one if it has none. */
   const addTerm = useCallback(async (word: string) => {
     const base = m.glossary.trim() || (await window.api.getSettings()).glossary.trim();
@@ -418,7 +423,7 @@ function Transcript({
   return (
     <div className="transcript selectable" ref={scroller}>
       {groups.map((group) => (
-        <MessageGroup key={lineKey(group[0])} group={group} player={player} focused={focused} onStamp={onStamp} onEdit={edit} onTerm={addTerm} names={m.speakerNames} onRename={rename} />
+        <MessageGroup key={lineKey(group[0])} group={group} player={player} focused={focused} onStamp={onStamp} onEdit={edit} onTerm={addTerm} names={m.speakerNames} onRename={rename} onDraft={draftFix} />
       ))}
       {!groups.length && !busy && (
         // While a file is being prepared the session is still "new", but it is no longer waiting for one.
@@ -436,9 +441,12 @@ function Transcript({
 }
 
 type Edit = (u: Line, text: string) => void;
+/** Correcting a line still being spoken (by its live key). */
+type DraftFix = { hold(u: Line): void; release(u: Line): void; fix(u: Line, index: number, from: string, to: string): void };
 
-const MessageGroup = memo(function MessageGroup({ group, player, focused, onStamp, onEdit, onTerm, names, onRename }: {
+const MessageGroup = memo(function MessageGroup({ group, player, focused, onStamp, onEdit, onTerm, names, onRename, onDraft }: {
   group: Line[];
+  onDraft: DraftFix;
   names: SpeakerNames;
   onRename: (u: Line, name: string) => void;
   player: Player;
@@ -451,7 +459,7 @@ const MessageGroup = memo(function MessageGroup({ group, player, focused, onStam
     <ol className="msg-group">
       {group.map((u, i) => (
         <Message key={lineKey(u)} u={u} head={i === 0} player={player} focused={focused.has(u.id)} onStamp={onStamp} onEdit={onEdit} onTerm={onTerm}
-          name={names[speakerKey(u)] ?? ""} onRename={onRename} />
+          name={names[speakerKey(u)] ?? ""} onRename={onRename} onDraft={onDraft} />
       ))}
     </ol>
   );
@@ -467,7 +475,9 @@ const Message = memo(function Message({
   onTerm,
   name: given,
   onRename,
+  onDraft,
 }: {
+  onDraft: DraftFix;
   /** The name given to this line's voice; "" when it has none. */
   name: string;
   onRename: (u: Line, name: string) => void;
@@ -501,6 +511,13 @@ const Message = memo(function Message({
     el.textContent = editing === "line" ? u.text : parts[editing as number]; // undo the typing React does not know of
     setEditing(null);
     row.current?.focus();
+    if (u.draft) onDraft.release(u);
+  };
+  /** A word of a stored line is saved with its line; one still being spoken goes to the live captions. */
+  const saveWord = (i: number, word: string) => {
+    if (!u.draft) return save(replaceWord(i, word));
+    setEditing(null);
+    onDraft.fix(u, i, parts[i], word.replace(/\s+/g, " ").trim());
   };
   const [copied, setCopied] = useState(false);
   const [stamped, setStamped] = useState(false);
@@ -593,7 +610,7 @@ const Message = memo(function Message({
           }}
           {...(editing === "line" && editKeys(el => save(el.textContent ?? ""), cancel))}
         >
-          {u.draft || editing === "line"
+          {editing === "line"
             ? u.text
             : parts.map((p, i) =>
                 i % 2 ? p
@@ -614,8 +631,9 @@ const Message = memo(function Message({
                       if (editing === i || window.getSelection()?.isCollapsed === false) return;
                       setCursor(i);
                       setEditing(i);
+                      if (u.draft) onDraft.hold(u);
                     }}
-                    {...(editing === i && editKeys((el) => save(replaceWord(i, el.textContent ?? "")), cancel))}
+                    {...(editing === i && editKeys((el) => saveWord(i, el.textContent ?? ""), cancel))}
                   >
                     {p}
                     {hoverWord === i && editing !== i && (

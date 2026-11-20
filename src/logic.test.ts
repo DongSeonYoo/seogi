@@ -109,6 +109,15 @@ test("the voice ring keeps the last minutes by stretch time, and a voice takes a
   assert.equal(matchVoice(unit(0.4, 0.4, 0.82), voices), null); // like neither enough
 });
 
+test("captions lose sound tags, and a line with no letter or digit is dropped", async () => {
+  const { cleanCaption } = await import("./shared/text.ts");
+  assert.equal(cleanCaption("[sigh ]한국어 억양으로 해볼래"), "한국어 억양으로 해볼래");
+  assert.equal(cleanCaption("[chuckle]그럼 이렇게 가볼게요."), "그럼 이렇게 가볼게요.");
+  assert.equal(cleanCaption("."), "");
+  assert.equal(cleanCaption(" … "), "");
+  assert.equal(cleanCaption("[1] 항목"), "[1] 항목"); // not a sound tag
+});
+
 test("a hand edit replaces a shown line's text and removes the pieces joined to it", async () => {
   const { openDb } = await import("./main/db.ts");
   const db = openDb(":memory:");
@@ -174,6 +183,28 @@ test("streamed pieces become sentence lines: an unfinished end waits for the nex
   assert.ok(stored[1].startSec > 11 && stored[1].startSec < 14); // where "그래서" was spoken in piece 1
   await c.stop();
   assert.equal(stored.at(-1)!.text, "다음은");
+});
+
+test("a line corrected while spoken keeps the correction, held back if it finishes during the edit", async () => {
+  const { LiveCaptions } = await import("./main/live.ts");
+  const stored: string[] = [];
+  const c = new LiveCaptions(() => ({ audio() {}, stop: async () => {} }), () => {}, (_t, s) => stored.push(s.text));
+  // Corrected mid-sentence; the model keeps adding words, then finishes with its own spelling.
+  c.onEvent("system", { type: "delta", id: "a", text: "큐 그리드는", atSec: 1 });
+  assert.ok(c.fix("system:a", 0, "큐", "큐그리드"));
+  c.onEvent("system", { type: "delta", id: "a", text: " 목요일", atSec: 2 });
+  assert.equal(c.view().lines[0].text, "큐그리드 그리드는 목요일");
+  c.onEvent("system", { type: "segment", id: "a", text: "큐 그리드는 목요일 배포.", startSec: 1, endSec: 3 });
+  assert.deepEqual(stored, ["큐그리드 그리드는 목요일 배포."]);
+  // Finished while being edited: held on screen, stored once the correction is saved.
+  c.onEvent("system", { type: "delta", id: "b", text: "동선님이", atSec: 4 });
+  c.hold("system:b");
+  c.onEvent("system", { type: "segment", id: "b", text: "동선님이 맡아요.", startSec: 4, endSec: 5 });
+  assert.equal(stored.length, 1);
+  assert.equal(c.view().lines.length, 1);
+  c.fix("system:b", 0, "동선님이", "동선 님이");
+  assert.deepEqual(stored.at(-1), "동선 님이 맡아요.");
+  assert.equal(c.fix("system:gone", 0, "a", "b"), false);
 });
 
 test("live captions store finished segments, show what is still spoken, and flush it on stop", async () => {
