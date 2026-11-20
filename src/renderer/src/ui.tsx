@@ -241,6 +241,8 @@ export function CommitInput({
   "aria-describedby"?: string;
   type?: string;
   rows?: number;
+  disabled?: boolean;
+  title?: string;
 }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);

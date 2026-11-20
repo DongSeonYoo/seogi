@@ -549,8 +549,8 @@
   position: relative;
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr);
-  /* The right side keeps room for the hover actions (3 buttons) so they never cover text. */
-  padding: var(--space-half) calc(var(--space-5) + 96px) var(--space-half) 0;
+  /* The right side keeps room for the hover actions (4 buttons) so they never cover text. */
+  padding: var(--space-half) calc(var(--space-5) + 124px) var(--space-half) 0;
   transition: background-color var(--dur-micro) var(--ease-out);
 }
 
@@ -614,6 +614,59 @@
   font-size: var(--text-read);
   line-height: var(--leading-read);
   overflow-wrap: anywhere;
+}
+
+/* Each word is a block that can be corrected: hovered, or under the arrow-key cursor. */
+.word {
+  border-radius: var(--radius-sm);
+  cursor: text;
+}
+
+.word:hover,
+.word[data-cursor] {
+  background: var(--color-accent-soft);
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+
+.word {
+  position: relative;
+}
+
+/* Corrected in place: the text keeps its exact spot, so no line wraps differently. */
+.word[contenteditable],
+.msg__text[contenteditable] {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm);
+  background: var(--color-raised);
+  cursor: text;
+}
+
+/* Laid over the word's top-right corner; it takes no room in the line. */
+.word__term {
+  position: absolute;
+  top: -14px;
+  right: -12px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--color-raised);
+  color: var(--color-ink-2);
+  box-shadow: var(--shadow-pop);
+}
+
+.word__term:hover {
+  color: var(--color-accent-text);
+}
+
+.word__term svg {
+  width: 12px;
+  height: 12px;
 }
 
 .msg--draft .msg__text {

@@ -114,6 +114,8 @@ app.whenReady().then(async () => {
     captions: LiveCaptions; tailMs: number; token?: number;
     /** Audio recorded before this stretch (a paused meeting resumed); added to every caption time. */
     offsetSec: number;
+    /** GPT-Live: captions come from the renderer's WebRTC sessions. */
+    rendererDriven: boolean;
     openings: Set<Promise<void>>; abort: AbortController; openingError: string | null;
     stopping?: Promise<void>;
   };
@@ -170,7 +172,7 @@ app.whenReady().then(async () => {
           },
     );
     live.set(id, {
-      captions, token, offsetSec, tailMs: rendererDriven ? GPT_LIVE_TAIL_MS + 1000 : 0,
+      captions, token, offsetSec, rendererDriven, tailMs: rendererDriven ? GPT_LIVE_TAIL_MS + 1000 : 0,
       openings: new Set(), abort: new AbortController(), openingError: null,
     });
   }
@@ -404,6 +406,14 @@ app.whenReady().then(async () => {
   ipcMain.handle("setSessionOptions", (_e, id: number, o: { liveModel?: string | null; glossary?: string }) => {
     db.setSessionOptions(id, o);
     notify(id);
+    // A GPT-Live recording takes the new glossary at once (its instructions are fixed once it
+    // starts, so the terms are appended as context); other models keep theirs until resumed.
+    if (o.glossary !== undefined && live.get(id)?.rendererDriven) win?.webContents.send("live-glossary", id, glossaryFor(id));
+  });
+  ipcMain.handle("editUtterance", (_e, meetingId: number, id: number, text: string, joined?: number[]) => {
+    if (!text.trim()) return;
+    db.editUtterance(meetingId, id, text.trim(), joined);
+    notify(meetingId);
   });
   ipcMain.handle("liveCall", async (_e, sdp: string, meetingId: number, token?: number) => {
     const entry = sessionFor(meetingId, token);

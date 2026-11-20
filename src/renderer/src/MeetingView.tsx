@@ -1,5 +1,5 @@
-import { AlertCircle, BookmarkPlus, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { AlertCircle, BookmarkPlus, BookPlus, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { GPT_LIVE_MODEL, type LiveView, type MeetingDetail, type ModelOption, type Settings, type Utterance } from "../../shared/types";
 import { clock, speakerName } from "../../shared/summary";
 import { joinSplitSentences } from "../../shared/transcript";
@@ -130,7 +130,7 @@ export function MeetingView({
       >
         {(canImport || recording) && (
           <div className="detail__head">
-            {((m.status === "new" && !recording) || paused) && <SessionOptions meeting={m} />}
+            {((m.status === "new" && !recording) || recording) && <SessionOptions meeting={m} running={!!recording && !paused} />}
             <div className="capsule">
               <button
                 type="button"
@@ -294,7 +294,8 @@ export function MeetingView({
  */
 const SESSION_MODEL = new RegExp(`^(${GPT_LIVE_MODEL}|(openai/)?gpt-live-transcribe)$`);
 
-function SessionOptions({ meeting: m }: { meeting: MeetingDetail }) {
+/** While recording runs, the model is fixed and only GPT-Live takes a glossary change at once. */
+function SessionOptions({ meeting: m, running }: { meeting: MeetingDetail; running: boolean }) {
   const t = useT();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -312,7 +313,7 @@ function SessionOptions({ meeting: m }: { meeting: MeetingDetail }) {
   const model = m.liveModel ?? saved;
   return (
     <div className="session-options">
-      <Select
+      {!running && <Select
         aria-label={t("session.model")}
         value={model}
         onChange={(e) => void window.api.setSessionOptions(m.id, { liveModel: e.target.value === saved ? null : e.target.value })}
@@ -323,8 +324,10 @@ function SessionOptions({ meeting: m }: { meeting: MeetingDetail }) {
             {x.id === saved ? t("session.modelDefault", { model: x.id }) : x.id}
           </option>
         ))}
-      </Select>
+      </Select>}
       <CommitInput
+        disabled={running && model !== GPT_LIVE_MODEL}
+        title={running && model !== GPT_LIVE_MODEL ? t("session.glossaryLocked") : undefined}
         aria-label={t("session.glossary")}
         value={m.glossary}
         placeholder={settings.glossary.trim() ? t("session.glossaryShared", { glossary: settings.glossary }) : t("session.glossaryEmpty")}
@@ -361,6 +364,13 @@ function Transcript({
   const bottom = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const player = usePlayer(m.id);
+  const edit = useCallback((u: Line, text: string) => void window.api.editUtterance(m.id, u.id, text, u.joined), [m.id]);
+  /** Adds a corrected word to this session's glossary, starting from the shared one if it has none. */
+  const addTerm = useCallback(async (word: string) => {
+    const base = m.glossary.trim() || (await window.api.getSettings()).glossary.trim();
+    const terms = base.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+    if (word && !terms.includes(word)) await window.api.setSessionOptions(m.id, { glossary: [...terms, word].join(", ") });
+  }, [m.id, m.glossary]);
   // Every line in the named second is marked: two lines can share a start time to the second.
   const [focused, setFocused] = useState<Set<number>>(new Set());
   const confirmed = useMemo(() => joinSplitSentences(m.utterances), [m.utterances]);
@@ -406,7 +416,7 @@ function Transcript({
   return (
     <div className="transcript selectable" ref={scroller}>
       {groups.map((group) => (
-        <MessageGroup key={lineKey(group[0])} group={group} player={player} focused={focused} onStamp={onStamp} />
+        <MessageGroup key={lineKey(group[0])} group={group} player={player} focused={focused} onStamp={onStamp} onEdit={edit} onTerm={addTerm} />
       ))}
       {!groups.length && !busy && (
         // While a file is being prepared the session is still "new", but it is no longer waiting for one.
@@ -423,16 +433,20 @@ function Transcript({
   );
 }
 
-const MessageGroup = memo(function MessageGroup({ group, player, focused, onStamp }: {
+type Edit = (u: Line, text: string) => void;
+
+const MessageGroup = memo(function MessageGroup({ group, player, focused, onStamp, onEdit, onTerm }: {
   group: Line[];
   player: Player;
   focused: ReadonlySet<number>;
   onStamp: (u: Utterance) => void;
+  onEdit: Edit;
+  onTerm: (word: string) => void;
 }) {
   return (
     <ol className="msg-group">
       {group.map((u, i) => (
-        <Message key={lineKey(u)} u={u} head={i === 0} player={player} focused={focused.has(u.id)} onStamp={onStamp} />
+        <Message key={lineKey(u)} u={u} head={i === 0} player={player} focused={focused.has(u.id)} onStamp={onStamp} onEdit={onEdit} onTerm={onTerm} />
       ))}
     </ol>
   );
@@ -444,14 +458,38 @@ const Message = memo(function Message({
   player,
   focused,
   onStamp,
+  onEdit,
+  onTerm,
 }: {
   u: Line;
   head: boolean;
   player: Player;
   focused: boolean;
   onStamp: (u: Utterance) => void;
+  onEdit: Edit;
+  onTerm: (word: string) => void;
 }) {
   const t = useT();
+  /** The word (its index in `parts`) or the whole line being corrected. */
+  const [editing, setEditing] = useState<number | "line" | null>(null);
+  const parts = useMemo(() => u.text.split(/(\s+)/), [u.text]);
+  /** The word the arrow keys are on (an index in `parts`); Tab corrects it. */
+  const [cursor, setCursor] = useState<number | null>(null);
+  const row = useRef<HTMLLIElement>(null);
+  const words = useMemo(() => parts.flatMap((p, i) => (i % 2 === 0 && p ? [i] : [])), [parts]);
+  const save = (text: string) => {
+    setEditing(null);
+    row.current?.focus();
+    const next = text.replace(/\s+/g, " ").trim();
+    if (next && next !== u.text) onEdit(u, next);
+  };
+  const replaceWord = (i: number, word: string) => parts.map((p, j) => (j === i ? word : p)).join("");
+  const [hoverWord, setHoverWord] = useState<number | null>(null);
+  const cancel = (el: HTMLElement) => {
+    el.textContent = editing === "line" ? u.text : parts[editing as number]; // undo the typing React does not know of
+    setEditing(null);
+    row.current?.focus();
+  };
   const [copied, setCopied] = useState(false);
   const [stamped, setStamped] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -466,8 +504,31 @@ const Message = memo(function Message({
       tabIndex={u.draft ? undefined : 0}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onFocus={() => setHasFocus(true)}
-      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setHasFocus(false); }}
+      ref={row}
+      onFocus={(e) => {
+        setHasFocus(true);
+        // Arrived here from the next or previous line with the arrow keys.
+        const from = e.currentTarget.dataset.enter;
+        delete e.currentTarget.dataset.enter;
+        if (from && words.length) setCursor(from === "end" ? words.at(-1)! : words[0]);
+      }}
+      onBlur={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget)) return;
+        setHasFocus(false);
+        if (editing === null) setCursor(null);
+      }}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget || u.draft) return;
+        const at = cursor === null ? -1 : words.indexOf(cursor);
+        if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+          const next = at + (e.key === "ArrowRight" ? 1 : at === -1 ? words.length : -1);
+          if (next >= 0 && next < words.length) setCursor(words[next]);
+          else moveLine(e.currentTarget, e.key === "ArrowRight" ? 1 : -1);
+        } else if (e.key === "Tab" && cursor !== null && !e.shiftKey) setEditing(cursor);
+        else if (e.key === "Escape" && cursor !== null) setCursor(null);
+        else return;
+        e.preventDefault();
+      }}
     >
       <div className="msg__gutter">
         {head ? (
@@ -487,7 +548,61 @@ const Message = memo(function Message({
             <span className="msg__time tnum">{clock(u.startSec)}</span>
           </div>
         )}
-        <p className="msg__text">{u.text}</p>
+        <p
+          className="msg__text"
+          // The whole line, corrected where it stands so nothing moves.
+          contentEditable={editing === "line" ? "plaintext-only" : undefined}
+          suppressContentEditableWarning
+          ref={(el) => {
+            if (el && editing === "line" && document.activeElement !== el) startEditing(el);
+          }}
+          {...(editing === "line" && editKeys(el => save(el.textContent ?? ""), cancel))}
+        >
+          {u.draft || editing === "line"
+            ? u.text
+            : parts.map((p, i) =>
+                i % 2 ? p
+                : p ? (
+                  <span
+                    key={i}
+                    className="word"
+                    data-cursor={cursor === i || undefined}
+                    contentEditable={editing === i ? "plaintext-only" : undefined}
+                    suppressContentEditableWarning
+                    ref={(el) => {
+                      if (el && editing === i && document.activeElement !== el) startEditing(el);
+                    }}
+                    onMouseEnter={() => setHoverWord(i)}
+                    onMouseLeave={() => setHoverWord((h) => (h === i ? null : h))}
+                    onClick={() => {
+                      // A click corrects this word; a drag still selects text to copy.
+                      if (editing === i || window.getSelection()?.isCollapsed === false) return;
+                      setCursor(i);
+                      setEditing(i);
+                    }}
+                    {...(editing === i && editKeys((el) => save(replaceWord(i, el.textContent ?? "")), cancel))}
+                  >
+                    {p}
+                    {hoverWord === i && editing !== i && (
+                      <button
+                        type="button"
+                        className="word__term"
+                        contentEditable={false}
+                        title={t("edit.addTerm")}
+                        aria-label={t("edit.addTerm")}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onTerm(p.replace(/[.,!?…"'()]+$/u, ""));
+                        }}
+                      >
+                        <BookPlus aria-hidden />
+                      </button>
+                    )}
+                  </span>
+                ) : null,
+              )}
+        </p>
       </div>
       {!u.draft && (hovered || hasFocus) && <div className="msg__actions">
         <IconButton label={playing ? t("detail.pause") : t("detail.play")} onClick={() => player.toggle(u)}>
@@ -503,6 +618,9 @@ const Message = memo(function Message({
         >
           {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
         </IconButton>
+        <IconButton label={t("edit.line")} onClick={() => setEditing("line")}>
+          <Pencil aria-hidden />
+        </IconButton>
         <IconButton
           label={stamped ? t("detail.stamped") : t("detail.stamp")}
           onClick={() => {
@@ -517,6 +635,47 @@ const Message = memo(function Message({
     </li>
   );
 });
+
+/** Moves the word cursor onto the next (1) or previous (-1) line of the transcript. */
+function moveLine(from: HTMLElement, step: 1 | -1) {
+  const lines = [...(from.closest(".transcript")?.querySelectorAll<HTMLElement>(".msg[tabindex]") ?? [])];
+  const to = lines[lines.indexOf(from) + step];
+  if (!to) return;
+  to.dataset.enter = step === 1 ? "start" : "end";
+  to.focus();
+  to.scrollIntoView({ block: "nearest" });
+}
+
+/** Puts the caret over the text being corrected, all of it selected so typing replaces it. */
+function startEditing(el: HTMLElement) {
+  el.focus();
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  window.getSelection()?.removeAllRanges();
+  window.getSelection()?.addRange(range);
+}
+
+/** Enter saves, Esc cancels, leaving the text saves; an Enter that ends a Korean syllable does not. */
+function editKeys(save: (el: HTMLElement) => void, cancel: (el: HTMLElement) => void) {
+  let done = false;
+  const finish = (el: HTMLElement, keep: boolean) => {
+    if (done) return;
+    done = true;
+    if (keep) save(el);
+    else cancel(el);
+  };
+  return {
+    onBlur: (e: { currentTarget: HTMLElement }) => finish(e.currentTarget, true),
+    onKeyDown: (e: KeyboardEvent<HTMLElement>) => {
+      if (e.nativeEvent.isComposing) return;
+      if (e.key === "Enter" && !e.shiftKey) finish(e.currentTarget, true);
+      else if (e.key === "Escape") finish(e.currentTarget, false);
+      else return e.stopPropagation(); // arrow keys move the caret, not the word cursor
+      e.preventDefault();
+      e.stopPropagation();
+    },
+  };
+}
 
 type Player = ReturnType<typeof usePlayer>;
 

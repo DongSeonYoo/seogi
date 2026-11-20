@@ -281,6 +281,19 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
         .map((r) => ({ id: Number(r.id), name: String(r.name), count: Number(r.count) }));
     },
 
+    /** A line corrected by hand, with the pieces that were shown joined to it removed. */
+    editUtterance(meetingId: number, id: number, text: string, joined: number[] = []) {
+      const remove = db.prepare("DELETE FROM utterances WHERE id = ? AND meeting_id = ?");
+      db.exec("BEGIN");
+      try {
+        db.prepare("UPDATE utterances SET text = ? WHERE id = ? AND meeting_id = ?").run(text, id, meetingId);
+        for (const piece of joined) remove.run(piece, meetingId);
+        db.exec("COMMIT");
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+      }
+    },
     /** Speaker numbers for a meeting's lines, written together. */
     setSpeakers(meetingId: number, speakers: Map<number, number>) {
       const update = db.prepare("UPDATE utterances SET speaker = ? WHERE id = ? AND meeting_id = ?");

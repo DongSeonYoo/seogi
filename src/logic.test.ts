@@ -67,12 +67,22 @@ test("joinSplitSentences rejoins a sentence cut at a chunk boundary, and nothing
   assert.deepEqual(joined.map((x) => x.text), ["쿠폰 문제는 동선님이 이번 주 수요일까지 수정하기로 했습니다.", "다음 안건입니다."]);
   assert.equal(joined[0].id, 1); // keeps the first piece's id and start time for playback
   assert.equal(joined[0].startSec, 32);
+  assert.deepEqual(joined[0].joined, [2]); // removed when the shown line is edited
 
   // A different speaker in between, finished sentences, and a long gap all stay separate.
   assert.equal(joinSplitSentences([u(1, "system", 32, "말이 끊겼는데"), u(2, "mic", 33, "네.")]).length, 2);
   assert.equal(joinSplitSentences([u(1, "system", 32, "말이 끊겼는데", 1), u(2, "system", 33, "네.", 2)]).length, 2);
   assert.equal(joinSplitSentences([u(1, "system", 32, "끝난 문장입니다."), u(2, "system", 35, "새 문장.")]).length, 2);
   assert.equal(joinSplitSentences([u(1, "system", 32, "끝맺음 없음"), u(2, "system", 90, "한참 뒤.")]).length, 2);
+});
+
+test("a hand edit replaces a shown line's text and removes the pieces joined to it", async () => {
+  const { openDb } = await import("./main/db.ts");
+  const db = openDb(":memory:");
+  const id = db.createMeeting("Sync");
+  const [a, b] = db.addUtterances(id, "system", [{ startSec: 1, text: "큐 그리드는" }, { startSec: 3, text: "목요일 배포." }]);
+  db.editUtterance(id, a.id, "큐그리드는 목요일 배포.", [b.id]);
+  assert.deepEqual(db.getMeeting(id)!.utterances.map((u) => [u.id, u.startSec, u.text]), [[a.id, 1, "큐그리드는 목요일 배포."]]);
 });
 
 test("caption inserts merge with a snapshot in time and id order, once per stored row", async () => {

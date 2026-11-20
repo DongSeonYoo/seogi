@@ -151,6 +151,25 @@ export class Segmenter {
   }
 }
 
+/**
+ * Open GPT-Live event channels per meeting, so a changed glossary reaches the running sessions.
+ * Their instructions cannot change once started ("immutable_field_update", 2026-11-20); context
+ * appended mid-session is accepted (session.context.appended).
+ */
+const channels = new Map<number, Set<RTCDataChannel>>();
+let listening = false;
+function listenForGlossary() {
+  if (listening) return;
+  listening = true;
+  window.api.onLiveGlossary((meetingId, glossary) => {
+    const event = JSON.stringify({
+      type: "session.context.append",
+      content: [{ type: "input_text", text: `Names and terms that come up from here on: ${glossary.trim()}` }],
+    });
+    for (const channel of channels.get(meetingId) ?? []) if (channel.readyState === "open") channel.send(event);
+  });
+}
+
 async function session(
   stream: MediaStream,
   startedAt: number,
@@ -177,6 +196,7 @@ async function session(
     closed = true;
     signal.removeEventListener("abort", stop);
     stopClones();
+    if (channel) channels.get(meetingId)?.delete(channel);
     channel?.close();
     pc.close();
     segments.cut();
@@ -229,6 +249,7 @@ async function session(
     } else if (e.type === "turn.delta" && e.turn_id && e.delta && userTurns.has(e.turn_id)) add(e.turn_id, e.delta, e);
     else if ((e.type === "turn.done" || e.type === "turn.completed") && turn && userTurns.delete(turn.id)) segments.finish(turn.id);
     else if (e.type === "session.closed") lost();
+    else if (e.type === "error") console.warn("[seogi] GPT-Live:", msg.data);
   };
 
   signal.addEventListener("abort", stop, { once: true });
@@ -240,6 +261,8 @@ async function session(
       pc.addTrack(clone);
     }
     channel = pc.createDataChannel("oai-events");
+    listenForGlossary();
+    if (testToken === undefined) channels.set(meetingId, (channels.get(meetingId) ?? new Set()).add(channel));
     channel.addEventListener("message", message);
     channel.addEventListener("close", lost);
     pc.addEventListener("connectionstatechange", () => {

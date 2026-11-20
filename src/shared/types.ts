@@ -76,7 +76,11 @@ export type MenuSpec =
 export type AudioRef = { url: string; offsetSec: number; chunkStartSec: number };
 
 /** `speaker`: 1, 2, … when diarization told the voices in a track apart (imported files). */
-export type Utterance = { id: number; track: Track; startSec: number; text: string; speaker: number | null };
+export type Utterance = {
+  id: number; track: Track; startSec: number; text: string; speaker: number | null;
+  /** Shown as one line (joinSplitSentences): the pieces after this one, which an edit replaces. */
+  joined?: number[];
+};
 
 export type MeetingDetail = MeetingRow & {
   /** Markdown, written by Summarize and edited by the user. */
@@ -201,8 +205,12 @@ export type Api = {
   importFile(id: number, pcm: Int16Array, language: string, ogg: (Uint8Array | null)[]): Promise<boolean>;
   /** null: the import of `id` ended. */
   onImportProgress(listener: (id: number, progress: ImportProgress | null) => void): () => void;
+  /** The glossary of a meeting being recorded with GPT-Live changed. */
+  onLiveGlossary(listener: (id: number, glossary: string) => void): () => void;
   /** A session's own live model (null: Settings) or glossary (empty: the shared one). */
   setSessionOptions(id: number, options: { liveModel?: string | null; glossary?: string }): Promise<void>;
+  /** A transcript line as corrected by hand; `joined` pieces shown with it are removed. */
+  editUtterance(meetingId: number, id: number, text: string, joined?: number[]): Promise<void>;
   sendChunk(chunk: Chunk): void;
   /** About 100 ms of 16 kHz PCM16 for the live captions, every frame from the track's start. */
   sendLiveAudio(meetingId: number, track: Track, pcm: Int16Array, token?: number): void;
