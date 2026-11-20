@@ -170,6 +170,8 @@ app.whenReady().then(async () => {
             if (prompt && !rendererDriven && isPromptEcho(segment.text, prompt)) return;
             storeUtterances(id, track, [{ ...segment, startSec: segment.startSec + offsetSec }]);
           },
+      // GPT-Live turns arrive cut into sentences already; streamed pieces end at any short pause.
+      !rendererDriven,
     );
     live.set(id, {
       captions, token, offsetSec, rendererDriven, tailMs: rendererDriven ? GPT_LIVE_TAIL_MS + 1000 : 0,

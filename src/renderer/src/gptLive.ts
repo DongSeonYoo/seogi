@@ -1,4 +1,4 @@
-import { appendDelta } from "../../shared/text.ts";
+import { appendDelta, SENTENCE_END } from "../../shared/text.ts";
 import { GPT_LIVE_MODEL, GPT_LIVE_TAIL_MS, type LiveEvent, type Track } from "../../shared/types.ts";
 import type { RecordingOptions } from "./recorder";
 
@@ -11,11 +11,6 @@ const LAG_SEC = 0.8;
 const PAUSE_SEC = 2;
 /** A run-on without punctuation is cut here, so no utterance grows without bound. */
 const MAX_CHARS = 280;
-/**
- * A sentence end followed by more text or by the end of what has arrived. A period right after a
- * digit is not one: it may be a decimal still arriving ("2." then "23").
- */
-const SENTENCE_END = /(?:(?<!\d)\.|[?!…。])(?=\s|$|[^\s\d.,?!…。])/;
 /** The longest wait between reconnect attempts; captions are the meeting record, so they never give up. */
 const MAX_BACKOFF_SEC = 10;
 

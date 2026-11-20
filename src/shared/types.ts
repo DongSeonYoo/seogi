@@ -123,7 +123,7 @@ export type LiveProvider = "qgrid" | "openai";
 export type SummaryProvider = "qgrid" | "openai" | "anthropic";
 
 export const DEFAULT_MODELS = {
-  live: { openai: "gpt-live-transcribe", qgrid: GPT_LIVE_MODEL },
+  live: { openai: "gpt-live-transcribe", qgrid: "openai/gpt-live-transcribe" },
   summary: { openai: "gpt-6-luna", anthropic: "claude-sonnet-5-5", qgrid: "openai/gpt-6-luna" },
 } as const;
 

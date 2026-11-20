@@ -1,5 +1,5 @@
 import type { Translate } from "../shared/i18n";
-import { appendDelta } from "../shared/text.ts";
+import { appendDelta, finishedSentences } from "../shared/text.ts";
 import type { LiveEvent, LiveLine, LiveView, Track } from "../shared/types";
 
 export type { LiveEvent };
@@ -349,12 +349,22 @@ export class CommitPolicy {
 /** A finished stretch of speech, ready to be stored as an utterance. */
 export type Segment = { startSec: number; text: string };
 
+/** An unfinished sentence held back for the next piece, at most this long or this old. */
+const CARRY_MAX_CHARS = 280;
+const CARRY_MAX_GAP_SEC = 30;
+
 /**
  * One meeting's live captions for both tracks. Finished segments go to `onSegment` as they come
  * (the meeting record); `view` shows only the text still being spoken.
  */
 export class LiveCaptions {
   private readonly drafts = new Map<string, LiveLine>();
+  /**
+   * Streamed transcription pieces end wherever the audio was cut (a short pause, often mid-sentence),
+   * so with `bySentence` each line is a sentence: a piece's unfinished end waits here for the next.
+   */
+  private readonly carry = new Map<Track, LiveLine & { endSec: number }>();
+  private readonly bySentence: boolean;
   /** Finished lines, kept in the view only when nothing else shows them (the settings test). */
   private readonly finished: LiveLine[] = [];
   private readonly streams = new Map<Track, LiveStream>();
@@ -373,7 +383,9 @@ export class LiveCaptions {
     open: (onEvent: Emit) => LiveStream,
     changed: () => void,
     store: ((track: Track, segment: Segment) => void) | null,
+    bySentence = false,
   ) {
+    this.bySentence = bySentence;
     this.open = open;
     this.changed = changed;
     this.store = store;
@@ -388,7 +400,31 @@ export class LiveCaptions {
     }
   }
 
+  /** A finished piece, cut into sentences; its unfinished end is carried into the next piece. */
+  private onPiece(track: Track, key: string, piece: Segment & { endSec: number }) {
+    let held = this.carry.get(track);
+    this.carry.delete(track);
+    if (held && (piece.startSec - held.endSec > CARRY_MAX_GAP_SEC || held.text.length > CARRY_MAX_CHARS)) {
+      this.onSegment(track, held.key, held);
+      held = undefined;
+    }
+    const before = held ? held.text.length + 1 : 0;
+    const text = held ? `${held.text} ${piece.text}` : piece.text;
+    // Characters are spread over the time their own piece was spoken.
+    const span = (from: number, to: number, i: number, n: number) => from + ((to - from) * i) / Math.max(1, n);
+    const at = (i: number) =>
+      held && i < before ? span(held.startSec, held.endSec, i, held.text.length) : span(piece.startSec, piece.endSec, i - before, piece.text.length);
+    const { lines, rest, restStartSec } = finishedSentences(text, at);
+    lines.forEach((line, i) => this.onSegment(track, `${key}:${i}`, line));
+    if (rest) this.carry.set(track, { key: `${key}:rest`, track, text: rest, startSec: restStartSec, endSec: piece.endSec });
+  }
+
   private flushDrafts(track?: Track) {
+    for (const [t, held] of this.carry) {
+      if (track && t !== track) continue;
+      this.carry.delete(t);
+      this.onSegment(t, held.key, { startSec: held.startSec, text: held.text });
+    }
     for (const d of [...this.drafts.values()].sort((a, b) => a.startSec - b.startSec)) {
       if (track && d.track !== track) continue;
       this.drafts.delete(d.key);
@@ -425,7 +461,9 @@ export class LiveCaptions {
         this.drafts.set(key, { key, track, startSec: d?.startSec ?? e.atSec, text: appendDelta(d?.text ?? "", e.text) });
       else {
         this.drafts.delete(key);
-        if (e.text.trim()) this.onSegment(track, key, { startSec: e.startSec, text: e.text.trim() });
+        const text = e.text.trim();
+        if (text && this.bySentence) this.onPiece(track, key, { startSec: e.startSec, endSec: e.endSec, text });
+        else if (text) this.onSegment(track, key, { startSec: e.startSec, text });
       }
     }
     this.changed();
@@ -443,7 +481,7 @@ export class LiveCaptions {
   }
 
   view(): LiveView {
-    const lines = [...this.finished, ...this.drafts.values()]
+    const lines = [...this.finished, ...this.carry.values(), ...this.drafts.values()]
       .filter((d) => d.text.trim())
       .sort((a, b) => a.startSec - b.startSec)
       .map((d) => ({ ...d, text: d.text.trim() }));

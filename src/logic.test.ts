@@ -127,6 +127,22 @@ test("SilenceWatch flags a long run of exact zeros and clears on the first sound
   assert.deepEqual(events, [true, false]);
 });
 
+test("streamed pieces become sentence lines: an unfinished end waits for the next piece and is flushed on stop", async () => {
+  const { LiveCaptions } = await import("./main/live.ts");
+  const stored: { startSec: number; text: string }[] = [];
+  const c = new LiveCaptions(() => ({ audio() {}, stop: async () => {} }), () => {}, (_t, s) => stored.push(s), true);
+  // Cut at a short pause mid-sentence: "그래서 좀 그" | "했을 때 좋았어요. 다음은"
+  c.onEvent("system", { type: "segment", id: "1", text: "첫 문장입니다. 그래서 좀 그", startSec: 10, endSec: 14 });
+  assert.deepEqual(stored.map((s) => s.text), ["첫 문장입니다."]);
+  assert.deepEqual(c.view().lines.map((l) => l.text), ["그래서 좀 그"]); // still shown while it waits
+  c.onEvent("system", { type: "segment", id: "2", text: "했을 때 좋았어요. 다음은", startSec: 15, endSec: 18 });
+  assert.deepEqual(stored.map((s) => s.text), ["첫 문장입니다.", "그래서 좀 그 했을 때 좋았어요."]);
+  assert.equal(stored[0].startSec, 10);
+  assert.ok(stored[1].startSec > 11 && stored[1].startSec < 14); // where "그래서" was spoken in piece 1
+  await c.stop();
+  assert.equal(stored.at(-1)!.text, "다음은");
+});
+
 test("live captions store finished segments, show what is still spoken, and flush it on stop", async () => {
   const { LiveCaptions } = await import("./main/live.ts");
   const stored: { track: string; startSec: number; text: string }[] = [];
