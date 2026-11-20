@@ -45,6 +45,8 @@ const en = {
   // Actions (menu bar, toolbar, context menus, ⌘K)
   "action.record": "New Recording",
   "action.stop": "Stop Recording",
+  "action.pause": "Pause Recording",
+  "action.resume": "Resume Recording",
   "action.newFolder": "New Folder",
   "action.undo": "Undo",
   "action.redo": "Redo",
@@ -114,6 +116,7 @@ const en = {
   "detail.systemSilent":
     "No sound from the other side yet. If this stays empty during a call, allow Seogi in System Settings › Privacy & Security › Screen & System Audio Recording.",
   "detail.recordingFor": "Recording",
+  "detail.paused": "Paused",
   "detail.liveError": "Live captions: {error}",
   "detail.processing": "Finishing the transcript",
   "detail.utterances": "{n} lines",
@@ -340,6 +343,8 @@ const ko: Record<MessageKey, string> = {
   "status.error": "오류",
   "action.record": "새 회의 녹음",
   "action.stop": "녹음 종료",
+  "action.pause": "녹음 일시정지",
+  "action.resume": "녹음 이어서 하기",
   "action.newFolder": "새 폴더",
   "action.undo": "실행 취소",
   "action.redo": "실행 복귀",
@@ -401,6 +406,7 @@ const ko: Record<MessageKey, string> = {
   "detail.systemSilent":
     "아직 상대방 소리가 없습니다. 통화 중인데 계속 비어 있으면 시스템 설정 › 개인정보 보호 및 보안 › 화면 및 시스템 오디오 녹음에서 Seogi를 허용하세요.",
   "detail.recordingFor": "녹음 중",
+  "detail.paused": "일시정지됨",
   "detail.liveError": "실시간 자막 오류: {error}",
   "detail.processing": "받아쓰기를 마무리하는 중",
   "detail.utterances": "발화 {n}",

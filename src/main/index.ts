@@ -2,7 +2,7 @@ import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, protocol, s
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { GPT_LIVE_MODEL, GPT_LIVE_TAIL_MS, IMPORT_CHUNK_SEC, LIVE_TEST_ID, type LiveEvent } from "../shared/types";
+import { GPT_LIVE_MODEL, GPT_LIVE_TAIL_MS, IMPORT_CHUNK_SEC, LIVE_TEST_ID, type LiveEvent, type LiveView } from "../shared/types";
 import type {
   AppInfo,
   AudioRef,
@@ -112,6 +112,8 @@ app.whenReady().then(async () => {
   /** `tailMs`: how long a stop waits for captions the renderer still sends (GPT-Live). */
   type LiveSession = {
     captions: LiveCaptions; tailMs: number; token?: number;
+    /** Audio recorded before this stretch (a paused meeting resumed); added to every caption time. */
+    offsetSec: number;
     openings: Set<Promise<void>>; abort: AbortController; openingError: string | null;
     stopping?: Promise<void>;
   };
@@ -127,10 +129,12 @@ app.whenReady().then(async () => {
       void stopLive(LIVE_TEST_ID);
     });
   }
+  const shifted = (view: LiveView, by: number): LiveView =>
+    by ? { ...view, lines: view.lines.map((l) => ({ ...l, startSec: l.startSec + by })) } : view;
   const sendLive = (id: number, token?: number) => {
     const entry = sessionFor(id, token);
     if (!entry) return;
-    const view = entry.captions.view();
+    const view = shifted(entry.captions.view(), entry.offsetSec);
     if (entry.openingError) view.error = showStored(entry.openingError, tr());
     (id === LIVE_TEST_ID ? settingsWin : win)?.webContents.send("live", id, view, token);
   };
@@ -139,7 +143,7 @@ app.whenReady().then(async () => {
    * Live captions are the meeting record: each finished segment is stored as it comes. The settings
    * test (LIVE_TEST_ID) stores nothing. `override` picks another live model for that test.
    */
-  function startLive(id: number, override?: Settings["live"], token?: number) {
+  function startLive(id: number, override?: Settings["live"], token?: number, offsetSec = 0) {
     const s = settings.get();
     const { provider, model } = override ?? { provider: s.live.provider, model: liveModelFor(id) };
     const glossary = glossaryFor(id);
@@ -162,11 +166,11 @@ app.whenReady().then(async () => {
         : (track, segment) => {
             // GPT-Live gets no transcription prompt, so it has nothing to echo.
             if (prompt && !rendererDriven && isPromptEcho(segment.text, prompt)) return;
-            storeUtterances(id, track, [segment]);
+            storeUtterances(id, track, [{ ...segment, startSec: segment.startSec + offsetSec }]);
           },
     );
     live.set(id, {
-      captions, token, tailMs: rendererDriven ? GPT_LIVE_TAIL_MS + 1000 : 0,
+      captions, token, offsetSec, tailMs: rendererDriven ? GPT_LIVE_TAIL_MS + 1000 : 0,
       openings: new Set(), abort: new AbortController(), openingError: null,
     });
   }
@@ -222,11 +226,14 @@ app.whenReady().then(async () => {
     return entry.openingError ?? entry.captions.lastGap ?? (entry.captions.drops ? storedMessage("error.captionsDropped", { n: entry.captions.drops }) : null);
   }
 
+  /** Caption trouble in a paused stretch, reported when the meeting ends. */
+  const pausedErrors = new Map<number, string>();
   /** Ends a recording once its last captions are stored; summarizing is a separate step. */
   async function finish(id: number) {
     db.setStatus(id, "processing");
     notify(id);
-    const error = await stopLive(id);
+    const error = (await stopLive(id)) ?? pausedErrors.get(id) ?? null;
+    pausedErrors.delete(id);
     db.clampUtterances(id);
     if (db.hasUtterances(id)) db.setStatus(id, "done", error);
     else db.setStatus(id, "error", error ?? storedMessage("error.nothingTranscribed"));
@@ -358,7 +365,7 @@ app.whenReady().then(async () => {
       transcribeFile(settings, toWav(pcm), glossaryFor(id), undefined, entry.abort.signal))
       .then((t) => {
         if (!t.text || live.get(id) !== entry || entry.abort.signal.aborted) return;
-        const lines = splitUtterances(t, 0, pcm.length / SAMPLE_RATE);
+        const lines = splitUtterances(t, entry.offsetSec, pcm.length / SAMPLE_RATE);
         if (id !== LIVE_TEST_ID) return storeUtterances(id, track, lines);
         lines.forEach((line, i) => entry.captions.onEvent(track, {
           type: "segment", id: `opening-${i}`, ...line, endSec: lines[i + 1]?.startSec ?? pcm.length / SAMPLE_RATE,
@@ -388,7 +395,10 @@ app.whenReady().then(async () => {
   ipcMain.handle("stopLiveTest", async (_e, token: number) => {
     if (sessionFor(LIVE_TEST_ID, token)) await stopLive(LIVE_TEST_ID);
   });
-  ipcMain.handle("liveView", (_e, id: number) => id === LIVE_TEST_ID ? null : live.get(id)?.captions.view() ?? null);
+  ipcMain.handle("liveView", (_e, id: number) => {
+    const entry = id === LIVE_TEST_ID ? undefined : live.get(id);
+    return entry ? shifted(entry.captions.view(), entry.offsetSec) : null;
+  });
   ipcMain.on("liveAudio", (_e, id: number, track: Track, pcm: Int16Array, token?: number) => sessionFor(id, token)?.captions.audio(track, pcm));
   ipcMain.on("liveEvent", (_e, id: number, track: Track, event: LiveEvent, token?: number) => sessionFor(id, token)?.captions.onEvent(track, event));
   ipcMain.handle("setSessionOptions", (_e, id: number, o: { liveModel?: string | null; glossary?: string }) => {
@@ -421,10 +431,25 @@ app.whenReady().then(async () => {
     }
   });
   ipcMain.on("sendChunk", (_e, chunk: Chunk) => saveChunk(chunk));
-  ipcMain.handle("stopMeeting", (_e, id: number) => {
+  /**
+   * `recordedSec`: the audio length when the meeting was paused; its length is the audio, not
+   * the wall-clock time with the pauses in it.
+   */
+  ipcMain.handle("stopMeeting", (_e, id: number, recordedSec?: number) => {
     // Only a real stop fixes the length; a resummary of an older meeting must not stamp "now".
-    db.setEnded(id);
+    db.setEnded(id, recordedSec);
     return finish(id);
+  });
+  // A pause ends the capture and its caption session but not the meeting; resuming starts a new
+  // session (perhaps with another model) whose times continue from the audio recorded so far.
+  ipcMain.handle("pauseMeeting", async (_e, id: number) => {
+    const error = await stopLive(id);
+    if (error && !pausedErrors.has(id)) pausedErrors.set(id, error);
+  });
+  ipcMain.handle("resumeMeeting", (_e, id: number, offsetSec: number) => {
+    if (live.has(id) || db.getMeeting(id)?.status !== "recording") return false;
+    startLive(id, undefined, undefined, offsetSec);
+    return true;
   });
   ipcMain.handle("summarize", (_e, id: number, model?: string) => summarizeMeeting(id, model));
   ipcMain.handle("setSummaryText", (_e, id: number, markdown: string) => db.setSummaryText(id, markdown));

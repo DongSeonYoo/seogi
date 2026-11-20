@@ -6,7 +6,11 @@ import { duration, fullDate } from "./format";
 import { useI18n } from "./i18n";
 import { IconButton } from "./ui";
 
-export type Recording = { id: number; startedAt: number };
+/**
+ * The meeting being recorded. `startedAt`: when the current stretch began, null while paused;
+ * `offsetSec`: the audio recorded before it, so captions and chunks of a resumed stretch continue.
+ */
+export type Recording = { id: number; startedAt: number | null; offsetSec: number };
 
 
 /** The unified toolbar over the list and detail: title on the left, capsules of actions on the right. */
@@ -131,11 +135,14 @@ export function TitleInput({
   );
 }
 
-export function Elapsed({ since }: { since: number }) {
+/** Time recorded so far; it stands still while paused. */
+export function Elapsed({ rec }: { rec: Recording }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
+    if (rec.startedAt === null) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, []);
-  return <span className="tnum">{clock((now - since) / 1000)}</span>;
+  }, [rec.startedAt]);
+  const running = rec.startedAt === null ? 0 : Math.max(0, now - rec.startedAt) / 1000;
+  return <span className="tnum">{clock(rec.offsetSec + running)}</span>;
 }

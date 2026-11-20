@@ -43,6 +43,8 @@ test("Chunker cuts at a pause after 25 s, forces a cut at 35 s, and drops silenc
   for (let i = 0; i < 400; i++) c.push(frame(0)); // silent chunk is not emitted
   c.flush();
   assert.equal(out.length, 3); // the 1 s of speech left over from the forced cut
+  // A pause resumes from the audio recorded, silence included.
+  assert.ok(Math.abs(c.recordedSec - (26.5 + 36 + 40)) < 1e-9);
 });
 
 test("isPromptEcho drops a transcript that only repeats the glossary prompt", () => {

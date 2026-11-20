@@ -627,7 +627,7 @@ function TranscriptionTest({ s }: { s: Settings }) {
     const live = { provider: s.live.provider, model };
     let token: number | undefined;
     let captions: ReturnType<typeof liveCaptionHooks> | undefined;
-    let stopRecording: (() => Promise<void>) | undefined;
+    let stopRecording: (() => Promise<unknown>) | undefined;
     const controller = new AbortController();
     async function finish() {
       const testToken = token;

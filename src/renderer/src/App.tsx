@@ -8,6 +8,7 @@ import type {
   MeetingDetail,
   MeetingRow,
   MenuSpec,
+  Settings,
   Utterance,
 } from "../../shared/types";
 import { mergeUtterances } from "../../shared/transcript";
@@ -60,9 +61,12 @@ export function App() {
   const [guide, setGuide] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState<number | null>(null);
-  const stopRef = useRef<(() => Promise<void>) | null>(null);
+  /** Ends the running capture; resolves to the seconds it recorded. */
+  const stopRef = useRef<(() => Promise<number>) | null>(null);
   /** The live recording and a start in progress, read by handlers that may run before a re-render. */
   const recordingRef = useRef<Recording | null>(null);
+  /** A pause whose capture is still ending; resume and stop wait for it. */
+  const pausingRef = useRef<Promise<void> | null>(null);
   const startingRef = useRef<Promise<void> | null>(null);
   /** The meeting whose summary is being written, and the last summarize failure. */
   const [summarizing, setSummarizing] = useState<number | null>(null);
@@ -210,44 +214,106 @@ export function App() {
     if (!(await api.startMeeting(id))) return;
     // Recording from the press on: the toolbar flips to Stop while capture (and its permission
     // prompts) is still being set up.
-    const rec = { id, startedAt: Date.now() };
+    const rec: Recording = { id, startedAt: Date.now(), offsetSec: 0 };
     recordingRef.current = rec;
     setRecording(rec);
     void refreshList();
     setSelected(id);
     setGuide(false);
     if (cancelRef.current) return endRecording(rec);
-    const captions = liveCaptionHooks(id, { provider: liveModel.provider, model: session?.liveModel ?? liveModel.model });
+    if (await capture(rec, options, { provider: liveModel.provider, model: session?.liveModel ?? liveModel.model }))
+      if (cancelRef.current) await endRecording(rec);
+  }
+
+  /** Starts capture and captions for `rec`; false (with a notice) when they could not start. */
+  async function capture(rec: Recording, options: Settings["recording"], live: Settings["live"]) {
+    const { id, offsetSec } = rec;
+    const captions = liveCaptionHooks(id, live);
     try {
       let writes = Promise.resolve();
       const stopRecording = await startRecording(
         (track, startSec, pcm) => {
           writes = writes.then(async () => {
             const ogg = await encodeOpus(pcm);
-            api.sendChunk({ meetingId: id, track, startSec, ...(ogg ? { ogg } : { pcm }) });
+            api.sendChunk({ meetingId: id, track, startSec: offsetSec + startSec, ...(ogg ? { ogg } : { pcm }) });
           });
         },
         { ...options, onSystemSilence: setSystemSilent, ...captions.options },
       );
       stopRef.current = async () => {
         try {
-          await stopRecording();
+          return await stopRecording();
         } finally {
           captions.stop();
           await writes;
         }
       };
+      return true;
     } catch (e) {
       captions.stop();
-      if (recordingRef.current !== rec) return; // already stopped; nothing to report
-      recordingRef.current = null;
-      setRecording(null);
-      await api.abortMeeting(id);
+      if (recordingRef.current !== rec) return false; // already stopped; nothing to report
       const message = e instanceof Error ? e.message : String(e);
       setNotice(t("notice.startFailed", { error: message === NO_SYSTEM_AUDIO ? t("error.noSystemAudio") : message }));
-      return;
+      if (offsetSec) {
+        // A resume that failed leaves the meeting paused, with what was recorded before.
+        await api.pauseMeeting(id);
+        const paused = { ...rec, startedAt: null };
+        recordingRef.current = paused;
+        setRecording(paused);
+      } else {
+        recordingRef.current = null;
+        setRecording(null);
+        await api.abortMeeting(id);
+      }
+      return false;
     }
-    if (cancelRef.current) await endRecording(rec);
+  }
+
+  /** Ends the capture but not the meeting: the session's model and glossary can change meanwhile. */
+  function pause() {
+    const rec = recordingRef.current;
+    const stopCapture = stopRef.current;
+    if (!rec || rec.startedAt === null || !stopCapture || pausingRef.current) return;
+    stopRef.current = null;
+    // Shown paused at once; the exact audio length replaces the estimate when capture has ended.
+    const paused: Recording = { ...rec, startedAt: null, offsetSec: rec.offsetSec + (Date.now() - rec.startedAt) / 1000 };
+    recordingRef.current = paused;
+    setRecording(paused);
+    setSystemSilent(false);
+    pausingRef.current = (async () => {
+      try {
+        const sec = await stopCapture();
+        if (recordingRef.current === paused) {
+          const exact = { ...paused, offsetSec: rec.offsetSec + sec };
+          recordingRef.current = exact;
+          setRecording(exact);
+        }
+      } catch (e) {
+        setNotice(showStored(e instanceof Error ? e.message : String(e), t));
+      } finally {
+        await api.pauseMeeting(rec.id);
+      }
+    })().finally(() => (pausingRef.current = null));
+  }
+
+  /** Records on into the paused meeting with the session's model as it is now. */
+  function resume() {
+    if (recordingRef.current?.startedAt !== null || startingRef.current) return;
+    cancelRef.current = false;
+    startingRef.current = (async () => {
+      await pausingRef.current;
+      const paused = recordingRef.current;
+      if (!paused || paused.startedAt !== null) return;
+      const [{ recording: options, live }, m] = await Promise.all([api.getSettings(), api.getMeeting(paused.id)]);
+      // Stopped while this was getting ready: nothing to resume.
+      if (recordingRef.current !== paused || !(await api.resumeMeeting(paused.id, paused.offsetSec))) return;
+      if (recordingRef.current !== paused) return; // stopped meanwhile; the stop ended that session
+      const rec: Recording = { ...paused, startedAt: Date.now() };
+      recordingRef.current = rec;
+      setRecording(rec);
+      if (await capture(rec, options, { provider: live.provider, model: m?.liveModel ?? live.model }))
+        if (cancelRef.current) await endRecording(rec);
+    })().finally(() => (startingRef.current = null));
   }
 
   /** Writes the summary on request; an existing (possibly edited) one is replaced only if confirmed. */
@@ -275,8 +341,9 @@ export function App() {
 
   /** Ends the recording at once; a capture still starting is ended when it comes up (see begin). */
   async function stop() {
+    if (pausingRef.current) await pausingRef.current;
     const rec = recordingRef.current;
-    if (!rec || !stopRef.current) {
+    if (!rec || (!stopRef.current && rec.startedAt !== null)) {
       if (startingRef.current) cancelRef.current = true;
       return;
     }
@@ -289,12 +356,14 @@ export function App() {
     setSystemSilent(false);
     const stopCapture = stopRef.current;
     stopRef.current = null;
+    let sec = 0;
     try {
-      await stopCapture?.();
+      sec = (await stopCapture?.()) ?? 0;
     } catch (e) {
       setNotice(showStored(e instanceof Error ? e.message : String(e), t));
     } finally {
-      await api.stopMeeting(rec.id);
+      // A meeting paused along the way is as long as its audio, not its wall-clock span.
+      await api.stopMeeting(rec.id, rec.offsetSec ? rec.offsetSec + sec : undefined);
     }
   }
 
@@ -532,6 +601,7 @@ export function App() {
               onExport: (format) => void api.exportMeeting(current.id, format),
             }}
             onRecord={() => perform("record")}
+            onPause={() => (recording?.startedAt === null ? resume() : pause())}
             recordingElsewhere={!!recording && recording.id !== current.id}
           />
         ) : (

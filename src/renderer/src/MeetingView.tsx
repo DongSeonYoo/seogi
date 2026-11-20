@@ -39,6 +39,7 @@ export function MeetingView({
   systemSilent,
   summary,
   onRecord,
+  onPause,
   recordingElsewhere,
 }: {
   meeting: MeetingDetail;
@@ -47,6 +48,8 @@ export function MeetingView({
   systemSilent: boolean;
   summary: SummaryPane;
   onRecord: () => void;
+  /** Pauses a running recording, or resumes a paused one. */
+  onPause: () => void;
   /** Another session is recording: this one's Record would stop that one, so it waits. */
   recordingElsewhere: boolean;
 }) {
@@ -57,6 +60,7 @@ export function MeetingView({
   // An unrecorded session also takes an audio file, dropped anywhere on the transcript side.
   const importing = useImportProgress(m.id);
   const canImport = m.status === "new" && !recording && !importing;
+  const paused = recording?.startedAt === null;
   // A finished recording's other side can be told apart into voices; the button says so once done.
   const canSeparate = m.status === "done" && !recording && !importing && m.utterances.some((u) => u.track === "system");
   const separated = m.utterances.some((u) => u.track === "system" && u.speaker);
@@ -126,7 +130,7 @@ export function MeetingView({
       >
         {(canImport || recording) && (
           <div className="detail__head">
-            {m.status === "new" && !recording && <SessionOptions meeting={m} />}
+            {((m.status === "new" && !recording) || paused) && <SessionOptions meeting={m} />}
             <div className="capsule">
               <button
                 type="button"
@@ -139,7 +143,7 @@ export function MeetingView({
                 {recording ? (
                   <>
                     <Square aria-hidden />
-                    <Elapsed since={recording.startedAt} />
+                    <Elapsed rec={recording} />
                   </>
                 ) : (
                   <>
@@ -148,6 +152,11 @@ export function MeetingView({
                   </>
                 )}
               </button>
+              {recording && (
+                <IconButton label={t(paused ? "action.resume" : "action.pause")} onClick={onPause}>
+                  {paused ? <Play aria-hidden /> : <Pause aria-hidden />}
+                </IconButton>
+              )}
             </div>
           </div>
         )}
@@ -225,13 +234,13 @@ export function MeetingView({
             <span>{t("detail.systemSilent")}</span>
           </p>
         )}
-        <Transcript meeting={m} live={live} focus={focus} onStamp={stamp} importing={!!importing} />
+        <Transcript meeting={m} live={live} focus={focus} onStamp={stamp} importing={!!importing} paused={paused} />
         <footer className="statusbar tnum" role="status">
           <span className="statusbar__left">
             {recording ? (
               <>
-                <span className="live-dot" aria-hidden />
-                {t("detail.recordingFor")} <Elapsed since={recording.startedAt} />
+                {!paused && <span className="live-dot" aria-hidden />}
+                {t(paused ? "detail.paused" : "detail.recordingFor")} <Elapsed rec={recording} />
                 {live?.error && <span className="statusbar__error"> · {t("detail.liveError", { error: live.error })}</span>}
               </>
             ) : m.status === "processing" ? (
@@ -338,12 +347,14 @@ function Transcript({
   focus,
   onStamp,
   importing,
+  paused,
 }: {
   meeting: MeetingDetail;
   live: LiveView | null;
   focus: { sec: number; n: number } | null;
   onStamp: (u: Utterance) => void;
   importing: boolean;
+  paused: boolean;
 }) {
   const t = useT();
   const scroller = useRef<HTMLDivElement>(null);
@@ -401,7 +412,7 @@ function Transcript({
         // While a file is being prepared the session is still "new", but it is no longer waiting for one.
         !importing && <p className="empty">{t(m.status === "new" ? "detail.notRecorded" : "detail.emptyTranscript")}</p>
       )}
-      {m.status === "recording" && (
+      {m.status === "recording" && !paused && (
         <p className="typing" role="status">
           <span className="spinner" aria-hidden />
           {t("detail.listening")}

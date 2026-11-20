@@ -187,8 +187,14 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       ).run(id);
     },
 
-    setEnded(id: number) {
-      db.prepare("UPDATE meetings SET ended_at = COALESCE(ended_at, ?) WHERE id = ?").run(new Date().toISOString(), id);
+    /** `recordedSec`: the audio length, for a paused meeting whose wall-clock span includes the pauses. */
+    setEnded(id: number, recordedSec?: number) {
+      if (recordedSec === undefined)
+        db.prepare("UPDATE meetings SET ended_at = COALESCE(ended_at, ?) WHERE id = ?").run(new Date().toISOString(), id);
+      else
+        db.prepare(
+          "UPDATE meetings SET ended_at = COALESCE(ended_at, strftime('%Y-%m-%dT%H:%M:%fZ', started_at, '+' || ? || ' seconds')) WHERE id = ?",
+        ).run(recordedSec, id);
     },
 
     /** A new summary (Markdown) and its title; a title the user typed stays. */

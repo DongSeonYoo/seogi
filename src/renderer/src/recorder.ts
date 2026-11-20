@@ -35,7 +35,7 @@ export type RecordingOptions = {
 export async function startRecording(
   emit: Emit,
   { micDeviceId, systemAudio, signal, onSystemSilence, onFrame, onStreams }: RecordingOptions,
-): Promise<() => Promise<void>> {
+): Promise<() => Promise<number>> {
   signal?.throwIfAborted();
   const mic = await navigator.mediaDevices.getUserMedia({
     // "ideal" falls back to the default input when the chosen device is unplugged.
@@ -76,10 +76,12 @@ export async function startRecording(
 
     const tracks: [Track, MediaStream][] = [["mic", mic]];
     if (display) tracks.push(["system", new MediaStream(display.getAudioTracks())]);
+    const chunkers: Chunker[] = [];
     const flushers = tracks.map(([track, stream]) => {
       const node = new AudioWorkletNode(ctx, "tap");
       ctx.createMediaStreamSource(stream).connect(node);
       const chunker = new Chunker((startSec, pcm) => emit(track, startSec, pcm));
+      chunkers.push(chunker);
       const watch =
         track === "system" && onSystemSilence
           ? new SilenceWatch(SYSTEM_SILENCE_HINT_SEC * RATE, onSystemSilence)
@@ -111,17 +113,19 @@ export async function startRecording(
     });
     onStreams?.(tracks);
 
+    /** Resolves to the seconds recorded (the mic track's; both run on one clock). */
     async function stop() {
       try {
         const results = await Promise.allSettled(flushers.map((flush) => flush()));
         const failed = results.find((result) => result.status === "rejected");
         if (failed) throw failed.reason;
+        return chunkers[0].recordedSec;
       } finally {
         stopDevices();
         await ctx.close();
       }
     }
-    let stopping: Promise<void> | undefined;
+    let stopping: Promise<number> | undefined;
     return () => (stopping ??= stop());
   } catch (e) {
     stopDevices();
@@ -187,6 +191,11 @@ export class Chunker {
 
     const sec = this.samples / RATE;
     if (sec >= MAX_SEC || (sec >= MIN_SEC && this.quietSamples >= PAUSE_SEC * RATE)) this.flush();
+  }
+
+  /** Everything pushed so far, flushed or not. */
+  get recordedSec() {
+    return (this.startSample + this.samples) / RATE;
   }
 
   flush() {

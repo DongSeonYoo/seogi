@@ -211,7 +211,12 @@ export type Api = {
   /** Exchanges a WebRTC offer for a GPT-Live session through qgrid; resolves to the answer. */
   /** Session options for `meetingId` (glossary) shape the GPT-Live instructions. */
   liveCall(sdp: string, meetingId: number, token?: number): Promise<{ ok: true; sdp: string } | { ok: false; error: string }>;
-  stopMeeting(id: number): Promise<void>;
+  /** `recordedSec`: the audio length, given when the meeting was paused along the way. */
+  stopMeeting(id: number, recordedSec?: number): Promise<void>;
+  /** Ends the capture's caption session; the meeting stays recording. */
+  pauseMeeting(id: number): Promise<void>;
+  /** A new caption session (the session's model now) whose times start at `offsetSec`. */
+  resumeMeeting(id: number, offsetSec: number): Promise<boolean>;
   /** Live captions for the settings test under LIVE_TEST_ID; nothing is saved. */
   /** `model` overrides the saved live model. */
   startLiveTest(model?: Settings["live"]): Promise<number>;
