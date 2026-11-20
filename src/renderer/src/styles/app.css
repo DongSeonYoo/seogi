@@ -724,6 +724,68 @@
   height: 14px;
 }
 
+/* Karaoke: the words of the line being heard fill in as playback reaches them. */
+.msg[data-playing="true"] .word {
+  transition: color var(--dur-micro) var(--ease-out);
+}
+
+.msg[data-playing="true"] .word[data-sung] {
+  color: var(--color-accent-text);
+}
+
+/* The playback bar, above the status bar while a line plays or is paused. */
+.playbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(56px, 120px) auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-top: var(--rule);
+  background: var(--color-raised);
+  font-size: var(--text-sm);
+  flex: none;
+}
+
+.playbar__line {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 2px var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-ink);
+  font: inherit;
+  text-align: left;
+}
+
+.playbar__line:hover {
+  background: var(--color-accent-soft);
+}
+
+.playbar__who {
+  flex: none;
+  font-weight: var(--weight-strong);
+}
+
+.playbar__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-ink-2);
+}
+
+.playbar__time {
+  color: var(--color-ink-3);
+  white-space: nowrap;
+}
+
+.playbar__track {
+  width: 100%;
+  accent-color: var(--color-accent);
+}
+
 .msg[data-playing="true"] {
   background: var(--color-accent-soft);
 }

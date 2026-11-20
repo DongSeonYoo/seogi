@@ -1,6 +1,6 @@
-import { AlertCircle, BookmarkPlus, BookPlus, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
+import { AlertCircle, BookmarkPlus, BookPlus, X, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { GPT_LIVE_MODEL, type LiveView, type MeetingDetail, type ModelOption, type Settings, type SpeakerNames, type Utterance } from "../../shared/types";
+import { GPT_LIVE_MODEL, type LiveView, type Track, type MeetingDetail, type ModelOption, type Settings, type SpeakerNames, type Utterance } from "../../shared/types";
 import { clock, speakerKey, speakerName } from "../../shared/summary";
 import { joinSplitSentences } from "../../shared/transcript";
 import { duration, fullDate, groupUtterances, insertDrafts } from "./format";
@@ -59,7 +59,10 @@ export function MeetingView({
   const i18n = useI18n();
   const { t } = i18n;
   const speakers = useMemo(() => [...new Set(m.utterances.map((u) => speakerName(u, t, m.speakerNames)))], [m.utterances, m.speakerNames, t]);
-  const shownLines = useMemo(() => joinSplitSentences(m.utterances).length, [m.utterances]);
+  // Pieces of one sentence are joined into one line on screen.
+  const confirmed = useMemo(() => joinSplitSentences(m.utterances), [m.utterances]);
+  const shownLines = confirmed.length;
+  const playback = usePlayer(m.id, confirmed);
   // An unrecorded session also takes an audio file, dropped anywhere on the transcript side.
   const importing = useImportProgress(m.id);
   const canImport = m.status === "new" && !recording && !importing;
@@ -238,7 +241,18 @@ export function MeetingView({
             <span>{t("detail.systemSilent")}</span>
           </p>
         )}
-        <Transcript meeting={m} live={live} focus={focus} onStamp={stamp} importing={!!importing} paused={paused} />
+        <Transcript meeting={m} confirmed={confirmed} player={playback.controls} progress={playback.now?.progress} live={live} focus={focus} onStamp={stamp} importing={!!importing} paused={paused} />
+        {playback.spot && playback.now && (
+          <PlaybackBar
+            meeting={m}
+            line={playback.now.line}
+            at={playback.spot.startSec}
+            playing={playback.playing}
+            onToggle={() => (playback.playing ? playback.pause() : playback.paused && playback.play(playback.paused))}
+            onSeek={(sec) => playback.play({ track: playback.now!.line.track, startSec: sec })}
+            onClose={playback.close}
+          />
+        )}
         <footer className="statusbar tnum" role="status">
           <span className="statusbar__left">
             {recording ? (
@@ -351,6 +365,9 @@ const lineKey = (u: Line) => u.key ?? u.id;
 
 function Transcript({
   meeting: m,
+  confirmed,
+  player,
+  progress,
   live,
   focus,
   onStamp,
@@ -358,6 +375,10 @@ function Transcript({
   paused,
 }: {
   meeting: MeetingDetail;
+  confirmed: Utterance[];
+  player: Player;
+  /** How far into the line being heard playback is (0-1), for the karaoke fill. */
+  progress: number | undefined;
   live: LiveView | null;
   focus: { sec: number; n: number } | null;
   onStamp: (u: Utterance) => void;
@@ -368,7 +389,19 @@ function Transcript({
   const scroller = useRef<HTMLDivElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
-  const player = usePlayer(m.id);
+  // Playback follows the line being heard down the transcript, as long as the one before it was in
+  // view: a reader who scrolled elsewhere is not pulled back.
+  const heardEl = useRef<Element | null>(null);
+  useEffect(() => {
+    const box = scroller.current;
+    const el = player.playingId === null ? null : box?.querySelector(`.msg[data-key="${player.playingId}"]`);
+    const prev = heardEl.current;
+    heardEl.current = el ?? null;
+    if (!el || !box || !prev || prev === el) return;
+    const view = box.getBoundingClientRect();
+    const was = prev.getBoundingClientRect();
+    if (was.bottom > view.top && was.top < view.bottom) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [player.playingId]);
   const edit = useCallback((u: Line, text: string) => void window.api.editUtterance(m.id, u.id, text, u.joined), [m.id]);
   const rename = useCallback((u: Line, name: string) => void window.api.nameVoice(m.id, u.id, name), [m.id]);
   const draftFix = useMemo<DraftFix>(() => ({
@@ -384,7 +417,6 @@ function Transcript({
   }, [m.id, m.glossary]);
   // Every line in the named second is marked: two lines can share a start time to the second.
   const [focused, setFocused] = useState<Set<number>>(new Set());
-  const confirmed = useMemo(() => joinSplitSentences(m.utterances), [m.utterances]);
   const grouped = useMemo(() => groupUtterances<Line>(confirmed), [confirmed]);
   const groups = useMemo(() => {
     const drafts = (live?.lines ?? []).map((d, i) => ({ ...d, id: -1 - i, speaker: null, draft: true }));
@@ -427,7 +459,8 @@ function Transcript({
   return (
     <div className="transcript selectable" ref={scroller}>
       {groups.map((group) => (
-        <MessageGroup key={lineKey(group[0])} group={group} player={player} focused={focused} onStamp={onStamp} onEdit={edit} onTerm={addTerm} names={m.speakerNames} onRename={rename} onDraft={draftFix} />
+        <MessageGroup key={lineKey(group[0])} group={group} player={player} focused={focused}
+          progress={player.playingId !== null && group.some((u) => u.id === player.playingId) ? progress : undefined} onStamp={onStamp} onEdit={edit} onTerm={addTerm} names={m.speakerNames} onRename={rename} onDraft={draftFix} />
       ))}
       {!groups.length && !busy && (
         // While a file is being prepared the session is still "new", but it is no longer waiting for one.
@@ -448,8 +481,9 @@ type Edit = (u: Line, text: string) => void;
 /** Correcting a line still being spoken (by its live key). */
 type DraftFix = { hold(u: Line): void; release(u: Line): void; fix(u: Line, index: number, from: string, to: string): void };
 
-const MessageGroup = memo(function MessageGroup({ group, player, focused, onStamp, onEdit, onTerm, names, onRename, onDraft }: {
+const MessageGroup = memo(function MessageGroup({ group, player, focused, onStamp, onEdit, onTerm, names, onRename, onDraft, progress }: {
   group: Line[];
+  progress?: number;
   onDraft: DraftFix;
   names: SpeakerNames;
   onRename: (u: Line, name: string) => void;
@@ -462,7 +496,8 @@ const MessageGroup = memo(function MessageGroup({ group, player, focused, onStam
   return (
     <ol className="msg-group">
       {group.map((u, i) => (
-        <Message key={lineKey(u)} u={u} head={i === 0} player={player} focused={focused.has(u.id)} onStamp={onStamp} onEdit={onEdit} onTerm={onTerm}
+        <Message key={lineKey(u)} u={u} head={i === 0} player={player} focused={focused.has(u.id)}
+          progress={u.id === player.playingId ? progress : undefined} onStamp={onStamp} onEdit={onEdit} onTerm={onTerm}
           name={names[speakerKey(u)] ?? ""} onRename={onRename} onDraft={onDraft} />
       ))}
     </ol>
@@ -480,8 +515,11 @@ const Message = memo(function Message({
   name: given,
   onRename,
   onDraft,
+  progress,
 }: {
   onDraft: DraftFix;
+  /** Set on the line being heard: how far into it playback is. */
+  progress?: number;
   /** The name given to this line's voice; "" when it has none. */
   name: string;
   onRename: (u: Line, name: string) => void;
@@ -509,6 +547,18 @@ const Message = memo(function Message({
     const next = text.replace(/\s+/g, " ").trim();
     if (next && next !== u.text) onEdit(u, next);
   };
+  // Karaoke: the words heard so far, by their share of the line's characters.
+  const sungTo = useMemo(() => {
+    if (progress === undefined) return undefined;
+    const total = u.text.length || 1;
+    let at = 0;
+    let last = -1;
+    parts.forEach((p, i) => {
+      if (i % 2 === 0 && p && (at + p.length / 2) / total <= progress) last = i;
+      at += p.length;
+    });
+    return last;
+  }, [parts, progress, u.text]);
   const replaceWord = (i: number, word: string) => parts.map((p, j) => (j === i ? word : p)).join("");
   const [hoverWord, setHoverWord] = useState<number | null>(null);
   const cancel = (el: HTMLElement) => {
@@ -628,6 +678,7 @@ const Message = memo(function Message({
                     key={i}
                     className="word"
                     data-cursor={cursor === i || undefined}
+                    data-sung={(progress !== undefined && sungTo !== undefined && i <= sungTo) || undefined}
                     contentEditable={editing === i ? "plaintext-only" : undefined}
                     suppressContentEditableWarning
                     ref={(el) => {
@@ -678,7 +729,7 @@ const Message = memo(function Message({
         </p>
       </div>
       {!u.draft && (hovered || hasFocus) && <div className="msg__actions">
-        <IconButton label={playing ? t("detail.pause") : t("detail.play")} onClick={() => player.toggle(u)}>
+        <IconButton label={playing ? t("detail.pause") : t("detail.play")} onClick={() => (playing ? player.pause() : player.play(u))}>
           {playing ? <Pause aria-hidden /> : <Play aria-hidden />}
         </IconButton>
         <IconButton
@@ -708,6 +759,53 @@ const Message = memo(function Message({
     </li>
   );
 });
+
+/**
+ * Shown while a line plays (or is paused): play/pause, where in the meeting, who is speaking and
+ * what; the line jumps the transcript to it, the track seeks.
+ */
+function PlaybackBar({ meeting: m, line, at, playing, onToggle, onSeek, onClose }: {
+  meeting: MeetingDetail;
+  line: Utterance;
+  at: number;
+  playing: boolean;
+  onToggle: () => void;
+  onSeek: (sec: number) => void;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const total = Math.max(m.durationSec, at, 1);
+  return (
+    <div className="playbar" role="region" aria-label={t("player.label")}>
+      <IconButton label={playing ? t("detail.pause") : t("detail.play")} onClick={onToggle}>
+        {playing ? <Pause aria-hidden /> : <Play aria-hidden />}
+      </IconButton>
+      <button
+        type="button"
+        className="playbar__line"
+        title={t("player.jump")}
+        onClick={() => document.querySelector(`.msg[data-key="${line.id}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" })}
+      >
+        <span className="playbar__who">{speakerName(line, t, m.speakerNames)}</span>
+        <span className="playbar__text">{line.text}</span>
+      </button>
+      <span className="playbar__time tnum">{clock(at)} / {clock(total)}</span>
+      <input
+        className="playbar__track"
+        type="range"
+        min={0}
+        max={total}
+        step={1}
+        value={Math.min(at, total)}
+        aria-label={t("player.seek")}
+        onChange={(e) => onSeek(Number(e.target.value))}
+      />
+      <IconButton label={t("player.close")} onClick={onClose}>
+        <X aria-hidden />
+      </IconButton>
+    </div>
+  );
+}
 
 /** Moves the word cursor onto the next (1) or previous (-1) line of the transcript. */
 function moveLine(from: HTMLElement, step: 1 | -1, edit = false) {
@@ -755,38 +853,63 @@ function editKeys(save: (el: HTMLElement) => void, cancel: (el: HTMLElement) => 
   };
 }
 
-type Player = ReturnType<typeof usePlayer>;
+type Player = ReturnType<typeof usePlayer>["controls"];
 
 /** Follow a selected utterance into subsequent chunks until paused or the meeting changes. */
-function usePlayer(meetingId: number) {
-  const [selection, setSelection] = useState<{ meetingId: number; u: Utterance } | null>(null);
-  const toggle = useCallback((u: Utterance) => {
-    setSelection((s) => s?.meetingId === meetingId && s.u.id === u.id ? null : { meetingId, u });
+type Cue = { track: Track; startSec: number };
+/** Playback starts this far before a line (main's PLAYBACK_LEAD_SEC), so the line is heard whole. */
+const HEARD_LEAD_SEC = 1.2;
+
+/**
+ * Plays a track from a line (or any moment) on through its chunks, and says which line is being
+ * heard and how far into it (spread over the line by characters: there are no word times).
+ * Pausing keeps the spot so the playback bar can go on from it.
+ */
+function usePlayer(meetingId: number, lines: Utterance[]) {
+  const [run, setRun] = useState<{ meetingId: number; at: Cue } | null>(null);
+  const [paused, setPaused] = useState<Cue | null>(null);
+  const [heard, setHeard] = useState<Cue | null>(null);
+  const heardRef = useRef<Cue | null>(null);
+  const play = useCallback((at: Cue) => {
+    setPaused(null);
+    setHeard(at);
+    heardRef.current = at;
+    setRun({ meetingId, at });
   }, [meetingId]);
+  const pause = useCallback(() => {
+    setRun((r) => {
+      if (r) setPaused(heardRef.current ?? r.at);
+      return null;
+    });
+  }, []);
+  const close = useCallback(() => {
+    setRun(null);
+    setPaused(null);
+    setHeard(null);
+  }, []);
+  useEffect(close, [meetingId, close]);
 
   useLayoutEffect(() => {
-    if (!selection) return;
-    if (selection.meetingId !== meetingId) {
-      setSelection(null);
-      return;
-    }
-    const { u } = selection;
+    if (!run || run.meetingId !== meetingId) return;
+    const { track, startSec } = run.at;
     let active = true;
     let audio: HTMLAudioElement | null = null;
     function release() {
       if (!audio) return;
-      audio.onloadedmetadata = audio.onerror = audio.onended = audio.onpause = null;
+      audio.onloadedmetadata = audio.onerror = audio.onended = audio.onpause = audio.ontimeupdate = null;
       audio.pause();
       audio.removeAttribute("src");
       audio.load();
       audio = null;
     }
     function finish() {
-      if (active) setSelection((s) => s === selection ? null : s);
+      if (!active) return;
+      setRun((r) => (r === run ? null : r));
+      setHeard(null);
     }
     async function play(at: number, previousUrl?: string) {
       try {
-        const ref = await window.api.audioFor(meetingId, u.track, at);
+        const ref = await window.api.audioFor(meetingId, track, at);
         if (!active) return;
         if (!ref || ref.url === previousUrl) return finish();
         release();
@@ -798,6 +921,11 @@ function usePlayer(meetingId: number) {
           a.currentTime = offset < a.duration ? offset : Math.max(0, a.duration - 2);
           void a.play().catch(() => { if (audio === a) finish(); });
         };
+        a.ontimeupdate = () => {
+          const cue = { track, startSec: ref.chunkStartSec + a.currentTime };
+          heardRef.current = cue;
+          setHeard(cue);
+        };
         a.onended = () => { void play(ref.chunkStartSec + a.duration + 0.05, ref.url); };
         a.onpause = () => { if (!a.ended) finish(); };
         a.onerror = finish;
@@ -806,15 +934,28 @@ function usePlayer(meetingId: number) {
         finish();
       }
     }
-    void play(u.startSec);
+    void play(startSec);
     return () => {
       active = false;
       release();
     };
-  }, [meetingId, selection]);
+  }, [meetingId, run]);
 
-  const playingId = selection?.meetingId === meetingId ? selection.u.id : null;
-  return useMemo(() => ({ playingId, toggle }), [playingId, toggle]);
+  const spot = heard ?? paused;
+  // The line being heard, and how far into it: the next line of the track (or its length) ends it.
+  const now = useMemo(() => {
+    if (!spot || (!run && !paused)) return null;
+    const track = lines.filter((l) => l.track === spot.track);
+    const at = spot.startSec + (run && heard === run.at ? 0 : HEARD_LEAD_SEC);
+    const i = track.findLastIndex((l) => l.startSec <= at);
+    if (i < 0) return null;
+    const line = track[i];
+    const end = Math.min(track[i + 1]?.startSec ?? Infinity, line.startSec + Math.max(2, line.text.length / 5));
+    return { line, progress: Math.min(1, Math.max(0, (at - line.startSec) / Math.max(0.5, end - line.startSec))) };
+  }, [lines, spot, run, paused, heard]);
+  const playingId = run ? (now?.line.id ?? null) : null;
+  const controls = useMemo(() => ({ playingId, play, pause }), [playingId, play, pause]);
+  return { controls, now, spot, playing: !!run, paused, play, pause, close };
 }
 
 /**
