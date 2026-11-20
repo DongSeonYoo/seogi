@@ -40,8 +40,11 @@ export function MeetingView({
   summary,
   onRecord,
   onPause,
+  onContinue,
   recordingElsewhere,
 }: {
+  /** Records on into this meeting once it has finished. */
+  onContinue: () => void;
   meeting: MeetingDetail;
   live: LiveView | null;
   recording: Recording | null;
@@ -61,6 +64,7 @@ export function MeetingView({
   const importing = useImportProgress(m.id);
   const canImport = m.status === "new" && !recording && !importing;
   const paused = recording?.startedAt === null;
+  const canContinue = !recording && !importing && (m.status === "done" || m.status === "error");
   // A finished recording's other side can be told apart into voices; the button says so once done.
   const canSeparate = m.status === "done" && !recording && !importing && m.utterances.some((u) => u.track === "system");
   const separated = m.utterances.some((u) => u.track === "system" && u.speaker);
@@ -128,17 +132,17 @@ export function MeetingView({
           void take(f);
         }}
       >
-        {(canImport || recording) && (
+        {(canImport || recording || canContinue) && (
           <div className="detail__head">
-            {((m.status === "new" && !recording) || recording) && <SessionOptions meeting={m} running={!!recording && !paused} />}
+            {(canImport || canContinue || recording) && <SessionOptions meeting={m} running={!!recording && !paused} />}
             <div className="capsule">
               <button
                 type="button"
                 className="capsule__label"
                 data-recording={recording ? true : undefined}
                 disabled={recordingElsewhere}
-                onClick={onRecord}
-                title={recordingElsewhere ? t("detail.recordingElsewhere") : `${recording ? t("action.stop") : t("action.record")} (⇧⌘R)`}
+                onClick={canContinue ? onContinue : onRecord}
+                title={recordingElsewhere ? t("detail.recordingElsewhere") : canContinue ? t("detail.continue") : `${recording ? t("action.stop") : t("action.record")} (⇧⌘R)`}
               >
                 {recording ? (
                   <>
@@ -148,7 +152,7 @@ export function MeetingView({
                 ) : (
                   <>
                     <Mic aria-hidden />
-                    {t("toolbar.record")}
+                    {t(canContinue ? "detail.continue" : "toolbar.record")}
                   </>
                 )}
               </button>

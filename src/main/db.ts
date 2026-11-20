@@ -166,6 +166,11 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       return r.changes > 0;
     },
 
+    /** A finished meeting records on: its end is unset until the next stop fixes it again. */
+    continueRecording(id: number): boolean {
+      return db.prepare("UPDATE meetings SET status = 'recording', ended_at = NULL, error = NULL WHERE id = ? AND status IN ('done', 'error') AND deleted_at IS NULL").run(id).changes > 0;
+    },
+
     setStatus(id: number, status: MeetingStatus, error: string | null = null) {
       db.prepare("UPDATE meetings SET status = ?, error = ? WHERE id = ?").run(status, error, id);
     },

@@ -38,6 +38,7 @@ const api: Api = {
   liveView: (id) => ipcRenderer.invoke("liveView", id),
   stopMeeting: (id, recordedSec) => ipcRenderer.invoke("stopMeeting", id, recordedSec),
   pauseMeeting: (id) => ipcRenderer.invoke("pauseMeeting", id),
+  continueMeeting: (id) => ipcRenderer.invoke("continueMeeting", id),
   resumeMeeting: (id, offsetSec) => ipcRenderer.invoke("resumeMeeting", id, offsetSec),
   summarize: (id, model) => ipcRenderer.invoke("summarize", id, model),
   setSummaryText: (id, markdown) => ipcRenderer.invoke("setSummaryText", id, markdown),

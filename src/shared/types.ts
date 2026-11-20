@@ -240,6 +240,8 @@ export type Api = {
   stopMeeting(id: number, recordedSec?: number): Promise<void>;
   /** Ends the capture's caption session; the meeting stays recording. */
   pauseMeeting(id: number): Promise<void>;
+  /** Records on into a finished meeting; resolves to where its audio continues, or null. */
+  continueMeeting(id: number): Promise<number | null>;
   /** A new caption session (the session's model now) whose times start at `offsetSec`. */
   resumeMeeting(id: number, offsetSec: number): Promise<boolean>;
   /** Live captions for the settings test under LIVE_TEST_ID; nothing is saved. */

@@ -296,6 +296,26 @@ export function App() {
     })().finally(() => (pausingRef.current = null));
   }
 
+  /** Records on into the finished meeting on screen, after the audio it already has. */
+  function continueMeeting() {
+    const m = current;
+    if (!m || (m.status !== "done" && m.status !== "error") || recordingRef.current || startingRef.current) return;
+    cancelRef.current = false;
+    startingRef.current = (async () => {
+      setNotice(null);
+      const [{ recording: options, live }, offsetSec] = await Promise.all([api.getSettings(), api.continueMeeting(m.id)]);
+      if (offsetSec === null) return;
+      const rec: Recording = { id: m.id, startedAt: Date.now(), offsetSec };
+      recordingRef.current = rec;
+      setRecording(rec);
+      if (cancelRef.current) return endRecording(rec);
+      const started = await capture(rec, options, { provider: live.provider, model: m.liveModel ?? live.model });
+      // Capture failed (left paused) or was stopped while starting: the meeting ends as it was.
+      if (!started && recordingRef.current?.id === m.id) await endRecording(recordingRef.current);
+      else if (started && cancelRef.current) await endRecording(rec);
+    })().finally(() => (startingRef.current = null));
+  }
+
   /** Records on into the paused meeting with the session's model as it is now. */
   function resume() {
     if (recordingRef.current?.startedAt !== null || startingRef.current) return;
@@ -602,6 +622,7 @@ export function App() {
             }}
             onRecord={() => perform("record")}
             onPause={() => (recording?.startedAt === null ? resume() : pause())}
+            onContinue={continueMeeting}
             recordingElsewhere={!!recording && recording.id !== current.id}
           />
         ) : (

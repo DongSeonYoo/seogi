@@ -118,6 +118,22 @@ test("captions lose sound tags, and a line with no letter or digit is dropped", 
   assert.equal(cleanCaption("[1] 항목"), "[1] 항목"); // not a sound tag
 });
 
+test("a finished meeting records on with its end unset, and only a finished one", async () => {
+  const { openDb } = await import("./main/db.ts");
+  const db = openDb(":memory:");
+  const id = db.createMeeting("Sync");
+  assert.equal(db.continueRecording(id), false); // not recorded yet: Record, not Record On
+  db.startRecording(id);
+  db.addUtterances(id, "mic", [{ startSec: 1, text: "첫 부분." }]);
+  db.setEnded(id, 20);
+  db.setStatus(id, "done");
+  assert.equal(Math.round(db.getMeeting(id)!.durationSec), 20);
+  assert.equal(db.continueRecording(id), true);
+  assert.equal(db.getMeeting(id)!.status, "recording");
+  db.setEnded(id, 35); // stopped again after 15 s more
+  assert.equal(Math.round(db.getMeeting(id)!.durationSec), 35);
+});
+
 test("a hand edit replaces a shown line's text and removes the pieces joined to it", async () => {
   const { openDb } = await import("./main/db.ts");
   const db = openDb(":memory:");

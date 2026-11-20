@@ -550,6 +550,14 @@ app.whenReady().then(async () => {
     const error = await stopLive(id);
     if (error && !pausedErrors.has(id)) pausedErrors.set(id, error);
   });
+  // A finished meeting recorded on: captions and audio continue after what it already has.
+  ipcMain.handle("continueMeeting", (_e, id: number) => {
+    const offsetSec = db.getMeeting(id)?.durationSec ?? 0;
+    if (live.has(id) || !db.continueRecording(id)) return null;
+    startLive(id, undefined, undefined, offsetSec);
+    notify(id);
+    return offsetSec;
+  });
   ipcMain.handle("resumeMeeting", (_e, id: number, offsetSec: number) => {
     if (live.has(id) || db.getMeeting(id)?.status !== "recording") return false;
     startLive(id, undefined, undefined, offsetSec);
