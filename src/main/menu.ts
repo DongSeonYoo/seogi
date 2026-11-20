@@ -57,9 +57,14 @@ export function appMenu(
     {
       label: t("menu.edit"),
       submenu: [
-        // Not role "undo": in a text field the renderer undoes typing, elsewhere the last library change.
-        item("undo", history.undoLabel(t) ? t("action.undoWhat", { what: history.undoLabel(t)! }) : t("action.undo"), "Cmd+Z"),
-        item("redo", history.redoLabel(t) ? t("action.redoWhat", { what: history.redoLabel(t)! }) : t("action.redo"), "Cmd+Shift+Z"),
+        // With a library change to undo, the renderer undoes typing in a text field and the change
+        // elsewhere. With none, the native roles undo typing and grey out when there is nothing to do.
+        history.undoLabel(t)
+          ? item("undo", t("action.undoWhat", { what: history.undoLabel(t)! }), "Cmd+Z")
+          : { role: "undo", label: t("action.undo") },
+        history.redoLabel(t)
+          ? item("redo", t("action.redoWhat", { what: history.redoLabel(t)! }), "Cmd+Shift+Z")
+          : { role: "redo", label: t("action.redo") },
         { type: "separator" },
         { role: "cut", label: t("menu.cut") },
         { role: "copy", label: t("menu.copy") },

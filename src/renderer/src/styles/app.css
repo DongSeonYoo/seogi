@@ -531,7 +531,8 @@
   position: relative;
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr);
-  padding: var(--space-half) var(--space-5) var(--space-half) 0;
+  /* The right side keeps room for the hover actions (3 buttons) so they never cover text. */
+  padding: var(--space-half) calc(var(--space-5) + 96px) var(--space-half) 0;
   transition: background-color var(--dur-micro) var(--ease-out);
 }
 

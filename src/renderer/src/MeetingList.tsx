@@ -90,7 +90,7 @@ export function MeetingList({
             <p className="row__preview">{preview(m, t)}</p>
             <div className="row__meta">
               <RowStatus m={m} t={t} />
-              {m.durationSec > 0 && <span className="tnum">{duration(m.durationSec, i18n)}</span>}
+              {m.status !== "recording" && m.durationSec > 0 && <span className="tnum">{duration(m.durationSec, i18n)}</span>}
               {m.starred && <Star className="row__star" aria-label={t("list.starred")} fill="currentColor" />}
             </div>
           </li>

@@ -44,7 +44,7 @@ export function Toolbar({
   const { t } = i18n;
   const status = { new: "", recording: t("status.recording"), processing: t("status.processing"), done: "", error: t("status.error") };
   const subtitle = m
-    ? [fullDate(m.startedAt, i18n), m.durationSec > 0 && duration(m.durationSec, i18n), status[m.status]]
+    ? [fullDate(m.startedAt, i18n), m.status !== "recording" && m.durationSec > 0 && duration(m.durationSec, i18n), status[m.status]]
         .filter(Boolean)
         .join(" · ")
     : "";

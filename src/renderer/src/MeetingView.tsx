@@ -230,7 +230,7 @@ export function MeetingView({
           </span>
           <span>
             {[
-              m.durationSec > 0 && duration(m.durationSec, i18n),
+              m.status !== "recording" && m.durationSec > 0 && duration(m.durationSec, i18n),
               // Counted as shown: pieces of one sentence are joined into one line on screen.
               shownLines === 1 ? t("detail.utterance") : t("detail.utterances", { n: shownLines }),
               speakers.length > 1 && speakers.join(" · "),
