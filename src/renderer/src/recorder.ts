@@ -40,7 +40,10 @@ export async function startRecording(
   const mic = await navigator.mediaDevices.getUserMedia({
     // "ideal" falls back to the default input when the chosen device is unplugged.
     audio: {
-      echoCancellation: true,
+      // "all": remove what any app plays through the speakers (another app's call, a video), not
+      // only this app's own playout, so the other side is not captured twice. Chromium 141+;
+      // where unsupported it falls back to ordinary echo cancellation.
+      echoCancellation: { ideal: "all" } as unknown as boolean,
       noiseSuppression: true,
       ...(micDeviceId && { deviceId: { ideal: micDeviceId } }),
     },
