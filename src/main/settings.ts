@@ -7,6 +7,8 @@ import { DEFAULT_MODELS, type KeyName, type Settings, type StoredSettings } from
 const DEFAULTS: StoredSettings = {
   locale: "en",
   theme: "system",
+  style: "seogi",
+  depth: 50,
   qgridUrl: "http://localhost:44900",
   live: { provider: "openai", model: DEFAULT_MODELS.live.openai },
   summary: { provider: "openai", model: DEFAULT_MODELS.summary.openai },

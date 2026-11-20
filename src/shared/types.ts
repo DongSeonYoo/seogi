@@ -132,6 +132,8 @@ export const DEFAULT_MODELS = {
 } as const;
 
 export type ThemeMode = "system" | "light" | "dark";
+/** The look: Seogi's own (warm paper, terracotta) or the macOS system one (greys, the system accent). */
+export type AppStyle = "seogi" | "mac";
 export type KeyName = "openai" | "anthropic";
 export type ConnectionRole = "summary";
 export type ModelRole = "live" | "summary";
@@ -144,6 +146,9 @@ export type Settings = {
   /** Language of the app's menus and screens. */
   locale: Locale;
   theme: ThemeMode;
+  style: AppStyle;
+  /** Seogi style: how deep its paper is, 0 (pale) to 100 (deep), in both themes. */
+  depth: number;
   qgridUrl: string;
   /** Live captions: what the meeting record is written from. */
   live: { provider: LiveProvider; model: string };
@@ -190,6 +195,7 @@ export type Api = {
   openSettings(): void;
   /** macOS accent colour as #rrggbb, and its changes. */
   accentColor(): Promise<string>;
+  onStyle(listener: (style: AppStyle, depth: number) => void): () => void;
   onAccentColor(listener: (hex: string) => void): () => void;
   getMeeting(id: number): Promise<MeetingDetail | null>;
   /** Starts a meeting in `folderId` (the folder on screen), or unfiled. */

@@ -20,6 +20,7 @@ const api: Api = {
   openSettings: () => ipcRenderer.send("openSettings"),
   accentColor: () => ipcRenderer.invoke("accentColor"),
   onAccentColor: (listener) => on("accent-color", listener),
+  onStyle: (listener) => on("style", listener),
   getMeeting: (id) => ipcRenderer.invoke("getMeeting", id),
   createMeeting: (folderId) => ipcRenderer.invoke("createMeeting", folderId),
   startMeeting: (id) => ipcRenderer.invoke("startMeeting", id),

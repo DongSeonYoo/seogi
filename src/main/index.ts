@@ -637,7 +637,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("getSettings", () => settings.view());
   ipcMain.handle("patchSettings", (_e, patch: Partial<StoredSettings>) => {
     const before: Locale = settings.get().locale;
+    const { style, depth } = settings.get();
     const view = settings.patch(patch);
+    if (view.style !== style || view.depth !== depth) broadcast("style", view.style, view.depth);
     if (view.locale !== before) {
       rebuildMenu();
       broadcast("locale", view.locale);

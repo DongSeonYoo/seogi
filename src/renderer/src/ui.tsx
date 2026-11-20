@@ -267,3 +267,15 @@ export function CommitInput({
   };
   return multiline ? <textarea {...props} /> : <input {...props} />;
 }
+
+/** Applies the chosen look (data-style on the root; tokens.css does the rest) and follows changes. */
+export function useAppStyle() {
+  useEffect(() => {
+    const apply = (style: string, depth: number) => {
+      document.documentElement.dataset.style = style;
+      document.documentElement.style.setProperty("--depth", String(depth / 100));
+    };
+    void window.api.getSettings().then((s) => apply(s.style, s.depth));
+    return window.api.onStyle(apply);
+  }, []);
+}

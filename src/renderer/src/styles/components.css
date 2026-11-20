@@ -440,6 +440,22 @@ select.control {
 [data-speaker="s3"] { --speaker: #d1437f; }
 [data-speaker="s4"] { --speaker: #7b5bd6; }
 
+/* Seogi: voices in muted, even-lightness hues around the paper, clear of the terracotta that marks
+ * the recorder ("Me"). */
+:root[data-style="seogi"] [data-speaker="s0"] { --speaker: oklch(52% 0.09 225); }
+:root[data-style="seogi"] [data-speaker="s1"] { --speaker: oklch(55% 0.11 80); }
+:root[data-style="seogi"] [data-speaker="s2"] { --speaker: oklch(52% 0.09 155); }
+:root[data-style="seogi"] [data-speaker="s3"] { --speaker: oklch(52% 0.11 345); }
+:root[data-style="seogi"] [data-speaker="s4"] { --speaker: oklch(52% 0.09 290); }
+
+@media (prefers-color-scheme: dark) {
+  :root[data-style="seogi"] [data-speaker="s0"] { --speaker: oklch(74% 0.09 225); }
+  :root[data-style="seogi"] [data-speaker="s1"] { --speaker: oklch(78% 0.11 80); }
+  :root[data-style="seogi"] [data-speaker="s2"] { --speaker: oklch(74% 0.09 155); }
+  :root[data-style="seogi"] [data-speaker="s3"] { --speaker: oklch(74% 0.1 345); }
+  :root[data-style="seogi"] [data-speaker="s4"] { --speaker: oklch(74% 0.09 290); }
+}
+
 .avatar[data-speaker^="s"] {
   background: color-mix(in oklch, var(--speaker) 20%, transparent);
   color: var(--speaker);
@@ -448,4 +464,18 @@ select.control {
 /* Names are text: mixed toward the ink colour so they read at 4.5:1 in both themes. */
 .msg__name[data-speaker^="s"] {
   color: color-mix(in oklch, var(--speaker) 75%, var(--color-ink));
+}
+
+/* ── Slider ─────────────────────────────────────────────────────────── */
+.slider {
+  width: 160px;
+  accent-color: var(--color-accent);
+}
+
+.slider-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
 }

@@ -16,13 +16,14 @@ import {
   type StorageInfo,
   type StoredSettings,
   type SummaryProvider,
+  type AppStyle,
   type ThemeMode,
 } from "../../shared/types";
 import { liveCaptionHooks } from "./gptLive";
 import { startRecording } from "./recorder";
 import { useT } from "./i18n";
 import { LOCALES, showStored, type Locale, type MessageKey } from "../../shared/i18n";
-import { Button, CommitInput, Kbd, Segmented, Select, Switch } from "./ui";
+import { Button, CommitInput, Kbd, Segmented, Select, Switch, useAppStyle } from "./ui";
 
 const SECTIONS = [
   { id: "general", label: "settings.general", icon: SlidersHorizontal },
@@ -54,6 +55,7 @@ export function SettingsView() {
     void window.api.accentColor().then(apply);
     return window.api.onAccentColor(apply);
   }, []);
+  useAppStyle();
   // Edit-menu undo here only ever means a text field.
   useEffect(
     () =>
@@ -171,6 +173,35 @@ function General({ s, patch }: SectionProps) {
           ))}
         </Select>
       </Row>
+      <Row label={t("settings.style")} description={t("settings.styleDesc")}>
+        <Segmented<AppStyle>
+          label={t("settings.style")}
+          value={s.style}
+          onChange={(style) => patch({ style })}
+          options={[
+            { value: "seogi", label: t("settings.styleSeogi") },
+            { value: "mac", label: t("settings.styleMac") },
+          ]}
+        />
+      </Row>
+      {s.style === "seogi" && (
+        <Row label={t("settings.depth")} description={t("settings.depthDesc")} htmlFor="depth">
+          <span className="slider-field">
+            <span>{t("settings.depthPale")}</span>
+            <input
+              id="depth"
+              className="slider"
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={s.depth}
+              onChange={(e) => patch({ depth: Number(e.target.value) })}
+            />
+            <span>{t("settings.depthDeep")}</span>
+          </span>
+        </Row>
+      )}
       <Row label={t("settings.theme")} description={t("settings.themeDesc")}>
         <Segmented<ThemeMode>
           label={t("settings.theme")}

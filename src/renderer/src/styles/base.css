@@ -138,3 +138,13 @@ textarea {
     transition-duration: 150ms !important;
   }
 }
+
+/* Icons draw a 1.5px line at any size (Lucide's 2 on a 24 grid thins to ~1.3px at 16px): the
+ * weight of the 13-14px regular text beside them. */
+.lucide {
+  stroke-width: 1.5;
+}
+
+.lucide * {
+  vector-effect: non-scaling-stroke;
+}

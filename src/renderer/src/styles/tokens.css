@@ -135,3 +135,90 @@
     --shadow-pop: 0 0 0 0.5px rgb(255 255 255 / 0.12), 0 16px 48px rgb(0 0 0 / 0.5);
   }
 }
+
+/* ── Style · Seogi (the default) ──────────────────────────────────────
+ * Seogi's own look from its first design: warm paper neutrals and a terracotta signature, over the
+ * same layout. The macOS style above stays as the alternative (Settings → General → Style).
+ * Neutrals carry the paper's hue (85, warm) at low chroma; the accent is oklch(55% 0.13 39).
+ * Elevation follows jakub.kr's layered shadow: a 1px ring, a lift and an ambient layer.
+ * --depth (0 pale to 1 deep, Settings → Style) sets the paper's lightness; the other surfaces step
+ * from it. */
+:root[data-style="seogi"] {
+  --depth: 0.5;
+  --paper-l: calc(100% - var(--depth) * 2.8%);
+  --color-window: oklch(var(--paper-l) 0.004 85);
+  --color-chrome: oklch(calc(var(--paper-l) - 2.4%) 0.008 85);
+  --color-raised: oklch(min(100%, calc(var(--paper-l) + 0.8%)) 0.003 85);
+  --color-control: oklch(min(100%, calc(var(--paper-l) + 0.8%)) 0.003 85);
+  --color-sidebar: oklch(calc(var(--paper-l) - 4.8%) 0.011 82);
+  --color-hover: oklch(30% 0.02 60 / 0.055);
+  --color-selected: oklch(30% 0.02 60 / 0.09);
+  --color-line: oklch(30% 0.02 60 / 0.1);
+  --color-line-strong: oklch(30% 0.02 60 / 0.17);
+  --color-line-control: oklch(62% 0.012 75); /* ≥3:1 on window and control */
+
+  --color-ink: oklch(23% 0.012 60);
+  --color-ink-2: oklch(41% 0.012 60);
+  --color-ink-3: oklch(50% 0.010 65);
+
+  --color-accent: oklch(55% 0.13 39);
+  --color-accent-text: oklch(50% 0.13 39); /* ≥4.5:1 on window, chrome and accent-soft */
+  --color-accent-soft: oklch(55% 0.13 39 / 0.12);
+  --color-on-accent: oklch(99% 0.004 85);
+  --color-focus: oklch(56% 0.17 39 / 0.55);
+
+  --color-record: oklch(57% 0.21 27);
+  --color-danger: oklch(52% 0.19 27);
+  --color-danger-soft: oklch(52% 0.19 27 / 0.1);
+  --color-success: oklch(50% 0.12 150);
+  --color-success-soft: oklch(50% 0.12 150 / 0.12);
+  --color-warning: oklch(55% 0.13 65);
+
+  --color-scrim: oklch(20% 0.01 60 / 0.28);
+  --shadow-control: 0 0 0 1px oklch(23% 0.012 60 / 0.07), 0 1px 2px -1px oklch(23% 0.012 60 / 0.08), 0 2px 4px 0 oklch(23% 0.012 60 / 0.04);
+  --shadow-card: 0 0 0 1px oklch(23% 0.012 60 / 0.06), 0 1px 2px -1px oklch(23% 0.012 60 / 0.06), 0 8px 24px oklch(23% 0.012 60 / 0.07);
+  --shadow-pop: 0 0 0 1px oklch(23% 0.012 60 / 0.08), 0 2px 4px -1px oklch(23% 0.012 60 / 0.08), 0 16px 40px oklch(23% 0.012 60 / 0.16);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-style="seogi"] {
+    --paper-l: calc(34% - var(--depth) * 10%);
+    --color-window: oklch(var(--paper-l) 0.006 80);
+    --color-chrome: oklch(calc(var(--paper-l) - 3.5%) 0.006 75);
+    --color-raised: oklch(calc(var(--paper-l) + 3.5%) 0.007 80);
+    --color-control: oklch(96% 0.01 85 / 0.08);
+    --color-sidebar: oklch(calc(var(--paper-l) - 2%) 0.007 78);
+    --color-hover: oklch(96% 0.01 85 / 0.06);
+    --color-selected: oklch(96% 0.01 85 / 0.1);
+    --color-line: oklch(96% 0.01 85 / 0.1);
+    --color-line-strong: oklch(96% 0.01 85 / 0.16);
+    --color-line-control: oklch(58% 0.008 80);
+
+    --color-ink: oklch(93.5% 0.008 85);
+    --color-ink-2: oklch(78% 0.010 80);
+    --color-ink-3: oklch(68% 0.010 75);
+
+    --color-accent: oklch(68% 0.13 42);
+    --color-accent-text: oklch(76% 0.12 42);
+    --color-accent-soft: oklch(68% 0.13 42 / 0.2);
+    --color-on-accent: oklch(18% 0.01 60);
+    --color-focus: oklch(72% 0.16 42 / 0.6);
+
+    --color-record: oklch(66% 0.2 27);
+    --color-danger: oklch(72% 0.15 27);
+    --color-danger-soft: oklch(72% 0.15 27 / 0.16);
+    --color-success: oklch(72% 0.13 150);
+    --color-success-soft: oklch(72% 0.13 150 / 0.16);
+    --color-warning: oklch(78% 0.12 70);
+
+    --color-scrim: oklch(8% 0.005 60 / 0.5);
+    --shadow-control: 0 0 0 1px oklch(100% 0 0 / 0.08);
+    --shadow-card: 0 0 0 1px oklch(100% 0 0 / 0.08), 0 8px 24px oklch(5% 0 0 / 0.35);
+    --shadow-pop: 0 0 0 1px oklch(100% 0 0 / 0.1), 0 16px 40px oklch(5% 0 0 / 0.5);
+  }
+}
+
+/* Seogi paints its own paper behind the panes instead of the window's cool vibrancy. */
+:root[data-style="seogi"] body {
+  background: var(--color-chrome);
+}

@@ -25,6 +25,7 @@ import { NO_SYSTEM_AUDIO, startRecording } from "./recorder";
 import { Sidebar } from "./Sidebar";
 import { Splitter, useLayout } from "./Splitter";
 import { Toolbar, type Recording } from "./Toolbar";
+import { useAppStyle } from "./ui";
 
 const api = window.api;
 const StyleGuide = import.meta.env.DEV
@@ -159,6 +160,7 @@ export function App() {
     void api.accentColor().then(apply);
     return api.onAccentColor(apply);
   }, []);
+  useAppStyle();
   // A selection the list on screen no longer shows (another folder, an unstarred meeting) goes, so
   // the toolbar never acts on a meeting out of sight. The recording session stays open regardless.
   useEffect(() => {

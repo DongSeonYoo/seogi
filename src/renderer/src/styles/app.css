@@ -631,6 +631,7 @@
   font-size: var(--text-read);
   line-height: var(--leading-read);
   overflow-wrap: anywhere;
+  text-wrap: pretty;
 }
 
 /* Each word is a block that can be corrected: hovered, or under the arrow-key cursor. */
@@ -1492,4 +1493,27 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Scroll panes keep their scroll to themselves: reaching an end does not drag the window or the
+ * pane behind it along. */
+.sidebar__scroll,
+.list__rows,
+.summary,
+.transcript,
+.palette__list,
+.settings,
+.live-test__text,
+.summary-read {
+  overscroll-behavior: contain;
+}
+
+.summary-doc p,
+.summary-doc li {
+  text-wrap: pretty;
+}
+
+.summary-doc h3,
+.summary-doc h4 {
+  text-wrap: balance;
 }
