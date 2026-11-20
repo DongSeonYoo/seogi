@@ -153,6 +153,12 @@
   border-radius: var(--radius-full);
 }
 
+/* Buttons side by side: the extra hit area grows only away from the neighbours, so a click inside
+ * one button never lands on the next. */
+.capsule .icon-btn::before {
+  inset: -3px 0;
+}
+
 .capsule__label {
   display: inline-flex;
   align-items: center;
@@ -458,7 +464,7 @@ select.control {
 
 .avatar[data-speaker^="s"] {
   background: color-mix(in oklch, var(--speaker) 20%, transparent);
-  color: var(--speaker);
+  color: color-mix(in oklch, var(--speaker) 55%, var(--color-ink));
 }
 
 /* Names are text: mixed toward the ink colour so they read at 4.5:1 in both themes. */

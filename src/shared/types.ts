@@ -261,7 +261,8 @@ export type Api = {
   /** Save dialog, then the meeting as Markdown or plain text; false when cancelled. */
   exportMeeting(id: number, format: "md" | "txt"): Promise<boolean>;
   markOpened(id: number): Promise<void>;
-  audioFor(meetingId: number, track: Track, startSec: number): Promise<AudioRef | null>;
+  /** `exact`: play from `startSec` itself (a seek), not a little before it (a line). */
+  audioFor(meetingId: number, track: Track, startSec: number, exact?: boolean): Promise<AudioRef | null>;
   /** A track's saved chunks (Ogg Opus or WAV bytes) in time order. */
   audioChunks(meetingId: number, track: Track): Promise<{ bytes: Uint8Array; startSec: number }[]>;
   /** Tells the recorded other side's voices apart (16 kHz mono from 0 s) and numbers its lines. */

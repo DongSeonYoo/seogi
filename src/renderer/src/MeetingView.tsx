@@ -74,6 +74,8 @@ export function MeetingView({
   const [speakerError, setSpeakerError] = useState<string | null>(null);
   useEffect(() => setSpeakerError(null), [m.id]);
   function separate() {
+    // Voices are numbered afresh, so names given to numbered voices go: say so first.
+    if (Object.keys(m.speakerNames).some((k) => /^\d+$/.test(k)) && !window.confirm(t("speakers.replaceConfirm"))) return;
     setSpeakerError(null);
     separateSpeakers(m.id).catch((e) => setSpeakerError(e instanceof Error ? e.message : String(e)));
   }
@@ -145,6 +147,7 @@ export function MeetingView({
                 data-recording={recording ? true : undefined}
                 disabled={recordingElsewhere}
                 onClick={canContinue ? onContinue : onRecord}
+                aria-label={recording ? t("action.stop") : undefined}
                 title={recordingElsewhere ? t("detail.recordingElsewhere") : canContinue ? t("detail.continue") : `${recording ? t("action.stop") : t("action.record")} (⇧⌘R)`}
               >
                 {recording ? (
@@ -165,6 +168,23 @@ export function MeetingView({
                 </IconButton>
               )}
             </div>
+            {canImport && (
+              // The same import as dropping a file, for keyboard and click users.
+              <label className="btn btn--ghost import-pick">
+                <FileAudio aria-hidden />
+                {t("import.choose")}
+                <input
+                  type="file"
+                  className="visually-hidden"
+                  accept={IMPORT_EXTENSIONS.map((x) => `.${x}`).join(",")}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (f) void take(f);
+                  }}
+                />
+              </label>
+            )}
           </div>
         )}
         {canImport && (reading || file || fileError) && (
@@ -242,14 +262,14 @@ export function MeetingView({
           </p>
         )}
         <Transcript meeting={m} confirmed={confirmed} player={playback.controls} progress={playback.now?.progress} live={live} focus={focus} onStamp={stamp} importing={!!importing} paused={paused} />
-        {playback.spot && playback.now && (
+        {playback.spot && (
           <PlaybackBar
             meeting={m}
-            line={playback.now.line}
+            line={playback.now?.line ?? null}
             at={playback.spot.startSec}
             playing={playback.playing}
-            onToggle={() => (playback.playing ? playback.pause() : playback.paused && playback.play(playback.paused))}
-            onSeek={(sec) => playback.play({ track: playback.now!.line.track, startSec: sec })}
+            onToggle={() => (playback.playing ? playback.pause() : playback.paused && playback.play({ ...playback.paused, exact: true }))}
+            onSeek={(sec) => playback.seek(playback.spot!.track, sec)}
             onClose={playback.close}
           />
         )}
@@ -400,7 +420,7 @@ function Transcript({
     if (!el || !box || !prev || prev === el) return;
     const view = box.getBoundingClientRect();
     const was = prev.getBoundingClientRect();
-    if (was.bottom > view.top && was.top < view.bottom) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (was.bottom > view.top && was.top < view.bottom) el.scrollIntoView({ block: "nearest", behavior: scrollBehavior() });
   }, [player.playingId]);
   const edit = useCallback((u: Line, text: string) => void window.api.editUtterance(m.id, u.id, text, u.joined), [m.id]);
   const rename = useCallback((u: Line, name: string) => void window.api.nameVoice(m.id, u.id, name), [m.id]);
@@ -434,13 +454,22 @@ function Transcript({
     if (!target) return;
     const el = scroller.current?.querySelector(`[data-key="${target.id}"]`);
     stick.current = false;
-    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+    el?.scrollIntoView({ block: "center", behavior: scrollBehavior() });
     const same = confirmed.filter((u) => Math.floor(u.startSec) === Math.floor(target.startSec)).map((u) => u.id);
     setFocused(new Set(same.length ? same : [target.id]));
     const timer = setTimeout(() => setFocused(new Set()), 2000);
     return () => clearTimeout(timer);
   }, [focus]);
 
+  // A meeting opens where it is read from: a finished one at its start, one still being recorded at
+  // its newest line (which it then keeps following).
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const following = m.status === "recording" || m.status === "processing";
+    stick.current = following;
+    el.scrollTop = following ? el.scrollHeight : 0;
+  }, [m.id]);
   // Chat behaviour: keep following new lines only while the reader is at the bottom.
   useEffect(() => {
     const observer = new IntersectionObserver(([entry]) => { stick.current = entry.isIntersecting; }, {
@@ -464,7 +493,8 @@ function Transcript({
       ))}
       {!groups.length && !busy && (
         // While a file is being prepared the session is still "new", but it is no longer waiting for one.
-        !importing && <p className="empty">{t(m.status === "new" ? "detail.notRecorded" : "detail.emptyTranscript")}</p>
+        // A stored error already says why the transcript is empty.
+        !importing && !m.error && <p className="empty">{t(m.status === "new" ? "detail.notRecorded" : "detail.emptyTranscript")}</p>
       )}
       {m.status === "recording" && !paused && (
         <p className="typing" role="status">
@@ -679,6 +709,7 @@ const Message = memo(function Message({
                     className="word"
                     data-cursor={cursor === i || undefined}
                     data-sung={(progress !== undefined && sungTo !== undefined && i <= sungTo) || undefined}
+                    data-now={(progress !== undefined && i === sungTo) || undefined}
                     contentEditable={editing === i ? "plaintext-only" : undefined}
                     suppressContentEditableWarning
                     ref={(el) => {
@@ -766,7 +797,8 @@ const Message = memo(function Message({
  */
 function PlaybackBar({ meeting: m, line, at, playing, onToggle, onSeek, onClose }: {
   meeting: MeetingDetail;
-  line: Utterance;
+  /** null between captions (before the first one, say). */
+  line: Utterance | null;
   at: number;
   playing: boolean;
   onToggle: () => void;
@@ -780,15 +812,19 @@ function PlaybackBar({ meeting: m, line, at, playing, onToggle, onSeek, onClose 
       <IconButton label={playing ? t("detail.pause") : t("detail.play")} onClick={onToggle}>
         {playing ? <Pause aria-hidden /> : <Play aria-hidden />}
       </IconButton>
-      <button
-        type="button"
-        className="playbar__line"
-        title={t("player.jump")}
-        onClick={() => document.querySelector(`.msg[data-key="${line.id}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" })}
-      >
-        <span className="playbar__who">{speakerName(line, t, m.speakerNames)}</span>
-        <span className="playbar__text">{line.text}</span>
-      </button>
+      {line ? (
+        <button
+          type="button"
+          className="playbar__line"
+          title={t("player.jump")}
+          onClick={() => document.querySelector(`.msg[data-key="${line.id}"]`)?.scrollIntoView({ block: "center", behavior: scrollBehavior() })}
+        >
+          <span className="playbar__who">{speakerName(line, t, m.speakerNames)}</span>
+          <span className="playbar__text">{line.text}</span>
+        </button>
+      ) : (
+        <span className="playbar__line playbar__text">{t("player.noCaption")}</span>
+      )}
       <span className="playbar__time tnum">{clock(at)} / {clock(total)}</span>
       <input
         className="playbar__track"
@@ -798,6 +834,7 @@ function PlaybackBar({ meeting: m, line, at, playing, onToggle, onSeek, onClose 
         step={1}
         value={Math.min(at, total)}
         aria-label={t("player.seek")}
+        aria-valuetext={`${clock(at)} / ${clock(total)}`}
         onChange={(e) => onSeek(Number(e.target.value))}
       />
       <IconButton label={t("player.close")} onClick={onClose}>
@@ -806,6 +843,10 @@ function PlaybackBar({ meeting: m, line, at, playing, onToggle, onSeek, onClose 
     </div>
   );
 }
+
+/** Smooth jumps, unless the person asked macOS to reduce motion (CSS cannot stop a JS scroll). */
+const scrollBehavior = (): ScrollBehavior =>
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth";
 
 /** Moves the word cursor onto the next (1) or previous (-1) line of the transcript. */
 function moveLine(from: HTMLElement, step: 1 | -1, edit = false) {
@@ -855,25 +896,29 @@ function editKeys(save: (el: HTMLElement) => void, cancel: (el: HTMLElement) => 
 
 type Player = ReturnType<typeof usePlayer>["controls"];
 
-/** Follow a selected utterance into subsequent chunks until paused or the meeting changes. */
-type Cue = { track: Track; startSec: number };
+/** A place to play from: a line's caption time, or (`exact`) a moment of the audio itself. */
+type Cue = { track: Track; startSec: number; exact?: boolean };
 /** Playback starts this far before a line (main's PLAYBACK_LEAD_SEC), so the line is heard whole. */
 const HEARD_LEAD_SEC = 1.2;
 
 /**
  * Plays a track from a line (or any moment) on through its chunks, and says which line is being
  * heard and how far into it (spread over the line by characters: there are no word times).
- * Pausing keeps the spot so the playback bar can go on from it.
+ * Pausing keeps the spot; seeking while paused only moves it.
  */
 function usePlayer(meetingId: number, lines: Utterance[]) {
   const [run, setRun] = useState<{ meetingId: number; at: Cue } | null>(null);
   const [paused, setPaused] = useState<Cue | null>(null);
+  /** Where in the audio playback is (audio time, not caption time). */
   const [heard, setHeard] = useState<Cue | null>(null);
   const heardRef = useRef<Cue | null>(null);
+  const hear = (cue: Cue) => {
+    heardRef.current = cue;
+    setHeard(cue);
+  };
   const play = useCallback((at: Cue) => {
     setPaused(null);
-    setHeard(at);
-    heardRef.current = at;
+    hear({ track: at.track, startSec: at.exact ? at.startSec : at.startSec - HEARD_LEAD_SEC, exact: true });
     setRun({ meetingId, at });
   }, [meetingId]);
   const pause = useCallback(() => {
@@ -882,6 +927,16 @@ function usePlayer(meetingId: number, lines: Utterance[]) {
       return null;
     });
   }, []);
+  /** Moves the playhead: plays on from there, or only moves it while paused. */
+  const seek = useCallback((track: Track, sec: number) => {
+    const cue = { track, startSec: sec, exact: true };
+    setRun((r) => {
+      if (r) return { meetingId, at: cue };
+      setPaused(cue);
+      return r;
+    });
+    hear(cue);
+  }, [meetingId]);
   const close = useCallback(() => {
     setRun(null);
     setPaused(null);
@@ -891,7 +946,7 @@ function usePlayer(meetingId: number, lines: Utterance[]) {
 
   useLayoutEffect(() => {
     if (!run || run.meetingId !== meetingId) return;
-    const { track, startSec } = run.at;
+    const { track, startSec, exact } = run.at;
     let active = true;
     let audio: HTMLAudioElement | null = null;
     function release() {
@@ -909,7 +964,7 @@ function usePlayer(meetingId: number, lines: Utterance[]) {
     }
     async function play(at: number, previousUrl?: string) {
       try {
-        const ref = await window.api.audioFor(meetingId, track, at);
+        const ref = await window.api.audioFor(meetingId, track, at, exact);
         if (!active) return;
         if (!ref || ref.url === previousUrl) return finish();
         release();
@@ -921,11 +976,7 @@ function usePlayer(meetingId: number, lines: Utterance[]) {
           a.currentTime = offset < a.duration ? offset : Math.max(0, a.duration - 2);
           void a.play().catch(() => { if (audio === a) finish(); });
         };
-        a.ontimeupdate = () => {
-          const cue = { track, startSec: ref.chunkStartSec + a.currentTime };
-          heardRef.current = cue;
-          setHeard(cue);
-        };
+        a.ontimeupdate = () => hear({ track, startSec: ref.chunkStartSec + a.currentTime, exact: true });
         a.onended = () => { void play(ref.chunkStartSec + a.duration + 0.05, ref.url); };
         a.onpause = () => { if (!a.ended) finish(); };
         a.onerror = finish;
@@ -941,22 +992,24 @@ function usePlayer(meetingId: number, lines: Utterance[]) {
     };
   }, [meetingId, run]);
 
-  const spot = heard ?? paused;
+  const spot = run || paused ? (heard ?? paused) : null;
   // The line being heard, and how far into it: the next line of the track (or its length) ends it.
+  // Caption times run behind the audio, so the audio time is moved forward by the same lead.
   const now = useMemo(() => {
-    if (!spot || (!run && !paused)) return null;
+    if (!spot) return null;
     const track = lines.filter((l) => l.track === spot.track);
-    const at = spot.startSec + (run && heard === run.at ? 0 : HEARD_LEAD_SEC);
+    const at = spot.startSec + HEARD_LEAD_SEC;
     const i = track.findLastIndex((l) => l.startSec <= at);
     if (i < 0) return null;
     const line = track[i];
     const end = Math.min(track[i + 1]?.startSec ?? Infinity, line.startSec + Math.max(2, line.text.length / 5));
     return { line, progress: Math.min(1, Math.max(0, (at - line.startSec) / Math.max(0.5, end - line.startSec))) };
-  }, [lines, spot, run, paused, heard]);
+  }, [lines, spot]);
   const playingId = run ? (now?.line.id ?? null) : null;
   const controls = useMemo(() => ({ playingId, play, pause }), [playingId, play, pause]);
-  return { controls, now, spot, playing: !!run, paused, play, pause, close };
+  return { controls, now, spot, playing: !!run, paused, play, pause, seek, close };
 }
+
 
 /**
  * The summary pane: written only when asked (Summarize, with a model picked here), then plain

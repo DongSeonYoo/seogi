@@ -617,13 +617,14 @@ app.whenReady().then(async () => {
     }
   });
   ipcMain.handle("markOpened", (_e, id: number) => db.setOpened(id, true));
-  ipcMain.handle("audioFor", (_e, id: number, track: Track, startSec: number): AudioRef | null => {
+  ipcMain.handle("audioFor", (_e, id: number, track: Track, startSec: number, exact?: boolean): AudioRef | null => {
     const best = chunkIndex.find(audioDir, id, track, startSec);
-    // Caption times run up to a second behind the speech, so playback starts a little early.
+    // Caption times run up to a second behind the speech, so a line starts playing a little early;
+    // a seek or a resume (`exact`) plays from the very spot.
     return (
       best && {
         url: `${AUDIO_SCHEME}://audio/${id}/${best.file}`,
-        offsetSec: Math.max(0, startSec - PLAYBACK_LEAD_SEC - best.start),
+        offsetSec: Math.max(0, startSec - (exact ? 0 : PLAYBACK_LEAD_SEC) - best.start),
         chunkStartSec: best.start,
       }
     );

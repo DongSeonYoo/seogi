@@ -31,7 +31,7 @@
   --color-accent-text: color-mix(in oklab, var(--system-accent) 78%, black); /* 4.5:1 on chrome and selected backgrounds */
   --color-accent-soft: color-mix(in srgb, var(--system-accent) 14%, transparent);
   --color-on-accent: #ffffff;
-  --color-focus: color-mix(in srgb, var(--system-accent) 55%, transparent);
+  --color-focus: var(--color-accent); /* opaque: 3:1+ on window and chrome */
 
   --color-record: #ff3b30; /* the record control and live dot, as in Voice Memos */
   --color-danger: #d70015;
@@ -165,7 +165,7 @@
   --color-accent-text: oklch(50% 0.13 39); /* ≥4.5:1 on window, chrome and accent-soft */
   --color-accent-soft: oklch(55% 0.13 39 / 0.12);
   --color-on-accent: oklch(99% 0.004 85);
-  --color-focus: oklch(56% 0.17 39 / 0.55);
+  --color-focus: var(--color-accent);
 
   --color-record: oklch(57% 0.21 27);
   --color-danger: oklch(52% 0.19 27);
@@ -202,7 +202,7 @@
     --color-accent-text: oklch(76% 0.12 42);
     --color-accent-soft: oklch(68% 0.13 42 / 0.2);
     --color-on-accent: oklch(18% 0.01 60);
-    --color-focus: oklch(72% 0.16 42 / 0.6);
+    --color-focus: var(--color-accent);
 
     --color-record: oklch(66% 0.2 27);
     --color-danger: oklch(72% 0.15 27);

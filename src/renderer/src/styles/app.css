@@ -272,6 +272,13 @@
   outline: none;
 }
 
+/* Focused with nothing selected yet: show the tab stop (a selected row shows focus itself). */
+.list__rows:focus-visible:not(:has(.row[aria-selected="true"])) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+  border-radius: var(--radius-md);
+}
+
 .row {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -478,8 +485,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-4);
-  height: var(--statusbar-h);
+  column-gap: var(--space-4);
+  min-height: var(--statusbar-h);
   padding: 0 var(--space-4);
   border-top: var(--rule);
   background: var(--color-chrome);
@@ -493,8 +500,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  /* The middle counts give way first; the date or recording time stays whole. */
-  flex-shrink: 0;
+  /* Narrowing, the counts in the middle give way first, then this; the action always fits. */
+  flex-shrink: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -608,6 +615,7 @@
 }
 
 .msg:not(.msg--draft) .msg__name:hover {
+  color: var(--color-ink);
   background: var(--color-accent-soft);
   box-shadow: 0 0 0 2px var(--color-accent-soft);
 }
@@ -711,6 +719,7 @@
   top: 0;
 }
 
+.msg:focus-within .msg__gutter-time,
 .msg:focus-within .msg__actions {
   opacity: 1;
 }
@@ -718,6 +727,10 @@
 .msg__actions .icon-btn {
   width: 26px;
   height: 26px;
+}
+
+.msg__actions .icon-btn::before {
+  inset: -4px -1px;
 }
 
 .msg__actions .icon-btn svg {
@@ -732,6 +745,11 @@
 
 .msg[data-playing="true"] .word[data-sung] {
   color: var(--color-accent-text);
+}
+
+.msg[data-playing="true"] .word[data-now] {
+  text-decoration: underline 2px;
+  text-underline-offset: 3px;
 }
 
 /* The playback bar, above the status bar while a line plays or is paused. */
@@ -1062,7 +1080,7 @@
 }
 
 .settings-group__note {
-  margin-top: var(--space-2);
+  margin: var(--space-2) var(--space-4) var(--space-3);
   color: var(--color-ink-3);
   font-size: var(--text-sm);
 }
@@ -1420,13 +1438,16 @@
 
 .summary-doc h3 {
   margin: var(--space-4) 0 var(--space-1);
-  font-size: var(--text-base);
+  font-size: var(--text-lg);
   font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
 }
 
 .summary-doc h4 {
   margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-read);
   font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
 }
 
 .summary-doc > :first-child {
@@ -1490,6 +1511,7 @@
 /* The speaker list at the right of the status bar gives way with an ellipsis, not a clip. */
 .statusbar > span + span {
   margin-left: auto;
+  flex-shrink: 1000;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1516,4 +1538,10 @@
 .summary-doc h3,
 .summary-doc h4 {
   text-wrap: balance;
+}
+
+/* Choose a file: a label wrapping the hidden input, so it shows focus like the button it looks like. */
+.import-pick:focus-within {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 1px;
 }

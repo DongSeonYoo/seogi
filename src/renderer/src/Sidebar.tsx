@@ -43,11 +43,6 @@ export function Sidebar({
         </Section>
         <Section
           title={t("sidebar.folders")}
-          action={
-            <IconButton label={`${t("action.newFolder")} (⇧⌘N)`} onClick={onNewFolder}>
-              <FolderPlus aria-hidden />
-            </IconButton>
-          }
         >
           {folders.map((f) =>
             renamingFolder === f.id ? (

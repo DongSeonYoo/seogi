@@ -137,6 +137,11 @@ textarea {
     animation-iteration-count: 1 !important;
     transition-duration: 150ms !important;
   }
+
+  /* Entrances that scale or move do not run at all; colour and opacity changes stay. */
+  .dialog[open] {
+    animation: none;
+  }
 }
 
 /* Icons draw a 1.5px line at any size (Lucide's 2 on a 24 grid thins to ~1.3px at 16px): the

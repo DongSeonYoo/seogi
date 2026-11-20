@@ -97,14 +97,18 @@ function PaletteBody({
           setActive(0);
         }}
         onKeyDown={(e) => {
-          if (e.key === "ArrowDown") setActive((i) => Math.max(0, Math.min(i + 1, items.length - 1)));
-          else if (e.key === "ArrowUp") setActive((i) => Math.max(i - 1, 0));
-          else if (e.key === "Enter") pick(items[active]);
+          if (e.nativeEvent.isComposing || e.keyCode === 229) return; // an Enter that ends a Korean syllable
+          let next = active;
+          if (e.key === "ArrowDown") next = Math.max(0, Math.min(active + 1, items.length - 1));
+          else if (e.key === "ArrowUp") next = Math.max(active - 1, 0);
+          else if (e.key === "Enter") return void (e.preventDefault(), pick(items[active]));
           else return;
           e.preventDefault();
+          setActive(next);
+          document.getElementById(`palette-${next}`)?.scrollIntoView({ block: "nearest" });
         }}
       />
-      <ul className="palette__list" id="palette-list" role="listbox">
+      <ul className="palette__list" id="palette-list" role="listbox" aria-label={t("palette.results")}>
         {items.map((item, i) => (
           <li key={item.kind === "action" ? item.id : item.meeting.id}>
             {(i === 0 || items[i - 1].kind !== item.kind) && (

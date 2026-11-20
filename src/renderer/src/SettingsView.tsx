@@ -439,7 +439,7 @@ function KeyRow({
             ••••••••••••
           </span>
           <Button onClick={() => setEditing(true)}>{t("settings.change")}</Button>
-          <Button variant="danger" onClick={() => save("")}>
+          <Button variant="danger" onClick={() => window.confirm(t("settings.deleteKeyConfirm", { provider: label })) && save("")}>
             {t("settings.delete")}
           </Button>
         </div>
