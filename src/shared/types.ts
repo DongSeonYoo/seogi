@@ -76,6 +76,8 @@ export type MenuSpec =
 export type AudioRef = { url: string; offsetSec: number; chunkStartSec: number };
 
 /** `speaker`: 1, 2, … when diarization told the voices in a track apart (imported files). */
+export type SpeakerNames = Record<string, string>;
+
 export type Utterance = {
   id: number; track: Track; startSec: number; text: string; speaker: number | null;
   /** Shown as one line (joinSplitSentences): the pieces after this one, which an edit replaces. */
@@ -90,6 +92,8 @@ export type MeetingDetail = MeetingRow & {
   liveModel: string | null;
   /** This session's glossary; empty uses the shared one in Settings. */
   glossary: string;
+  /** Names given to this meeting's voices, by speakerKey ("mic", "system", "1", …). */
+  speakerNames: SpeakerNames;
   utterances: Utterance[];
 };
 
@@ -209,6 +213,8 @@ export type Api = {
   onLiveGlossary(listener: (id: number, glossary: string) => void): () => void;
   /** A session's own live model (null: Settings) or glossary (empty: the shared one). */
   setSessionOptions(id: number, options: { liveModel?: string | null; glossary?: string }): Promise<void>;
+  /** Names a voice for the whole meeting; "" goes back to the default name. */
+  setSpeakerName(meetingId: number, key: string, name: string): Promise<void>;
   /** A transcript line as corrected by hand; `joined` pieces shown with it are removed. */
   editUtterance(meetingId: number, id: number, text: string, joined?: number[]): Promise<void>;
   sendChunk(chunk: Chunk): void;

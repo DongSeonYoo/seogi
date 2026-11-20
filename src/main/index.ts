@@ -251,7 +251,7 @@ app.whenReady().then(async () => {
       if (!m?.utterances.length) throw new Error(tr()("error.nothingTranscribed"));
       const transcript = joinSplitSentences(m.utterances);
       const { summarize } = await loadAI();
-      const s = await summarize(settings, transcript, glossaryFor(id), model);
+      const s = await summarize(settings, transcript, glossaryFor(id), model, m.speakerNames);
       db.setSummary(id, s.title, summaryMarkdown(s, tr()));
       return { ok: true };
     } catch (e) {
@@ -412,6 +412,10 @@ app.whenReady().then(async () => {
     // starts, so the terms are appended as context); other models keep theirs until resumed.
     if (o.glossary !== undefined && live.get(id)?.rendererDriven) win?.webContents.send("live-glossary", id, glossaryFor(id));
   });
+  ipcMain.handle("setSpeakerName", (_e, meetingId: number, key: string, name: string) => {
+    db.setSpeakerName(meetingId, key, name);
+    notify(meetingId);
+  });
   ipcMain.handle("editUtterance", (_e, meetingId: number, id: number, text: string, joined?: number[]) => {
     if (!text.trim()) return;
     db.editUtterance(meetingId, id, text.trim(), joined);
@@ -493,8 +497,10 @@ app.whenReady().then(async () => {
       const models = await speakerModels();
       importProgress(id, { phase: "speakers" });
       const turns = speakerTurns(await diarize(samples, models));
-      const lines = db.getMeeting(id)?.utterances.filter((u) => u.track === "system") ?? [];
-      db.setSpeakers(id, assignSpeakers(lines, turns));
+      const m = db.getMeeting(id);
+      db.setSpeakers(id, assignSpeakers(m?.utterances.filter((u) => u.track === "system") ?? [], turns));
+      // Voices are numbered afresh, so names given to the old numbers would land on other people.
+      for (const key of Object.keys(m?.speakerNames ?? {})) if (/^\d+$/.test(key)) db.setSpeakerName(id, key, "");
       notify(id);
     } finally {
       separating.delete(id);

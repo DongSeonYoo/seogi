@@ -3,7 +3,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import qgrid from "@cartanova/qgrid-ai-sdk";
 import { generateText, Output, transcribe, type LanguageModel } from "ai";
 import { z } from "zod";
-import type { ConnectionResult, ConnectionRole, Summary, Utterance } from "../shared/types";
+import type { ConnectionResult, ConnectionRole, SpeakerNames, Summary, Utterance } from "../shared/types";
 import { glossaryPrompt, isPromptEcho, type Transcript } from "./transcription.ts";
 import type { SettingsStore } from "./settings";
 import { summarizeParts, SUMMARY_INPUT, SUMMARY_OUTPUT, type CitedNotes } from "./summaryParts.ts";
@@ -68,6 +68,7 @@ export async function summarize(
   transcript: Utterance[],
   glossary = store.get().glossary,
   model = store.get().summary.model,
+  names: SpeakerNames = {},
 ): Promise<Summary> {
   const s = store.get();
   const languageModel = summaryModel(store, s, model);
@@ -79,7 +80,7 @@ export async function summarize(
     glossary.trim() && `Glossary: ${glossary}`,
   ].filter(Boolean).join("\n");
   const prompts = {
-    transcript: instructions + "\nSummarize the numbered transcript. Me is the recorder, Others is the remote track, and numbered speakers are distinct voices. Use the glossary to correct transcription errors.",
+    transcript: instructions + "\nSummarize the numbered transcript. Me is the recorder, Others is the remote track, numbered speakers are distinct voices, and any other label is that voice's name. Use the glossary to correct transcription errors.",
     merge: instructions + "\nCombine these chronological partial notes. Consolidate duplicate facts and actions, keeping their supporting ids. Keep reversals and distinct speakers separate. Only cite ids attached to these notes.",
   };
   const budget = SUMMARY_INPUT - Math.max(Buffer.byteLength(prompts.transcript), Buffer.byteLength(prompts.merge));
@@ -92,7 +93,7 @@ export async function summarize(
       maxOutputTokens: SUMMARY_OUTPUT, maxRetries: 2,
     });
     return output;
-  });
+  }, names);
 }
 
 /** One cheap real request through the configured provider, so a bad key or model shows up now. */

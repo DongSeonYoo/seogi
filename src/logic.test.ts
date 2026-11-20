@@ -76,6 +76,22 @@ test("joinSplitSentences rejoins a sentence cut at a chunk boundary, and nothing
   assert.equal(joinSplitSentences([u(1, "system", 32, "끝맺음 없음"), u(2, "system", 90, "한참 뒤.")]).length, 2);
 });
 
+test("a named voice is named on every line, in the export too, and an empty name restores the default", async () => {
+  const { openDb } = await import("./main/db.ts");
+  const { meetingDocument } = await import("./shared/summary.ts");
+  const { translator } = await import("./shared/i18n.ts");
+  const db = openDb(":memory:");
+  const id = db.createMeeting("Sync");
+  db.addUtterances(id, "system", [{ startSec: 1, text: "시작하죠.", speaker: 2 }, { startSec: 5, text: "좋아요.", speaker: 1 }]);
+  db.setSpeakerName(id, "2", "대표님");
+  const m = db.getMeeting(id)!;
+  assert.deepEqual(m.speakerNames, { 2: "대표님" });
+  const doc = meetingDocument(m, "md", translator("en"), "Nov 20");
+  assert.ok(doc.includes("**대표님**: 시작하죠.") && doc.includes("**Speaker 1**: 좋아요."));
+  db.setSpeakerName(id, "2", "");
+  assert.deepEqual(db.getMeeting(id)!.speakerNames, {});
+});
+
 test("a hand edit replaces a shown line's text and removes the pieces joined to it", async () => {
   const { openDb } = await import("./main/db.ts");
   const db = openDb(":memory:");

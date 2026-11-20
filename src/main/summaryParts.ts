@@ -1,6 +1,6 @@
-import { clock, TIME_LINK } from "../shared/summary.ts";
+import { clock, speakerKey, TIME_LINK } from "../shared/summary.ts";
 import { storedMessage } from "../shared/i18n.ts";
-import type { Summary, Utterance } from "../shared/types";
+import type { SpeakerNames, Summary, Utterance } from "../shared/types";
 
 type Point = { text: string; ids: number[] };
 export type CitedNotes = {
@@ -106,9 +106,9 @@ function mergeRows(notes: CitedNotes[]): Row[] {
   return rows.sort((a, b) => a.ids[0] - b.ids[0]);
 }
 
-export async function summarizeParts(lines: Utterance[], budget: number, generate: Generate): Promise<Summary> {
+export async function summarizeParts(lines: Utterance[], budget: number, generate: Generate, names: SpeakerNames = {}): Promise<Summary> {
   const rows = lines.map((line, i) => ({
-    label: `[${i + 1}] ${line.speaker ? `Speaker ${line.speaker}` : line.track === "mic" ? "Me" : "Others"}`,
+    label: `[${i + 1}] ${names[speakerKey(line)] || (line.speaker ? `Speaker ${line.speaker}` : line.track === "mic" ? "Me" : "Others")}`,
     text: line.text, ids: [i + 1],
   }));
   if (!rows.length || budget < 1) throw new Error(storedMessage("error.summaryBudget"));

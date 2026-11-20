@@ -1,7 +1,7 @@
 import { AlertCircle, BookmarkPlus, BookPlus, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { GPT_LIVE_MODEL, type LiveView, type MeetingDetail, type ModelOption, type Settings, type Utterance } from "../../shared/types";
-import { clock, speakerName } from "../../shared/summary";
+import { GPT_LIVE_MODEL, type LiveView, type MeetingDetail, type ModelOption, type Settings, type SpeakerNames, type Utterance } from "../../shared/types";
+import { clock, speakerKey, speakerName } from "../../shared/summary";
 import { joinSplitSentences } from "../../shared/transcript";
 import { duration, fullDate, groupUtterances, insertDrafts } from "./format";
 import { useI18n, useT } from "./i18n";
@@ -55,7 +55,7 @@ export function MeetingView({
 }) {
   const i18n = useI18n();
   const { t } = i18n;
-  const speakers = useMemo(() => [...new Set(m.utterances.map((u) => speakerName(u, t)))], [m.utterances, t]);
+  const speakers = useMemo(() => [...new Set(m.utterances.map((u) => speakerName(u, t, m.speakerNames)))], [m.utterances, m.speakerNames, t]);
   const shownLines = useMemo(() => joinSplitSentences(m.utterances).length, [m.utterances]);
   // An unrecorded session also takes an audio file, dropped anywhere on the transcript side.
   const importing = useImportProgress(m.id);
@@ -338,7 +338,8 @@ function SessionOptions({ meeting: m, running }: { meeting: MeetingDetail; runni
 }
 
 /** Colours: the person at this Mac, the other side, or one of up to five told-apart voices. */
-const speakerKey = (u: { track: string; speaker: number | null }) => (u.speaker ? `s${(u.speaker - 1) % 5}` : u.track);
+/** The colour a voice is drawn in. */
+const speakerTone = (u: { track: string; speaker: number | null }) => (u.speaker ? `s${(u.speaker - 1) % 5}` : u.track);
 
 /** A transcript line; drafts are live captions whose sentence is still being spoken. */
 type Line = Utterance & { key?: string; draft?: boolean };
@@ -365,6 +366,7 @@ function Transcript({
   const stick = useRef(true);
   const player = usePlayer(m.id);
   const edit = useCallback((u: Line, text: string) => void window.api.editUtterance(m.id, u.id, text, u.joined), [m.id]);
+  const rename = useCallback((key: string, name: string) => void window.api.setSpeakerName(m.id, key, name), [m.id]);
   /** Adds a corrected word to this session's glossary, starting from the shared one if it has none. */
   const addTerm = useCallback(async (word: string) => {
     const base = m.glossary.trim() || (await window.api.getSettings()).glossary.trim();
@@ -416,7 +418,7 @@ function Transcript({
   return (
     <div className="transcript selectable" ref={scroller}>
       {groups.map((group) => (
-        <MessageGroup key={lineKey(group[0])} group={group} player={player} focused={focused} onStamp={onStamp} onEdit={edit} onTerm={addTerm} />
+        <MessageGroup key={lineKey(group[0])} group={group} player={player} focused={focused} onStamp={onStamp} onEdit={edit} onTerm={addTerm} names={m.speakerNames} onRename={rename} />
       ))}
       {!groups.length && !busy && (
         // While a file is being prepared the session is still "new", but it is no longer waiting for one.
@@ -435,8 +437,10 @@ function Transcript({
 
 type Edit = (u: Line, text: string) => void;
 
-const MessageGroup = memo(function MessageGroup({ group, player, focused, onStamp, onEdit, onTerm }: {
+const MessageGroup = memo(function MessageGroup({ group, player, focused, onStamp, onEdit, onTerm, names, onRename }: {
   group: Line[];
+  names: SpeakerNames;
+  onRename: (key: string, name: string) => void;
   player: Player;
   focused: ReadonlySet<number>;
   onStamp: (u: Utterance) => void;
@@ -446,7 +450,8 @@ const MessageGroup = memo(function MessageGroup({ group, player, focused, onStam
   return (
     <ol className="msg-group">
       {group.map((u, i) => (
-        <Message key={lineKey(u)} u={u} head={i === 0} player={player} focused={focused.has(u.id)} onStamp={onStamp} onEdit={onEdit} onTerm={onTerm} />
+        <Message key={lineKey(u)} u={u} head={i === 0} player={player} focused={focused.has(u.id)} onStamp={onStamp} onEdit={onEdit} onTerm={onTerm}
+          name={names[speakerKey(u)] ?? ""} onRename={onRename} />
       ))}
     </ol>
   );
@@ -460,7 +465,12 @@ const Message = memo(function Message({
   onStamp,
   onEdit,
   onTerm,
+  name: given,
+  onRename,
 }: {
+  /** The name given to this line's voice; "" when it has none. */
+  name: string;
+  onRename: (key: string, name: string) => void;
   u: Line;
   head: boolean;
   player: Player;
@@ -470,6 +480,8 @@ const Message = memo(function Message({
   onTerm: (word: string) => void;
 }) {
   const t = useT();
+  const name = given || speakerName(u, t);
+  const [naming, setNaming] = useState(false);
   /** The word (its index in `parts`) or the whole line being corrected. */
   const [editing, setEditing] = useState<number | "line" | null>(null);
   const parts = useMemo(() => u.text.split(/(\s+)/), [u.text]);
@@ -532,8 +544,8 @@ const Message = memo(function Message({
     >
       <div className="msg__gutter">
         {head ? (
-          <span className="avatar" data-speaker={speakerKey(u)} aria-hidden>
-            {u.speaker ?? speakerName(u, t).slice(0, 1)}
+          <span className="avatar" data-speaker={speakerTone(u)} aria-hidden>
+            {given ? given.slice(0, 1) : (u.speaker ?? name.slice(0, 1))}
           </span>
         ) : (
           <span className="msg__gutter-time tnum">{clock(u.startSec)}</span>
@@ -542,8 +554,31 @@ const Message = memo(function Message({
       <div>
         {head && (
           <div className="msg__head">
-            <span className="msg__name" data-speaker={speakerKey(u)}>
-              {speakerName(u, t)}
+            <span
+              className="msg__name"
+              data-speaker={speakerTone(u)}
+              title={u.draft ? undefined : t("edit.renameSpeaker")}
+              // Naming a voice names every line it speaks in this meeting.
+              contentEditable={naming ? "plaintext-only" : undefined}
+              suppressContentEditableWarning
+              ref={(el) => {
+                if (el && naming && document.activeElement !== el) startEditing(el);
+              }}
+              onClick={() => !u.draft && setNaming(true)}
+              {...(naming && editKeys(
+                (el) => {
+                  setNaming(false);
+                  const next = (el.textContent ?? "").trim();
+                  el.textContent = next || speakerName(u, t); // what React will render, so the two agree
+                  if (next !== given) onRename(speakerKey(u), next);
+                },
+                (el) => {
+                  el.textContent = name;
+                  setNaming(false);
+                },
+              ))}
+            >
+              {name}
             </span>
             <span className="msg__time tnum">{clock(u.startSec)}</span>
           </div>

@@ -5,6 +5,7 @@ import type {
   LibraryView,
   MeetingRow,
   MeetingStatus,
+  SpeakerNames,
   Summary,
   Track,
   Utterance,
@@ -76,6 +77,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
   // Per-session choices; null falls back to the settings (glossary: an override, not an addition).
   addColumn("live_model", "live_model TEXT");
   addColumn("glossary", "glossary TEXT");
+  addColumn("speaker_names", "speaker_names TEXT");
   // Speaker 1, 2, … within a track, when diarization told voices apart; null otherwise.
   const utteranceColumns = db.prepare("PRAGMA table_info(utterances)").all().map((c) => c.name);
   if (!utteranceColumns.includes("speaker")) db.exec("ALTER TABLE utterances ADD COLUMN speaker INTEGER");
@@ -281,6 +283,13 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
         .map((r) => ({ id: Number(r.id), name: String(r.name), count: Number(r.count) }));
     },
 
+    setSpeakerName(id: number, key: string, name: string) {
+      const r = db.prepare("SELECT speaker_names FROM meetings WHERE id = ?").get(id);
+      const names: SpeakerNames = r?.speaker_names ? JSON.parse(String(r.speaker_names)) : {};
+      if (name.trim()) names[key] = name.trim();
+      else delete names[key];
+      db.prepare("UPDATE meetings SET speaker_names = ? WHERE id = ?").run(Object.keys(names).length ? JSON.stringify(names) : null, id);
+    },
     /** A line corrected by hand, with the pieces that were shown joined to it removed. */
     editUtterance(meetingId: number, id: number, text: string, joined: number[] = []) {
       const remove = db.prepare("DELETE FROM utterances WHERE id = ? AND meeting_id = ?");
@@ -329,6 +338,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
         error: r.error ? String(r.error) : null,
         liveModel: r.live_model ? String(r.live_model) : null,
         glossary: r.glossary ? String(r.glossary) : "",
+        speakerNames: r.speaker_names ? (JSON.parse(String(r.speaker_names)) as SpeakerNames) : {},
         utterances,
       };
     },

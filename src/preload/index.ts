@@ -44,6 +44,7 @@ const api: Api = {
   exportMeeting: (id, format) => ipcRenderer.invoke("exportMeeting", id, format),
   markOpened: (id) => ipcRenderer.invoke("markOpened", id),
   audioFor: (meetingId, track, startSec) => ipcRenderer.invoke("audioFor", meetingId, track, startSec),
+  setSpeakerName: (meetingId, key, name) => ipcRenderer.invoke("setSpeakerName", meetingId, key, name),
   editUtterance: (meetingId, id, text, joined) => ipcRenderer.invoke("editUtterance", meetingId, id, text, joined),
   audioChunks: (meetingId, track) => ipcRenderer.invoke("audioChunks", meetingId, track),
   separateSpeakers: (meetingId, samples) => ipcRenderer.invoke("separateSpeakers", meetingId, samples),

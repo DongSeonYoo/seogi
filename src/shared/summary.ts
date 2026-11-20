@@ -1,9 +1,12 @@
 import type { Translate } from "./i18n";
-import type { Summary, Track, Utterance } from "./types";
+import type { SpeakerNames, Summary, Track, Utterance } from "./types";
 
 /** "Speaker 2" when diarization told voices apart, else the track: "Me" or "Others". */
-export function speakerName(u: { track: Track; speaker: number | null }, t: Translate) {
-  return u.speaker ? t("speaker.n", { n: u.speaker }) : t(u.track === "mic" ? "speaker.mic" : "speaker.system");
+/** One voice in a meeting: a numbered speaker, else the track (the recorder, or the other side). */
+export const speakerKey = (u: { track: Track; speaker: number | null }) => (u.speaker ? String(u.speaker) : u.track);
+
+export function speakerName(u: { track: Track; speaker: number | null }, t: Translate, names: SpeakerNames = {}) {
+  return names[speakerKey(u)] || (u.speaker ? t("speaker.n", { n: u.speaker }) : t(u.track === "mic" ? "speaker.mic" : "speaker.system"));
 }
 
 /**
@@ -73,7 +76,7 @@ export function clock(sec: number) {
 
 /** A meeting as one document: title, date, summary, then the transcript. */
 export function meetingDocument(
-  m: { title: string; startedAt: string; summary: string | null; utterances: Utterance[] },
+  m: { title: string; startedAt: string; summary: string | null; utterances: Utterance[]; speakerNames?: SpeakerNames },
   format: "md" | "txt",
   t: Translate,
   date: string,
@@ -84,7 +87,7 @@ export function meetingDocument(
     // The summary's own headings sit one level below its section.
     ...(m.summary?.trim() ? [`## ${t("detail.summary")}`, m.summary.trim().replace(/^(#{1,5})(?=\s)/gm, "#$1")] : []),
     `## ${t("export.transcript")}`,
-    m.utterances.map((u) => `- \`${clock(u.startSec)}\` **${speakerName(u, t)}**: ${u.text}`).join("\n"),
+    m.utterances.map((u) => `- \`${clock(u.startSec)}\` **${speakerName(u, t, m.speakerNames)}**: ${u.text}`).join("\n"),
   ].join("\n\n");
   return `${format === "md" ? md : markdownToText(md)}\n`;
 }
