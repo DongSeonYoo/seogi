@@ -14,7 +14,8 @@ export class ChunkIndex {
     if (this.meeting?.id === id) this.meeting = undefined;
   }
 
-  find(dir: string, id: number, track: Track, at: number): ChunkFile | null {
+  /** A track's chunks in time order. */
+  list(dir: string, id: number, track: Track): ChunkFile[] {
     if (this.meeting?.id !== id) {
       const tracks: Record<Track, ChunkFile[]> = { mic: [], system: [] };
       let names: string[];
@@ -31,7 +32,11 @@ export class ChunkIndex {
       for (const chunks of Object.values(tracks)) chunks.sort((a, b) => a.start - b.start || b.file.localeCompare(a.file));
       this.meeting = { id, tracks };
     }
-    const chunks = this.meeting.tracks[track];
+    return this.meeting.tracks[track];
+  }
+
+  find(dir: string, id: number, track: Track, at: number): ChunkFile | null {
+    const chunks = this.list(dir, id, track);
     let lo = 0, hi = chunks.length;
     while (lo < hi) {
       const mid = Math.floor((lo + hi) / 2);

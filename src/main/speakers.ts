@@ -24,3 +24,32 @@ export function speakerTurns(segments: SpeakerSegment[]): Turn[] {
   }
   return turns;
 }
+
+/**
+ * Gives each recorded caption line the voice that talks most during it. A line runs until the
+ * next line starts (at most one turn's length); a line in no voice's stretch takes the nearest.
+ * Speakers are renumbered 1, 2, … in order of first line, so a voice with no lines leaves no gap.
+ */
+export function assignSpeakers(lines: { id: number; startSec: number }[], turns: Turn[]): Map<number, number> {
+  const sorted = [...lines].sort((a, b) => a.startSec - b.startSec);
+  const number = new Map<number, number>();
+  const out = new Map<number, number>();
+  if (!turns.length) return out;
+  sorted.forEach((line, i) => {
+    const start = line.startSec;
+    const end = Math.min(sorted[i + 1]?.startSec ?? Infinity, start + MAX_TURN_SEC);
+    const talk = new Map<number, number>();
+    for (const t of turns) {
+      const overlap = Math.min(end, t.end) - Math.max(start, t.start);
+      if (overlap > 0) talk.set(t.speaker, (talk.get(t.speaker) ?? 0) + overlap);
+    }
+    let voice = [...talk].sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (voice === undefined) {
+      const gap = (t: Turn) => Math.max(t.start - start, start - t.end, 0);
+      voice = turns.reduce((best, t) => (gap(t) < gap(best) ? t : best)).speaker;
+    }
+    if (!number.has(voice)) number.set(voice, number.size + 1);
+    out.set(line.id, number.get(voice)!);
+  });
+  return out;
+}

@@ -157,7 +157,7 @@ export type Settings = {
 export type StoredSettings = Omit<Settings, "hasKey">;
 
 /** Where an import is: fetching the speaker models once, finding speakers, then transcribing turns. */
-export type ImportProgress = { phase: "audio" | "models" | "speakers" } | { phase: "transcribe"; done: number; total: number };
+export type ImportProgress = { phase: "audio" | "recording" | "models" | "speakers" } | { phase: "transcribe"; done: number; total: number };
 
 export type ConnectionResult = { ok: true; ms: number } | { ok: false; error: string };
 
@@ -224,6 +224,10 @@ export type Api = {
   exportMeeting(id: number, format: "md" | "txt"): Promise<boolean>;
   markOpened(id: number): Promise<void>;
   audioFor(meetingId: number, track: Track, startSec: number): Promise<AudioRef | null>;
+  /** A track's saved chunks (Ogg Opus or WAV bytes) in time order. */
+  audioChunks(meetingId: number, track: Track): Promise<{ bytes: Uint8Array; startSec: number }[]>;
+  /** Tells the recorded other side's voices apart (16 kHz mono from 0 s) and numbers its lines. */
+  separateSpeakers(meetingId: number, samples: Float32Array): Promise<void>;
   getSettings(): Promise<Settings>;
   /** Applies immediately; nested groups (live, summary, recording) are replaced whole. */
   patchSettings(patch: Partial<StoredSettings>): Promise<Settings>;

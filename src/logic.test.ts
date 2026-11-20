@@ -513,6 +513,24 @@ test("speaker turns join a voice's close segments, cap their length, and number 
   ]);
 });
 
+test("recorded lines take the voice that talks most during them, the nearest one in silence, renumbered by first line", async () => {
+  const { assignSpeakers } = await import("./main/speakers.ts");
+  const turns = [
+    { start: 0, end: 3, speaker: 2 },
+    { start: 3, end: 10, speaker: 3 },
+    { start: 20, end: 25, speaker: 1 },
+  ];
+  const lines = [
+    { id: 11, startSec: 2 }, // 2–9: 1 s of voice 2, 6 s of voice 3
+    { id: 10, startSec: 0 }, // 0–2: voice 2
+    { id: 12, startSec: 9 }, // 9–12: voice 3
+    { id: 13, startSec: 16 }, // 16–46 overlaps voice 1 only
+    { id: 14, startSec: 50 }, // in no stretch: nearest is voice 1
+  ];
+  assert.deepEqual([...assignSpeakers(lines, turns)], [[10, 1], [11, 2], [12, 2], [13, 3], [14, 3]]);
+  assert.equal(assignSpeakers(lines, []).size, 0);
+});
+
 test("Ogg Opus pages round-trip headers, packet lacing, CRCs and trimmed 48 kHz granules", async () => {
   const { muxOpus } = await import("./renderer/src/opus.ts");
   const packets = Array.from({ length: 26 }, (_, i) => new Uint8Array(i ? 30 : 255).fill(i + 1));

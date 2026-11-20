@@ -21,7 +21,11 @@ export type AudioFile = {
 export async function readAudioFile(file: File): Promise<AudioFile> {
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
   if (!IMPORT_EXTENSIONS.includes(ext)) throw new Error("unsupported");
-  const bytes = await file.arrayBuffer();
+  const decoded = await decodeMono(await file.arrayBuffer());
+  return { name: file.name, bytes: file.size, ...decoded };
+}
+
+async function decodeMono(bytes: ArrayBuffer) {
   let ctx: AudioContext;
   try {
     ctx = new AudioContext({ sampleRate: RATE });
@@ -40,8 +44,6 @@ export async function readAudioFile(file: File): Promise<AudioFile> {
     mono = await mix.startRendering();
   }
   return {
-    name: file.name,
-    bytes: file.size,
     durationSec: decoded.duration,
     channels: decoded.numberOfChannels,
     samples: mono.getChannelData(0),
@@ -86,4 +88,26 @@ export function useImportProgress(meetingId: number) {
     return () => void listeners.delete(update);
   }, [meetingId]);
   return p;
+}
+
+/**
+ * Reads a recorded meeting's other side back from its saved chunks into one 16 kHz track (gaps
+ * stay silent) and has main tell its voices apart. Progress shows like an import's.
+ */
+export async function separateSpeakers(id: number) {
+  setProgress(id, { phase: "recording" });
+  try {
+    const chunks = await window.api.audioChunks(id, "system");
+    // One at a time: each decode opens an AudioContext, and an hour is 120 chunks.
+    const parts: { at: number; samples: Float32Array }[] = [];
+    for (const c of chunks) {
+      const { samples } = await decodeMono(c.bytes.slice().buffer);
+      parts.push({ at: Math.round(c.startSec * RATE), samples });
+    }
+    const track = new Float32Array(Math.max(0, ...parts.map((p) => p.at + p.samples.length)));
+    for (const p of parts) track.set(p.samples, p.at);
+    await window.api.separateSpeakers(id, track);
+  } finally {
+    setProgress(id, null);
+  }
 }

@@ -1,5 +1,5 @@
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, protocol, session, shell, systemPreferences } from "electron";
-import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { GPT_LIVE_MODEL, GPT_LIVE_TAIL_MS, IMPORT_CHUNK_SEC, LIVE_TEST_ID, type LiveEvent } from "../shared/types";
@@ -27,7 +27,7 @@ import { openDb } from "./db";
 import { History, perform } from "./library";
 import { diarize } from "./diarize";
 import { cleanModelDownloads, ensureModels } from "./modelFiles";
-import { speakerTurns } from "./speakers";
+import { assignSpeakers, speakerTurns } from "./speakers";
 import { LiveCaptions, openLiveStream } from "./live";
 import { appMenu } from "./menu";
 import { listModels } from "./models";
@@ -289,6 +289,11 @@ app.whenReady().then(async () => {
   // network) it falls back to plain 30 s windows with no speakers.
   const importProgress = (id: number, p: ImportProgress | null) => broadcast("import-progress", id, p);
   let loadingModels: ReturnType<typeof ensureModels> | undefined;
+  const speakerModels = () =>
+    (loadingModels ??= ensureModels(modelsDir).finally(() => {
+      loadingModels = undefined;
+      cleanModelDownloads(modelsDir);
+    }));
   async function importFile(id: number, pcm: Int16Array, language: string, ogg: (Uint8Array | null)[]) {
     const durationSec = pcm.length / SAMPLE_RATE;
     const chunkSamples = IMPORT_CHUNK_SEC * SAMPLE_RATE;
@@ -301,10 +306,7 @@ app.whenReady().then(async () => {
     let turns: { start: number; end: number; speaker?: number }[];
     try {
       importProgress(id, { phase: "models" });
-      const models = await (loadingModels ??= ensureModels(modelsDir).finally(() => {
-        loadingModels = undefined;
-        cleanModelDownloads(modelsDir);
-      }));
+      const models = await speakerModels();
       importProgress(id, { phase: "speakers" });
       turns = speakerTurns(await diarize(toFloat32(pcm), models));
     } catch (e) {
@@ -438,6 +440,29 @@ app.whenReady().then(async () => {
     if (canceled || !filePath) return false;
     writeFileSync(filePath, meetingDocument(m, format, tr(), date));
     return true;
+  });
+  // A recorded meeting's other side ("system") told apart into voices on request. The renderer
+  // decodes the saved chunks (Chromium reads Ogg Opus) into one 16 kHz track laid out by time;
+  // caption lines then take the voice that talks most during them. The text is not touched.
+  ipcMain.handle("audioChunks", (_e, id: number, track: Track) =>
+    chunkIndex.list(audioDir, id, track).map((c) => ({ bytes: readFileSync(path.join(audioDir, String(id), c.file)), startSec: c.start })),
+  );
+  const separating = new Set<number>();
+  ipcMain.handle("separateSpeakers", async (_e, id: number, samples: Float32Array<ArrayBuffer>) => {
+    if (separating.has(id)) return;
+    separating.add(id);
+    try {
+      importProgress(id, { phase: "models" });
+      const models = await speakerModels();
+      importProgress(id, { phase: "speakers" });
+      const turns = speakerTurns(await diarize(samples, models));
+      const lines = db.getMeeting(id)?.utterances.filter((u) => u.track === "system") ?? [];
+      db.setSpeakers(id, assignSpeakers(lines, turns));
+      notify(id);
+    } finally {
+      separating.delete(id);
+      importProgress(id, null);
+    }
   });
   ipcMain.handle("markOpened", (_e, id: number) => db.setOpened(id, true));
   ipcMain.handle("audioFor", (_e, id: number, track: Track, startSec: number): AudioRef | null => {

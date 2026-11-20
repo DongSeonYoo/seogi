@@ -7,7 +7,7 @@ import { duration, fullDate, groupUtterances, insertDrafts } from "./format";
 import { useI18n, useT } from "./i18n";
 import { showStored } from "../../shared/i18n";
 import { Elapsed, type Recording } from "./Toolbar";
-import { IMPORT_EXTENSIONS, importAudio, readAudioFile, useImportProgress, type AudioFile } from "./importAudio";
+import { IMPORT_EXTENSIONS, importAudio, readAudioFile, separateSpeakers, useImportProgress, type AudioFile } from "./importAudio";
 import { Splitter } from "./Splitter";
 import { SummaryDoc } from "./SummaryDoc";
 import { Button, CommitInput, IconButton, Select } from "./ui";
@@ -57,6 +57,15 @@ export function MeetingView({
   // An unrecorded session also takes an audio file, dropped anywhere on the transcript side.
   const importing = useImportProgress(m.id);
   const canImport = m.status === "new" && !recording && !importing;
+  // A finished recording's other side can be told apart into voices; the button says so once done.
+  const canSeparate = m.status === "done" && !recording && !importing && m.utterances.some((u) => u.track === "system");
+  const separated = m.utterances.some((u) => u.track === "system" && u.speaker);
+  const [speakerError, setSpeakerError] = useState<string | null>(null);
+  useEffect(() => setSpeakerError(null), [m.id]);
+  function separate() {
+    setSpeakerError(null);
+    separateSpeakers(m.id).catch((e) => setSpeakerError(e instanceof Error ? e.message : String(e)));
+  }
   const [file, setFile] = useState<AudioFile | null>(null);
   const [reading, setReading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -194,8 +203,14 @@ export function MeetingView({
             <span>
               {importing.phase === "transcribe"
                 ? t("import.progress", { done: importing.done, total: importing.total })
-                : t(importing.phase === "audio" ? "import.audio" : importing.phase === "models" ? "import.models" : "import.speakers")}
+                : t(`import.${importing.phase}`)}
             </span>
+          </p>
+        )}
+        {speakerError && (
+          <p className="notice" role="alert">
+            <AlertCircle aria-hidden />
+            <span>{t("speakers.failed", { error: speakerError })}</span>
           </p>
         )}
         {m.error && (
@@ -238,6 +253,11 @@ export function MeetingView({
               .filter(Boolean)
               .join(" · ")}
           </span>
+          {canSeparate && (
+            <button type="button" className="statusbar__action" title={t("speakers.hint")} onClick={separate}>
+              {t(separated ? "speakers.again" : "speakers.separate")}
+            </button>
+          )}
         </footer>
       </div>
       {summary.open && (

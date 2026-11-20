@@ -275,6 +275,18 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
         .map((r) => ({ id: Number(r.id), name: String(r.name), count: Number(r.count) }));
     },
 
+    /** Speaker numbers for a meeting's lines, written together. */
+    setSpeakers(meetingId: number, speakers: Map<number, number>) {
+      const update = db.prepare("UPDATE utterances SET speaker = ? WHERE id = ? AND meeting_id = ?");
+      db.exec("BEGIN");
+      try {
+        for (const [id, speaker] of speakers) update.run(speaker, id, meetingId);
+        db.exec("COMMIT");
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+      }
+    },
     getMeeting(id: number) {
       const r = db.prepare(`${select} WHERE m.id = ? AND ${live}`).get(id);
       if (!r) return null;
