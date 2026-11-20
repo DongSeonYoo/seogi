@@ -366,7 +366,7 @@ function Transcript({
   const stick = useRef(true);
   const player = usePlayer(m.id);
   const edit = useCallback((u: Line, text: string) => void window.api.editUtterance(m.id, u.id, text, u.joined), [m.id]);
-  const rename = useCallback((key: string, name: string) => void window.api.setSpeakerName(m.id, key, name), [m.id]);
+  const rename = useCallback((u: Line, name: string) => void window.api.nameVoice(m.id, u.id, name), [m.id]);
   /** Adds a corrected word to this session's glossary, starting from the shared one if it has none. */
   const addTerm = useCallback(async (word: string) => {
     const base = m.glossary.trim() || (await window.api.getSettings()).glossary.trim();
@@ -440,7 +440,7 @@ type Edit = (u: Line, text: string) => void;
 const MessageGroup = memo(function MessageGroup({ group, player, focused, onStamp, onEdit, onTerm, names, onRename }: {
   group: Line[];
   names: SpeakerNames;
-  onRename: (key: string, name: string) => void;
+  onRename: (u: Line, name: string) => void;
   player: Player;
   focused: ReadonlySet<number>;
   onStamp: (u: Utterance) => void;
@@ -470,7 +470,7 @@ const Message = memo(function Message({
 }: {
   /** The name given to this line's voice; "" when it has none. */
   name: string;
-  onRename: (key: string, name: string) => void;
+  onRename: (u: Line, name: string) => void;
   u: Line;
   head: boolean;
   player: Player;
@@ -570,7 +570,7 @@ const Message = memo(function Message({
                   setNaming(false);
                   const next = (el.textContent ?? "").trim();
                   el.textContent = next || speakerName(u, t); // what React will render, so the two agree
-                  if (next !== given) onRename(speakerKey(u), next);
+                  if (next !== given) onRename(u, next);
                 },
                 (el) => {
                   el.textContent = name;

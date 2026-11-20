@@ -310,7 +310,10 @@ export function liveCaptionHooks(meetingId: number, live: { provider: string; mo
             testToken,
           );
         },
-        onFrame: (track, readPcm) => opening.get(track)?.push(readPcm),
+        onFrame: (track, readPcm) => {
+          opening.get(track)?.push(readPcm);
+          if (track === "system" && testToken === undefined) window.api.sendVoiceAudio(meetingId, readPcm());
+        },
       }
     : { onFrame: (track, readPcm) => window.api.sendLiveAudio(meetingId, track, readPcm(), testToken) };
   return {

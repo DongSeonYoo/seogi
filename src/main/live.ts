@@ -347,7 +347,8 @@ export class CommitPolicy {
 }
 
 /** A finished stretch of speech, ready to be stored as an utterance. */
-export type Segment = { startSec: number; text: string };
+/** `endSec`, when known, is where the line's audio ends (its voice can be read from it). */
+export type Segment = { startSec: number; text: string; endSec?: number };
 
 /** An unfinished sentence held back for the next piece, at most this long or this old. */
 const CARRY_MAX_CHARS = 280;
@@ -415,7 +416,8 @@ export class LiveCaptions {
     const at = (i: number) =>
       held && i < before ? span(held.startSec, held.endSec, i, held.text.length) : span(piece.startSec, piece.endSec, i - before, piece.text.length);
     const { lines, rest, restStartSec } = finishedSentences(text, at);
-    lines.forEach((line, i) => this.onSegment(track, `${key}:${i}`, line));
+    lines.forEach((line, i) =>
+      this.onSegment(track, `${key}:${i}`, { ...line, endSec: lines[i + 1]?.startSec ?? (rest ? restStartSec : piece.endSec) }));
     if (rest) this.carry.set(track, { key: `${key}:rest`, track, text: rest, startSec: restStartSec, endSec: piece.endSec });
   }
 
@@ -423,7 +425,7 @@ export class LiveCaptions {
     for (const [t, held] of this.carry) {
       if (track && t !== track) continue;
       this.carry.delete(t);
-      this.onSegment(t, held.key, { startSec: held.startSec, text: held.text });
+      this.onSegment(t, held.key, { startSec: held.startSec, text: held.text, endSec: held.endSec });
     }
     for (const d of [...this.drafts.values()].sort((a, b) => a.startSec - b.startSec)) {
       if (track && d.track !== track) continue;
@@ -463,7 +465,7 @@ export class LiveCaptions {
         this.drafts.delete(key);
         const text = e.text.trim();
         if (text && this.bySentence) this.onPiece(track, key, { startSec: e.startSec, endSec: e.endSec, text });
-        else if (text) this.onSegment(track, key, { startSec: e.startSec, text });
+        else if (text) this.onSegment(track, key, { startSec: e.startSec, text, endSec: e.endSec });
       }
     }
     this.changed();

@@ -92,6 +92,23 @@ test("a named voice is named on every line, in the export too, and an empty name
   assert.deepEqual(db.getMeeting(id)!.speakerNames, {});
 });
 
+test("the voice ring keeps the last minutes by stretch time, and a voice takes a name only when alike enough", async () => {
+  const { AudioRing, matchVoice } = await import("./main/speakers.ts");
+  const ring = new AudioRing();
+  const sec = (n: number, v: number) => new Int16Array(16000 * n).fill(v);
+  ring.push(sec(200, 100));
+  ring.push(sec(200, 200)); // the first 100 s have been overwritten
+  assert.equal(ring.slice(10, 12), null);
+  assert.equal(ring.slice(150, 150.5), null); // under a second: too little voice
+  const s = ring.slice(390, 420)!;
+  assert.equal(s.length, 16000 * 8); // at most 8 s of a line
+  assert.ok(Math.abs(s[0] - 200 / 32768) < 1e-9);
+  const unit = (...v: number[]) => Float32Array.from(v, (x) => x / Math.hypot(...v));
+  const voices = new Map([[1, [unit(1, 0, 0)]], [2, [unit(0, 1, 0)]]]);
+  assert.equal(matchVoice(unit(0.9, 0.2, 0), voices), 1);
+  assert.equal(matchVoice(unit(0.4, 0.4, 0.82), voices), null); // like neither enough
+});
+
 test("a hand edit replaces a shown line's text and removes the pieces joined to it", async () => {
   const { openDb } = await import("./main/db.ts");
   const db = openDb(":memory:");
@@ -170,7 +187,7 @@ test("live captions store finished segments, show what is still spoken, and flus
   assert.deepEqual(lines(), ["첫 문장입니다."]);
   c.onEvent("mic", { type: "segment", id: "a", text: "첫 문장입니다.", startSec: 1, endSec: 3 });
   assert.deepEqual(lines(), []);
-  assert.deepEqual(stored, [{ track: "mic", startSec: 1, text: "첫 문장입니다." }]);
+  assert.deepEqual(stored, [{ track: "mic", startSec: 1, text: "첫 문장입니다.", endSec: 3 }]);
 
   c.onEvent("system", { type: "reconnect" });
   c.onEvent("system", { type: "delta", id: "b", text: "말하는 중", atSec: 5 });

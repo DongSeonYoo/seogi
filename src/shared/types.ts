@@ -213,8 +213,14 @@ export type Api = {
   onLiveGlossary(listener: (id: number, glossary: string) => void): () => void;
   /** A session's own live model (null: Settings) or glossary (empty: the shared one). */
   setSessionOptions(id: number, options: { liveModel?: string | null; glossary?: string }): Promise<void>;
-  /** Names a voice for the whole meeting; "" goes back to the default name. */
-  setSpeakerName(meetingId: number, key: string, name: string): Promise<void>;
+  /**
+   * Names the voice of a line. While the meeting records, an other-side line is that voice alone
+   * and later lines that sound like it take the name; otherwise the whole voice is renamed ("" goes
+   * back to the default name).
+   */
+  nameVoice(meetingId: number, utteranceId: number, name: string): Promise<void>;
+  /** The other side's audio while GPT-Live captions it, so its voices can be named live. */
+  sendVoiceAudio(meetingId: number, pcm: Int16Array): void;
   /** A transcript line as corrected by hand; `joined` pieces shown with it are removed. */
   editUtterance(meetingId: number, id: number, text: string, joined?: number[]): Promise<void>;
   sendChunk(chunk: Chunk): void;

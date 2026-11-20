@@ -53,3 +53,56 @@ export function assignSpeakers(lines: { id: number; startSec: number }[], turns:
   });
   return out;
 }
+
+const RATE = 16000;
+/** How far back a named line (or one waiting to be named) can still be heard. */
+const KEEP_SEC = 300;
+/**
+ * How alike a line must sound to a named voice to take its name. On a real 3-person meeting
+ * (seogi-lab/diarize, identify.mjs) 0.5 named 99-100% of lines right and left 17% unnamed.
+ */
+export const VOICE_MATCH = 0.5;
+/** Shorter lines ("네") carry too little voice to tell apart. */
+export const VOICE_MIN_SEC = 1;
+/** A line's voice is read from at most this much of it. */
+const VOICE_MAX_SEC = 8;
+
+/** The last few minutes of the other side's audio in a recording stretch, by sample time. */
+export class AudioRing {
+  private readonly buf = new Int16Array(KEEP_SEC * RATE);
+  private total = 0;
+
+  push(pcm: Int16Array) {
+    for (let i = 0; i < pcm.length; i += this.buf.length) {
+      const part = pcm.subarray(i, i + this.buf.length);
+      const at = this.total % this.buf.length;
+      const first = Math.min(part.length, this.buf.length - at);
+      this.buf.set(part.subarray(0, first), at);
+      this.buf.set(part.subarray(first), 0);
+      this.total += part.length;
+    }
+  }
+
+  /** Audio from `startSec` to `endSec` of the stretch, or null when it is too short or gone. */
+  slice(startSec: number, endSec: number): Float32Array<ArrayBuffer> | null {
+    const from = Math.max(Math.round(startSec * RATE), this.total - this.buf.length, 0);
+    const to = Math.min(Math.round(Math.min(endSec, startSec + VOICE_MAX_SEC) * RATE), this.total);
+    if (to - from < VOICE_MIN_SEC * RATE) return null;
+    const out = new Float32Array(to - from);
+    for (let i = 0; i < out.length; i++) out[i] = this.buf[(from + i) % this.buf.length] / 32768;
+    return out;
+  }
+}
+
+/** The named voice (speaker number) `v` sounds most like, if it is alike enough. */
+export function matchVoice(v: Float32Array, voices: Map<number, Float32Array[]>): number | null {
+  let best: number | null = null;
+  let score = VOICE_MATCH;
+  for (const [speaker, samples] of voices)
+    for (const s of samples) {
+      let dot = 0;
+      for (let i = 0; i < v.length; i++) dot += v[i] * s[i];
+      if (dot >= score) [best, score] = [speaker, dot];
+    }
+  return best;
+}

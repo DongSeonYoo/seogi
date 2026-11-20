@@ -20,14 +20,15 @@ import type {
   Track,
 } from "../shared/types";
 import { INTL_LOCALE, showStored, storedMessage, translator, type Locale } from "../shared/i18n";
-import { meetingDocument, summaryMarkdown } from "../shared/summary";
+import { meetingDocument, speakerKey, summaryMarkdown } from "../shared/summary";
 import { joinSplitSentences } from "../shared/transcript";
 import { glossaryPrompt, isPromptEcho, splitUtterances } from "./transcription";
 import { openDb } from "./db";
 import { History, perform } from "./library";
 import { diarize } from "./diarize";
 import { cleanModelDownloads, ensureModels } from "./modelFiles";
-import { assignSpeakers, speakerTurns } from "./speakers";
+import { embedVoice } from "./voices";
+import { assignSpeakers, AudioRing, matchVoice, speakerTurns } from "./speakers";
 import { LiveCaptions, openLiveStream } from "./live";
 import { appMenu } from "./menu";
 import { listModels } from "./models";
@@ -70,9 +71,73 @@ app.whenReady().then(async () => {
   const db = openDb(path.join(dataDir, "seogi.db"), storedMessage("error.appQuit"));
   const history = new History();
   const notify = (id: number) => broadcast("meeting-changed", id);
-  function storeUtterances(id: number, track: Track, segments: Parameters<typeof db.addUtterances>[2]) {
+  function storeUtterances(id: number, track: Track, segments: (Parameters<typeof db.addUtterances>[2][number] & { endSec?: number })[]) {
     const rows = db.addUtterances(id, track, segments);
     if (rows.length) win?.webContents.send("utterances-added", id, rows);
+    if (track === "system" && voiceBook.get(id)?.size)
+      void nameVoices(id, rows.map((r, i) => ({ id: r.id, startSec: r.startSec, endSec: segments[i]?.endSec })));
+  }
+
+  /**
+   * Live naming of the other side's voices: a line the user names during a recording enrolls its
+   * audio under that name (a speaker number); later lines that sound alike enough take it. The
+   * book lasts until the meeting ends, across pauses.
+   */
+  const voiceBook = new Map<number, Map<number, Float32Array[]>>();
+  async function voiceOf(entry: LiveSession, startSec: number, endSec: number) {
+    const audio = entry.voice.slice(startSec - entry.offsetSec, endSec - entry.offsetSec);
+    return audio && embedVoice(audio, (await speakerModels()).embedding);
+  }
+  async function nameVoices(id: number, lines: { id: number; startSec: number; endSec?: number }[]) {
+    const named = new Map<number, number>();
+    for (const line of lines) {
+      const entry = live.get(id);
+      const book = voiceBook.get(id);
+      if (!entry || !book?.size) return;
+      try {
+        const v = await voiceOf(entry, line.startSec, line.endSec ?? line.startSec + 6);
+        const speaker = v && matchVoice(v, book);
+        if (speaker) named.set(line.id, speaker);
+      } catch (e) {
+        console.warn("[seogi] voice naming failed:", e);
+        return;
+      }
+    }
+    if (!named.size) return;
+    db.setSpeakers(id, named);
+    notify(id);
+  }
+  async function nameVoice(meetingId: number, utteranceId: number, name: string) {
+    const m = db.getMeeting(meetingId);
+    const u = m?.utterances.find((x) => x.id === utteranceId);
+    const entry = live.get(meetingId);
+    name = name.trim();
+    // After the recording, or for the recorder's own track, a name is the whole voice's.
+    if (!m || !u || !entry || u.track !== "system" || !name) {
+      if (u) db.setSpeakerName(meetingId, speakerKey(u), name);
+      return notify(meetingId);
+    }
+    // During it, this line is that voice: an existing name keeps its number, a new one takes the next.
+    const known = Object.entries(m.speakerNames).find(([key, given]) => given === name && /^\d+$/.test(key));
+    const used = [...m.utterances.map((x) => x.speaker ?? 0), ...Object.keys(m.speakerNames).map(Number).filter(Boolean)];
+    const speaker = known ? Number(known[0]) : Math.max(0, ...used) + 1;
+    db.setSpeakerName(meetingId, String(speaker), name);
+    db.setSpeakers(meetingId, new Map([[u.id, speaker]]));
+    notify(meetingId);
+    const others = m.utterances.filter((x) => x.track === "system");
+    const next = others.find((x) => x.startSec > u.startSec)?.startSec ?? u.startSec + 8;
+    try {
+      const v = await voiceOf(entry, u.startSec, Math.min(next, u.startSec + 8));
+      if (!v) return;
+      const book = voiceBook.get(meetingId) ?? new Map<number, Float32Array[]>();
+      voiceBook.set(meetingId, book);
+      book.set(speaker, [...(book.get(speaker) ?? []), v]);
+    } catch (e) {
+      return console.warn("[seogi] voice enrolment failed:", e);
+    }
+    // Lines still unnamed from the last few minutes may be this voice too.
+    const unnamed = others.filter((x) => !x.speaker && x.id !== u.id);
+    await nameVoices(meetingId, unnamed.map((x, i) => ({ id: x.id, startSec: x.startSec, endSec: unnamed[i + 1]?.startSec })));
   }
   let menuState: { disabled: Set<string>; labels: Record<string, string> } = { disabled: new Set(), labels: {} };
   const rebuildMenu = () =>
@@ -116,6 +181,8 @@ app.whenReady().then(async () => {
     offsetSec: number;
     /** GPT-Live: captions come from the renderer's WebRTC sessions. */
     rendererDriven: boolean;
+    /** The other side's recent audio, for naming voices live. */
+    voice: AudioRing;
     openings: Set<Promise<void>>; abort: AbortController; openingError: string | null;
     stopping?: Promise<void>;
   };
@@ -168,13 +235,13 @@ app.whenReady().then(async () => {
         : (track, segment) => {
             // GPT-Live gets no transcription prompt, so it has nothing to echo.
             if (prompt && !rendererDriven && isPromptEcho(segment.text, prompt)) return;
-            storeUtterances(id, track, [{ ...segment, startSec: segment.startSec + offsetSec }]);
+            storeUtterances(id, track, [{ ...segment, startSec: segment.startSec + offsetSec, endSec: segment.endSec && segment.endSec + offsetSec }]);
           },
       // GPT-Live turns arrive cut into sentences already; streamed pieces end at any short pause.
       !rendererDriven,
     );
     live.set(id, {
-      captions, token, offsetSec, rendererDriven, tailMs: rendererDriven ? GPT_LIVE_TAIL_MS + 1000 : 0,
+      captions, token, offsetSec, rendererDriven, voice: new AudioRing(), tailMs: rendererDriven ? GPT_LIVE_TAIL_MS + 1000 : 0,
       openings: new Set(), abort: new AbortController(), openingError: null,
     });
   }
@@ -238,6 +305,7 @@ app.whenReady().then(async () => {
     notify(id);
     const error = (await stopLive(id)) ?? pausedErrors.get(id) ?? null;
     pausedErrors.delete(id);
+    voiceBook.delete(id);
     db.clampUtterances(id);
     if (db.hasUtterances(id)) db.setStatus(id, "done", error);
     else db.setStatus(id, "error", error ?? storedMessage("error.nothingTranscribed"));
@@ -403,7 +471,14 @@ app.whenReady().then(async () => {
     const entry = id === LIVE_TEST_ID ? undefined : live.get(id);
     return entry ? shifted(entry.captions.view(), entry.offsetSec) : null;
   });
-  ipcMain.on("liveAudio", (_e, id: number, track: Track, pcm: Int16Array, token?: number) => sessionFor(id, token)?.captions.audio(track, pcm));
+  ipcMain.on("liveAudio", (_e, id: number, track: Track, pcm: Int16Array, token?: number) => {
+    const entry = sessionFor(id, token);
+    entry?.captions.audio(track, pcm);
+    if (track === "system") entry?.voice.push(pcm);
+  });
+  // GPT-Live sends no PCM for captions, so the other side's audio comes separately for voices.
+  ipcMain.on("voiceAudio", (_e, id: number, pcm: Int16Array) => live.get(id)?.voice.push(pcm));
+  ipcMain.handle("nameVoice", (_e, meetingId: number, utteranceId: number, name: string) => nameVoice(meetingId, utteranceId, name));
   ipcMain.on("liveEvent", (_e, id: number, track: Track, event: LiveEvent, token?: number) => sessionFor(id, token)?.captions.onEvent(track, event));
   ipcMain.handle("setSessionOptions", (_e, id: number, o: { liveModel?: string | null; glossary?: string }) => {
     db.setSessionOptions(id, o);
@@ -411,10 +486,6 @@ app.whenReady().then(async () => {
     // A GPT-Live recording takes the new glossary at once (its instructions are fixed once it
     // starts, so the terms are appended as context); other models keep theirs until resumed.
     if (o.glossary !== undefined && live.get(id)?.rendererDriven) win?.webContents.send("live-glossary", id, glossaryFor(id));
-  });
-  ipcMain.handle("setSpeakerName", (_e, meetingId: number, key: string, name: string) => {
-    db.setSpeakerName(meetingId, key, name);
-    notify(meetingId);
   });
   ipcMain.handle("editUtterance", (_e, meetingId: number, id: number, text: string, joined?: number[]) => {
     if (!text.trim()) return;
