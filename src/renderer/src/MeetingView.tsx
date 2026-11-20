@@ -538,8 +538,13 @@ const Message = memo(function Message({
         setHasFocus(true);
         // Arrived here from the next or previous line with the arrow keys.
         const from = e.currentTarget.dataset.enter;
+        const edit = e.currentTarget.dataset.edit;
         delete e.currentTarget.dataset.enter;
-        if (from && words.length) setCursor(from === "end" ? words.at(-1)! : words[0]);
+        delete e.currentTarget.dataset.edit;
+        if (!from || !words.length) return;
+        const word = from === "end" ? words.at(-1)! : words[0];
+        setCursor(word);
+        if (edit) setEditing(word); // Tab from the last word of the line before
       }}
       onBlur={(e) => {
         if (e.currentTarget.contains(e.relatedTarget)) return;
@@ -633,7 +638,18 @@ const Message = memo(function Message({
                       setEditing(i);
                       if (u.draft) onDraft.hold(u);
                     }}
-                    {...(editing === i && editKeys((el) => saveWord(i, el.textContent ?? ""), cancel))}
+                    {...(editing === i && editKeys((el) => saveWord(i, el.textContent ?? ""), cancel, (el, back) => {
+                      // Tab: save and go on to the next word (Shift: the one before), across lines.
+                      const typed = el.textContent ?? "";
+                      saveWord(i, typed);
+                      const at = words.indexOf(i);
+                      const added = typed.trim().split(/(\s+)/).length - 1; // words the typing split off
+                      const next = back ? words[at - 1] : at + 1 < words.length ? i + added + 2 : undefined;
+                      if (next !== undefined) {
+                        setCursor(next);
+                        setEditing(next);
+                      } else if (row.current) moveLine(row.current, back ? -1 : 1, true);
+                    }))}
                   >
                     {p}
                     {hoverWord === i && editing !== i && (
@@ -690,11 +706,12 @@ const Message = memo(function Message({
 });
 
 /** Moves the word cursor onto the next (1) or previous (-1) line of the transcript. */
-function moveLine(from: HTMLElement, step: 1 | -1) {
+function moveLine(from: HTMLElement, step: 1 | -1, edit = false) {
   const lines = [...(from.closest(".transcript")?.querySelectorAll<HTMLElement>(".msg[tabindex]") ?? [])];
   const to = lines[lines.indexOf(from) + step];
   if (!to) return;
   to.dataset.enter = step === 1 ? "start" : "end";
+  if (edit) to.dataset.edit = "1";
   to.focus();
   to.scrollIntoView({ block: "nearest" });
 }
@@ -709,7 +726,7 @@ function startEditing(el: HTMLElement) {
 }
 
 /** Enter saves, Esc cancels, leaving the text saves; an Enter that ends a Korean syllable does not. */
-function editKeys(save: (el: HTMLElement) => void, cancel: (el: HTMLElement) => void) {
+function editKeys(save: (el: HTMLElement) => void, cancel: (el: HTMLElement) => void, tab?: (el: HTMLElement, back: boolean) => void) {
   let done = false;
   const finish = (el: HTMLElement, keep: boolean) => {
     if (done) return;
@@ -723,6 +740,10 @@ function editKeys(save: (el: HTMLElement) => void, cancel: (el: HTMLElement) => 
       if (e.nativeEvent.isComposing) return;
       if (e.key === "Enter" && !e.shiftKey) finish(e.currentTarget, true);
       else if (e.key === "Escape") finish(e.currentTarget, false);
+      else if (e.key === "Tab" && tab && !done) {
+        done = true;
+        tab(e.currentTarget, e.shiftKey);
+      }
       else return e.stopPropagation(); // arrow keys move the caret, not the word cursor
       e.preventDefault();
       e.stopPropagation();

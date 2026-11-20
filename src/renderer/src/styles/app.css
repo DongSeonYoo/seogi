@@ -599,6 +599,23 @@
 
 .msg__name {
   font-weight: var(--weight-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* A speaker's name is renamed in place: it shows it can be clicked like the words below. */
+.msg:not(.msg--draft) .msg__name {
+  cursor: text;
+}
+
+.msg:not(.msg--draft) .msg__name:hover {
+  background: var(--color-accent-soft);
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+
+.msg__name[contenteditable] {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  background: var(--color-raised);
 }
 
 .msg__name[data-speaker="mic"] {
