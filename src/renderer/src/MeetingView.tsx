@@ -1,6 +1,6 @@
 import { AlertCircle, BookmarkPlus, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { LiveView, MeetingDetail, ModelOption, Settings, Utterance } from "../../shared/types";
+import { GPT_LIVE_MODEL, type LiveView, type MeetingDetail, type ModelOption, type Settings, type Utterance } from "../../shared/types";
 import { clock, speakerName } from "../../shared/summary";
 import { joinSplitSentences } from "../../shared/transcript";
 import { duration, fullDate, groupUtterances, insertDrafts } from "./format";
@@ -283,6 +283,8 @@ export function MeetingView({
  * Before a session is recorded: its live caption model and glossary. Both start from Settings;
  * a glossary typed here replaces the shared one for this session (captions and summary).
  */
+const SESSION_MODEL = new RegExp(`^(${GPT_LIVE_MODEL}|(openai/)?gpt-live-transcribe)$`);
+
 function SessionOptions({ meeting: m }: { meeting: MeetingDetail }) {
   const t = useT();
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -291,7 +293,9 @@ function SessionOptions({ meeting: m }: { meeting: MeetingDetail }) {
     void window.api.getSettings().then(async (s) => {
       setSettings(s);
       const r = await window.api.listModels("live", s.live.provider);
-      setModels(r.ok ? r.models.filter((x) => x.available) : []);
+      // A session picks between the two that suit a meeting: GPT-Live (clean sentences, skips
+      // music) and GPT-Live Transcribe (every word heard). Settings still lists them all.
+      setModels(r.ok ? r.models.filter((x) => x.available && SESSION_MODEL.test(x.id)) : []);
     });
   }, []);
   if (!settings) return null;
