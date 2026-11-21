@@ -1,7 +1,7 @@
 import { AlertCircle, BookmarkPlus, BookPlus, Ellipsis, RotateCcw, X, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { GPT_LIVE_MODEL, type LiveView, type Track, type MeetingDetail, type ModelOption, type Settings, type SpeakerNames, type Utterance } from "../../shared/types";
-import { clock, speakerKey, speakerName } from "../../shared/summary";
+import { clock, shownNames, speakerKey, speakerName } from "../../shared/summary";
 import { joinSplitSentences } from "../../shared/transcript";
 import { duration, fullDate, groupUtterances, insertDrafts } from "./format";
 import { useI18n, useT } from "./i18n";
@@ -60,7 +60,7 @@ export function MeetingView({
 }) {
   const i18n = useI18n();
   const { t } = i18n;
-  const speakers = useMemo(() => [...new Set(m.utterances.map((u) => speakerName(u, t, m.speakerNames)))], [m.utterances, m.speakerNames, t]);
+  const speakers = useMemo(() => [...new Set(m.utterances.map((u) => speakerName(u, t, shownNames(m, t))))], [m, t]);
   // Pieces of one sentence are joined into one line on screen.
   const confirmed = useMemo(() => joinSplitSentences(m.utterances), [m.utterances]);
   const shownLines = confirmed.length;
@@ -509,7 +509,7 @@ function Transcript({
     <div className="transcript selectable" ref={scroller}>
       {groups.map((group) => (
         <MessageGroup key={lineKey(group[0])} group={group} player={player} focused={focused}
-          progress={player.playingId !== null && group.some((u) => u.id === player.playingId) ? progress : undefined} onStamp={onStamp} onEdit={edit} onTerm={addTerm} names={m.speakerNames} onRename={rename} onDraft={draftFix} />
+          progress={player.playingId !== null && group.some((u) => u.id === player.playingId) ? progress : undefined} onStamp={onStamp} onEdit={edit} onTerm={addTerm} names={shownNames(m, t)} onRename={rename} onDraft={draftFix} />
       ))}
       {!groups.length && !busy && (
         // While a file is being prepared the session is still "new", but it is no longer waiting for one.
@@ -704,7 +704,7 @@ const Message = memo(function Message({
                 (el) => {
                   setNaming(false);
                   const next = (el.textContent ?? "").trim();
-                  el.textContent = next || speakerName(u, t); // what React will render, so the two agree
+                  el.textContent = next || name; // what React will render, so the two agree
                   if (next !== given) onRename(u, next);
                 },
                 (el) => {
@@ -882,7 +882,7 @@ function PlaybackBar({ meeting: m, line, at, playing, failure, onToggle, onSeek,
           title={t("player.jump")}
           onClick={() => document.querySelector(`.msg[data-key="${line.id}"]`)?.scrollIntoView({ block: "center", behavior: scrollBehavior() })}
         >
-          <span className="playbar__who">{speakerName(line, t, m.speakerNames)}</span>
+          <span className="playbar__who">{speakerName(line, t, shownNames(m, t))}</span>
           <span className="playbar__text">{line.text}</span>
         </button>
       ) : (

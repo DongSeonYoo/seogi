@@ -17,6 +17,7 @@ const en = {
   "speaker.mic": "Me",
   "speaker.system": "Others",
   "speaker.n": "Speaker {n}",
+  "speaker.unsure": "Speaker ?",
 
   // Library
   "view.all": "All Meetings",
@@ -360,6 +361,7 @@ const ko: Record<MessageKey, string> = {
   "speaker.mic": "나",
   "speaker.system": "상대",
   "speaker.n": "화자 {n}",
+  "speaker.unsure": "화자 ?",
   "view.all": "모든 회의",
   "view.starred": "즐겨찾기",
   "view.folder": "폴더",

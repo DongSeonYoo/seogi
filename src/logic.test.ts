@@ -107,7 +107,8 @@ test("the voice ring keeps the last minutes by stretch time; a line joins a voic
   const voices = new Map([[1, [unit(1, 0, 0)]], [2, [unit(0, 1, 0)]]]);
   assert.equal(placeVoice(unit(0.9, 0.2, 0), 2, voices), 1);
   assert.equal(placeVoice(unit(0.4, 0.4, 0.82), 2, voices), null); // like neither enough, too short to tell
-  assert.equal(placeVoice(unit(0.4, 0.4, 0.82), 4, voices), null); // not unlike them enough to be someone new
+  assert.equal(placeVoice(unit(0.4, 0.4, 0.82), 4, voices), 1); // long: the closest voice
+  assert.equal(placeVoice(unit(0.45, 0.3, 0.84), 2, voices), 1); // short, but clearly closer to one
   assert.equal(placeVoice(unit(0.1, 0.1, 0.99), 4, voices), "new");
   assert.equal(placeVoice(unit(0.1, 0.1, 0.99), 4, new Map()), "new"); // the first voice heard
 });

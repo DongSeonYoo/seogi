@@ -10,6 +10,15 @@ export function speakerName(u: { track: Track; speaker: number | null }, t: Tran
 }
 
 /**
+ * A meeting's voice names as shown: once the other side's voices are told apart, a line of it
+ * left unsure says so rather than reading as one more person.
+ */
+export function shownNames(m: { utterances: { speaker: number | null }[]; speakerNames?: SpeakerNames }, t: Translate): SpeakerNames {
+  const names = m.speakerNames ?? {};
+  return !names.system && m.utterances.some((u) => u.speaker) ? { ...names, system: t("speaker.unsure") } : names;
+}
+
+/**
  * Summaries are kept as Markdown the user edits freely; the model's structured answer is turned
  * into this text once, when it arrives.
  */
@@ -81,13 +90,14 @@ export function meetingDocument(
   t: Translate,
   date: string,
 ): string {
+  const names = shownNames(m, t);
   const md = [
     `# ${m.title}`,
     date,
     // The summary's own headings sit one level below its section.
     ...(m.summary?.trim() ? [`## ${t("detail.summary")}`, m.summary.trim().replace(/^(#{1,5})(?=\s)/gm, "#$1")] : []),
     `## ${t("export.transcript")}`,
-    m.utterances.map((u) => `- \`${clock(u.startSec)}\` **${speakerName(u, t, m.speakerNames)}**: ${u.text}`).join("\n"),
+    m.utterances.map((u) => `- \`${clock(u.startSec)}\` **${speakerName(u, t, names)}**: ${u.text}`).join("\n"),
   ].join("\n\n");
   return `${format === "md" ? md : markdownToText(md)}\n`;
 }

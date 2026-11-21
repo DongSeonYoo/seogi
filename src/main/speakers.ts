@@ -124,16 +124,29 @@ export function nameBetween(lines: { id: number; startSec: number; speaker: numb
 const VOICE_NEW = 0.4;
 const VOICE_NEW_MIN_SEC = 3;
 
+/**
+ * Below VOICE_MATCH the closest voice was still right on every lab line (unsure.mjs) that was
+ * long, or that sounded clearly more like it than like the next voice.
+ */
+const CLOSEST_MIN_SEC = 4;
+const CLOSEST_LEAD = 0.1;
+
 /** The voice (speaker number) a line `sec` long with embedding `v` belongs to, "new", or null: unsure. */
 export function placeVoice(v: Float32Array, sec: number, voices: Map<number, Float32Array[]>): number | "new" | null {
-  let best: number | null = null;
-  let score = -1;
-  for (const [speaker, samples] of voices)
-    for (const s of samples) {
-      let dot = 0;
-      for (let i = 0; i < v.length; i++) dot += v[i] * s[i];
-      if (dot > score) [best, score] = [speaker, dot];
-    }
-  if (score >= VOICE_MATCH) return best;
-  return sec >= VOICE_NEW_MIN_SEC && score < VOICE_NEW ? "new" : null;
+  const scores = [...voices]
+    .map(([speaker, samples]) => {
+      let score = -1;
+      for (const s of samples) {
+        let dot = 0;
+        for (let i = 0; i < v.length; i++) dot += v[i] * s[i];
+        score = Math.max(score, dot);
+      }
+      return [speaker, score] as const;
+    })
+    .sort((a, b) => b[1] - a[1]);
+  const [best, next] = scores;
+  if (best && best[1] >= VOICE_MATCH) return best[0];
+  if (sec >= VOICE_NEW_MIN_SEC && (!best || best[1] < VOICE_NEW)) return "new";
+  if (best && (sec >= CLOSEST_MIN_SEC || best[1] - (next?.[1] ?? -1) >= CLOSEST_LEAD)) return best[0];
+  return null;
 }
