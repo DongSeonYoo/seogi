@@ -28,7 +28,7 @@ import { History, perform } from "./library";
 import { diarize } from "./diarize";
 import { cleanModelDownloads, ensureModels } from "./modelFiles";
 import { embedVoice } from "./voices";
-import { assignSpeakers, AudioRing, matchVoice, speakerTurns } from "./speakers";
+import { assignSpeakers, AudioRing, matchVoice, nameBetween, speakerTurns } from "./speakers";
 import { LiveCaptions, openLiveStream } from "./live";
 import { appMenu } from "./menu";
 import { listModels } from "./models";
@@ -108,6 +108,9 @@ app.whenReady().then(async () => {
         return;
       }
     }
+    const others = db.getMeeting(id)?.utterances.filter((u) => u.track === "system") ?? [];
+    for (const [line, speaker] of nameBetween(others.map((u) => ({ ...u, speaker: named.get(u.id) ?? u.speaker }))))
+      named.set(line, speaker);
     if (!named.size) return;
     db.setSpeakers(id, named);
     notify(id);

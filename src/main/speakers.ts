@@ -94,6 +94,28 @@ export class AudioRing {
   }
 }
 
+/**
+ * A short line too brief to name by its sound, said between two lines of one named voice, is
+ * almost always that voice (14 of 15 on the lab meeting, seogi-lab/diarize/sandwich.mjs). Longer
+ * unnamed lines there were mostly someone nobody named, so they are left.
+ */
+const BETWEEN_MAX_SEC = 3;
+/** Lone acknowledgements are as often a listener's as the speaker's, and sound cannot tell. */
+const BACKCHANNEL =
+  /^(?:(?:네|예|응|어|음|아|오|와|그쵸|그렇죠|맞아요|맞아|맞습니다|그래요|그래|좋아요|알겠습니다|yeah|yes|yep|yup|right|okay|ok|uh-huh|mm+|hmm+|sure|exactly|true|wow|oh|i see|got it)[\s.,!?…~]*)+$/i;
+export const isBackchannel = (text: string) => BACKCHANNEL.test(text.trim());
+
+/** Names for unnamed short lines between two lines of the same voice; `lines` in time order. */
+export function nameBetween(lines: { id: number; startSec: number; speaker: number | null; text: string }[]) {
+  const named = new Map<number, number>();
+  for (let i = 1; i < lines.length - 1; i++) {
+    const [before, line, after] = [lines[i - 1], lines[i], lines[i + 1]];
+    if (line.speaker || !before.speaker || before.speaker !== after.speaker) continue;
+    if (after.startSec - line.startSec <= BETWEEN_MAX_SEC && !isBackchannel(line.text)) named.set(line.id, before.speaker);
+  }
+  return named;
+}
+
 /** The named voice (speaker number) `v` sounds most like, if it is alike enough. */
 export function matchVoice(v: Float32Array, voices: Map<number, Float32Array[]>): number | null {
   let best: number | null = null;
