@@ -379,6 +379,18 @@ function SessionOptions({ meeting: m, running }: { meeting: MeetingDetail; runni
         placeholder={settings.glossary.trim() ? t("session.glossaryShared", { glossary: settings.glossary }) : t("session.glossaryEmpty")}
         onCommit={(glossary) => void window.api.setSessionOptions(m.id, { glossary })}
       />
+      <label className="field-label" htmlFor={`translate-${m.id}`}>{t("session.translateShort")}</label>
+      <Select
+        id={`translate-${m.id}`}
+        aria-label={t("session.translate")}
+        value={m.translateTo ?? ""}
+        onChange={(e) => void window.api.setSessionOptions(m.id, { translateTo: e.target.value || null })}
+      >
+        <option value="">{t("session.translateOff")}</option>
+        {/* Each language in its own name. */}
+        <option value="ko" lang="ko">한국어</option>
+        <option value="en" lang="en">English</option>
+      </Select>
     </div>
   );
 }
@@ -775,6 +787,7 @@ const Message = memo(function Message({
                 ) : null,
               )}
         </p>
+        {u.translation && <p className="msg__translation">{u.translation}</p>}
       </div>
       {!u.draft && (hovered || hasFocus) && <div className="msg__actions">
         {/* A narrow transcript folds the actions into one menu (see .transcript's container query). */}

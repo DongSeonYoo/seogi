@@ -32,7 +32,8 @@ export function joinSplitSentences(utterances: Utterance[]): Utterance[] {
       !ENDS_SENTENCE.test(prev.text.trim()) &&
       u.startSec - prev.startSec < MAX_JOIN_GAP_SEC
     ) {
-      out[out.length - 1] = { ...prev, text: `${prev.text.trim()} ${u.text.trim()}`, joined: [...(prev.joined ?? []), u.id] };
+      const translation = [prev.translation, u.translation].filter(Boolean).join(" ") || undefined;
+      out[out.length - 1] = { ...prev, text: `${prev.text.trim()} ${u.text.trim()}`, joined: [...(prev.joined ?? []), u.id], ...(translation && { translation }) };
     } else {
       out.push(u);
     }

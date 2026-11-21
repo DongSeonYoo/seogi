@@ -43,6 +43,15 @@ export function afterSentences(text: string, count: number): string {
   return count ? text.slice(ends[count - 1] ?? text.length).trim() : text;
 }
 
+/** The script each translation language is written in. */
+const SCRIPT: Record<string, RegExp> = { ko: /\p{Script=Hangul}/u, en: /\p{Script=Latin}/u };
+/** Whether a line is already in `lang`: most of its letters are in that language's script. */
+export function inLanguage(text: string, lang: string): boolean {
+  const letters = text.match(/\p{L}/gu) ?? [];
+  const script = SCRIPT[lang];
+  return !letters.length || (!!script && letters.filter((c) => script.test(c)).length * 2 >= letters.length);
+}
+
 /**
  * A caption as it is kept: sound tags the live models write ("[sigh ]", "[chuckle]") are dropped,
  * and a line left with no letter or digit (a lone "." a model starts a turn with) is no line.

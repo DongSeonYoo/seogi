@@ -96,6 +96,30 @@ export async function summarize(
   }, names);
 }
 
+/** Translation is per line as lines settle, so the quickest model and tier: about 1.5 s a line on qgrid. */
+const TRANSLATE_MODEL = "openai/gpt-6-luna";
+const TranslationSchema = z.object({ lines: z.array(z.string()) });
+
+/** `lines` in `lang`, in order; `before` are the lines just before them, for context only. */
+export async function translateLines(store: SettingsStore, lines: string[], before: string[], lang: string, glossary: string): Promise<string[]> {
+  const s = store.get();
+  const qgridModel = s.summary.provider === "qgrid";
+  const { output } = await generateText({
+    model: summaryModel(store, s, qgridModel ? TRANSLATE_MODEL : s.summary.model),
+    ...(qgridModel && { providerOptions: { qgrid: { effort: "none", serviceTier: "fast" } } }),
+    output: Output.object({ schema: TranslationSchema }),
+    system: [
+      `Translate each line of a live meeting transcript into natural spoken ${LANGUAGE_NAMES[lang] ?? lang}.`,
+      "Return exactly one translation per line, in order. Keep names and product terms as they are.",
+      "Use one polite, neutral speech level for every line, whoever speaks.",
+      glossary.trim() && `Glossary: ${glossary}`,
+    ].filter(Boolean).join("\n"),
+    prompt: JSON.stringify({ context: before, lines }),
+    maxRetries: 1,
+  });
+  return output.lines;
+}
+
 /** One cheap real request through the configured provider, so a bad key or model shows up now. */
 export async function testConnection(store: SettingsStore, role: ConnectionRole): Promise<ConnectionResult> {
   const started = Date.now();

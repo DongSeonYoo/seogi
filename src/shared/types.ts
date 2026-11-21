@@ -82,6 +82,8 @@ export type Utterance = {
   id: number; track: Track; startSec: number; text: string; speaker: number | null;
   /** Shown as one line (joinSplitSentences): the pieces after this one, which an edit replaces. */
   joined?: number[];
+  /** The line in the meeting's translation language, while translation is on. */
+  translation?: string;
 };
 
 export type MeetingDetail = MeetingRow & {
@@ -92,6 +94,8 @@ export type MeetingDetail = MeetingRow & {
   liveModel: string | null;
   /** This session's glossary; empty uses the shared one in Settings. */
   glossary: string;
+  /** The language lines in other languages are translated into ("ko", "en"); null: off. */
+  translateTo: string | null;
   /** Names given to this meeting's voices, by speakerKey ("mic", "system", "1", …). */
   speakerNames: SpeakerNames;
   utterances: Utterance[];
@@ -219,7 +223,7 @@ export type Api = {
   /** The glossary of a meeting being recorded with GPT-Live changed. */
   onLiveGlossary(listener: (id: number, glossary: string) => void): () => void;
   /** A session's own live model (null: Settings) or glossary (empty: the shared one). */
-  setSessionOptions(id: number, options: { liveModel?: string | null; glossary?: string }): Promise<void>;
+  setSessionOptions(id: number, options: { liveModel?: string | null; glossary?: string; translateTo?: string | null }): Promise<void>;
   /**
    * Names the voice of a line. While the meeting records, an other-side line is that voice alone
    * and later lines that sound like it take the name; otherwise the whole voice is renamed ("" goes

@@ -28,14 +28,14 @@ import { History, perform } from "./library";
 import { diarize } from "./diarize";
 import { cleanModelDownloads, ensureModels } from "./modelFiles";
 import { embedVoice } from "./voices";
-import { assignSpeakers, AudioRing, matchVoice, nameBetween, speakerTurns } from "./speakers";
+import { assignSpeakers, AudioRing, nameBetween, placeVoice, speakerTurns } from "./speakers";
 import { LiveCaptions, openLiveStream } from "./live";
 import { appMenu } from "./menu";
 import { listModels } from "./models";
 import { openSettings } from "./settings";
 import { CHUNK_FILE, ChunkIndex, playbackResponse } from "./playback";
 import { SAMPLE_RATE, toFloat32, toWav } from "./wav";
-import { cleanCaption } from "../shared/text";
+import { cleanCaption, inLanguage } from "../shared/text";
 
 // Pinned to the original name so meetings and keys survive any change to the display name.
 // Unpackaged runs (pnpm dev) get their own folder so they never touch the installed app's data.
@@ -44,6 +44,8 @@ app.setPath("userData", dataDir);
 const audioDir = path.join(dataDir, "meetings");
 const chunkIndex = new ChunkIndex();
 const modelsDir = path.join(dataDir, "models");
+/** Lines per translation request: one or two while recording; a finished meeting goes in these steps. */
+const TRANSLATE_BATCH = 20;
 let aiModule: Promise<typeof import("./ai")> | undefined;
 const loadAI = () => aiModule ??= import("./ai");
 let win: BrowserWindow | null = null;
@@ -79,7 +81,9 @@ app.whenReady().then(async () => {
     });
     const rows = db.addUtterances(id, track, segments);
     if (rows.length) win?.webContents.send("utterances-added", id, rows);
-    if (track === "system" && voiceBook.get(id)?.size)
+    if (rows.length) translateMeeting(id);
+    // The other side's voices are told apart as they speak (see placeVoices).
+    if (track === "system" && live.has(id))
       void nameVoices(id, rows.map((r, i) => ({ id: r.id, startSec: r.startSec, endSec: segments[i]?.endSec })));
   }
 
@@ -93,16 +97,32 @@ app.whenReady().then(async () => {
     const audio = entry.voice.slice(startSec - entry.offsetSec, endSec - entry.offsetSec);
     return audio && embedVoice(audio, (await speakerModels()).embedding);
   }
-  async function nameVoices(id: number, lines: { id: number; startSec: number; endSec?: number }[]) {
+  /** One naming pass at a time per meeting, so two lines of a new voice cannot each start one. */
+  const naming = new Map<number, Promise<void>>();
+  function nameVoices(id: number, lines: { id: number; startSec: number; endSec?: number }[]) {
+    const run = (naming.get(id) ?? Promise.resolve()).then(() => placeVoices(id, lines));
+    naming.set(id, run);
+    return run;
+  }
+  async function placeVoices(id: number, lines: { id: number; startSec: number; endSec?: number }[]) {
     const named = new Map<number, number>();
     for (const line of lines) {
       const entry = live.get(id);
-      const book = voiceBook.get(id);
-      if (!entry || !book?.size) return;
+      if (!entry) return;
+      const book = voiceBook.get(id) ?? new Map<number, Float32Array[]>();
+      voiceBook.set(id, book);
       try {
         const v = await voiceOf(entry, line.startSec, line.endSec ?? line.startSec + 6);
-        const speaker = v && matchVoice(v, book);
-        if (speaker) named.set(line.id, speaker);
+        if (!v) continue;
+        // A line of unknown length can join a voice but not start one.
+        const place = placeVoice(v, line.endSec === undefined ? 0 : line.endSec - line.startSec, book);
+        if (place === "new") {
+          const m = db.getMeeting(id);
+          const used = [...(m?.utterances.map((u) => u.speaker ?? 0) ?? []), ...Object.keys(m?.speakerNames ?? {}).map(Number).filter(Boolean), ...book.keys()];
+          const speaker = Math.max(0, ...used) + 1;
+          book.set(speaker, [v]);
+          named.set(line.id, speaker);
+        } else if (place) named.set(line.id, place);
       } catch (e) {
         console.warn("[seogi] voice naming failed:", e);
         return;
@@ -115,11 +135,45 @@ app.whenReady().then(async () => {
     db.setSpeakers(id, named);
     notify(id);
   }
+  /**
+   * Lines not yet in the meeting's translation language get one as soon as they are stored: each
+   * batch is its own request, so a new line does not wait for the one before. A failed request
+   * leaves its lines for the next run.
+   */
+  const translating = new Set<number>(); // line ids with a request out
+  function translateMeeting(id: number) {
+    const m = db.getMeeting(id);
+    const lang = m?.translateTo;
+    if (!m || !lang) return;
+    const todo = m.utterances.filter((u) => !u.translation && !translating.has(u.id) && !inLanguage(u.text, lang));
+    for (let i = 0; i < todo.length; i += TRANSLATE_BATCH) {
+      const part = todo.slice(i, i + TRANSLATE_BATCH);
+      const before = m.utterances.filter((u) => u.startSec < part[0].startSec).slice(-3).map((u) => u.text);
+      for (const u of part) translating.add(u.id);
+      void loadAI()
+        .then(({ translateLines }) => translateLines(settings, part.map((u) => u.text), before, lang, glossaryFor(id)))
+        .then((out) => {
+          const done = part.flatMap((u, k) => (out[k]?.trim() ? [{ ...u, translation: out[k].trim() }] : []));
+          const kept = db.setTranslations(id, done);
+          notify(id);
+          return kept < done.length; // a line was corrected while it was being translated
+        })
+        .catch((e) => console.warn("[seogi] translation failed:", e))
+        .then((again) => {
+          part.forEach((u) => translating.delete(u.id));
+          if (again) translateMeeting(id);
+        });
+    }
+  }
+
   /** A hand correction of a stored line, undoable (⌘Z) like library changes. */
   function editLine(meetingId: number, id: number, text: string, joined: number[] = []) {
     const before = db.linesById(meetingId, [id, ...joined]);
     if (!before.length) return;
-    const redo = () => db.editUtterance(meetingId, id, text, joined);
+    const redo = () => {
+      db.editUtterance(meetingId, id, text, joined);
+      translateMeeting(meetingId); // the corrected line's translation is redone
+    };
     redo();
     history.push({ label: (t) => t("undo.editLine"), redo, undo: () => db.restoreLines(meetingId, before) });
     rebuildMenu();
@@ -142,10 +196,19 @@ app.whenReady().then(async () => {
       rebuildMenu();
       return notify(meetingId);
     }
-    // During it, this line is that voice: an existing name keeps its number, a new one takes the next.
+    // During it, a name given to a voice told apart names all of it; a name another voice has
+    // already joins the two (one person heard as two); a line of no voice yet starts one.
     const known = Object.entries(m.speakerNames).find(([key, given]) => given === name && /^\d+$/.test(key));
     const used = [...m.utterances.map((x) => x.speaker ?? 0), ...Object.keys(m.speakerNames).map(Number).filter(Boolean)];
-    const speaker = known ? Number(known[0]) : Math.max(0, ...used) + 1;
+    const speaker = known ? Number(known[0]) : u.speaker ?? Math.max(0, ...used, ...(voiceBook.get(meetingId)?.keys() ?? [])) + 1;
+    const book = voiceBook.get(meetingId) ?? new Map<number, Float32Array[]>();
+    voiceBook.set(meetingId, book);
+    if (u.speaker && u.speaker !== speaker) {
+      db.setSpeakers(meetingId, new Map(m.utterances.filter((x) => x.speaker === u.speaker).map((x) => [x.id, speaker])));
+      db.setSpeakerName(meetingId, String(u.speaker), "");
+      book.set(speaker, [...(book.get(speaker) ?? []), ...(book.get(u.speaker) ?? [])]);
+      book.delete(u.speaker);
+    }
     db.setSpeakerName(meetingId, String(speaker), name);
     db.setSpeakers(meetingId, new Map([[u.id, speaker]]));
     notify(meetingId);
@@ -154,8 +217,6 @@ app.whenReady().then(async () => {
     try {
       const v = await voiceOf(entry, u.startSec, Math.min(next, u.startSec + 8));
       if (!v) return;
-      const book = voiceBook.get(meetingId) ?? new Map<number, Float32Array[]>();
-      voiceBook.set(meetingId, book);
       book.set(speaker, [...(book.get(speaker) ?? []), v]);
     } catch (e) {
       return console.warn("[seogi] voice enrolment failed:", e);
@@ -331,6 +392,7 @@ app.whenReady().then(async () => {
     const error = (await stopLive(id)) ?? pausedErrors.get(id) ?? null;
     pausedErrors.delete(id);
     voiceBook.delete(id);
+    naming.delete(id);
     db.clampUtterances(id);
     if (db.hasUtterances(id)) db.setStatus(id, "done", error);
     else db.setStatus(id, "error", error ?? storedMessage("error.nothingTranscribed"));
@@ -515,9 +577,10 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("nameVoice", (_e, meetingId: number, utteranceId: number, name: string) => nameVoice(meetingId, utteranceId, name));
   ipcMain.on("liveEvent", (_e, id: number, track: Track, event: LiveEvent, token?: number) => sessionFor(id, token)?.captions.onEvent(track, event));
-  ipcMain.handle("setSessionOptions", (_e, id: number, o: { liveModel?: string | null; glossary?: string }) => {
+  ipcMain.handle("setSessionOptions", (_e, id: number, o: { liveModel?: string | null; glossary?: string; translateTo?: string | null }) => {
     db.setSessionOptions(id, o);
     notify(id);
+    if (o.translateTo) translateMeeting(id);
     // A GPT-Live recording takes the new glossary at once (its instructions are fixed once it
     // starts, so the terms are appended as context); other models keep theirs until resumed.
     if (o.glossary !== undefined && live.get(id)?.rendererDriven) win?.webContents.send("live-glossary", id, glossaryFor(id));

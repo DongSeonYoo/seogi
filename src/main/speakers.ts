@@ -116,15 +116,24 @@ export function nameBetween(lines: { id: number; startSec: number; speaker: numb
   return named;
 }
 
-/** The named voice (speaker number) `v` sounds most like, if it is alike enough. */
-export function matchVoice(v: Float32Array, voices: Map<number, Float32Array[]>): number | null {
+/**
+ * A line like none of the voices so far (all below this), and long enough to tell, is a new voice:
+ * the other side is told apart live before anyone is named. On the lab meeting (cluster.mjs) this
+ * found 2 of 2 and 3 of 3 voices, none split, with 99.7-100% of named lines right.
+ */
+const VOICE_NEW = 0.4;
+const VOICE_NEW_MIN_SEC = 3;
+
+/** The voice (speaker number) a line `sec` long with embedding `v` belongs to, "new", or null: unsure. */
+export function placeVoice(v: Float32Array, sec: number, voices: Map<number, Float32Array[]>): number | "new" | null {
   let best: number | null = null;
-  let score = VOICE_MATCH;
+  let score = -1;
   for (const [speaker, samples] of voices)
     for (const s of samples) {
       let dot = 0;
       for (let i = 0; i < v.length; i++) dot += v[i] * s[i];
-      if (dot >= score) [best, score] = [speaker, dot];
+      if (dot > score) [best, score] = [speaker, dot];
     }
-  return best;
+  if (score >= VOICE_MATCH) return best;
+  return sec >= VOICE_NEW_MIN_SEC && score < VOICE_NEW ? "new" : null;
 }

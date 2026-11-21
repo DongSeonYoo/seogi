@@ -700,6 +700,16 @@
   color: var(--color-ink-3);
 }
 
+/* The line in the meeting's translation language, under it and quieter. */
+.msg__translation {
+  margin-top: 2px;
+  font-size: var(--text-read);
+  line-height: var(--leading-read);
+  color: var(--color-ink-2);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
 /* Discord's hover toolbar, pinned to the row's top-right. */
 .msg__actions {
   position: absolute;

@@ -92,8 +92,8 @@ test("a named voice is named on every line, in the export too, and an empty name
   assert.deepEqual(db.getMeeting(id)!.speakerNames, {});
 });
 
-test("the voice ring keeps the last minutes by stretch time, and a voice takes a name only when alike enough", async () => {
-  const { AudioRing, matchVoice } = await import("./main/speakers.ts");
+test("the voice ring keeps the last minutes by stretch time; a line joins a voice when alike enough and starts one when long and unlike all", async () => {
+  const { AudioRing, placeVoice } = await import("./main/speakers.ts");
   const ring = new AudioRing();
   const sec = (n: number, v: number) => new Int16Array(16000 * n).fill(v);
   ring.push(sec(200, 100));
@@ -105,8 +105,11 @@ test("the voice ring keeps the last minutes by stretch time, and a voice takes a
   assert.ok(Math.abs(s[0] - 200 / 32768) < 1e-9);
   const unit = (...v: number[]) => Float32Array.from(v, (x) => x / Math.hypot(...v));
   const voices = new Map([[1, [unit(1, 0, 0)]], [2, [unit(0, 1, 0)]]]);
-  assert.equal(matchVoice(unit(0.9, 0.2, 0), voices), 1);
-  assert.equal(matchVoice(unit(0.4, 0.4, 0.82), voices), null); // like neither enough
+  assert.equal(placeVoice(unit(0.9, 0.2, 0), 2, voices), 1);
+  assert.equal(placeVoice(unit(0.4, 0.4, 0.82), 2, voices), null); // like neither enough, too short to tell
+  assert.equal(placeVoice(unit(0.4, 0.4, 0.82), 4, voices), null); // not unlike them enough to be someone new
+  assert.equal(placeVoice(unit(0.1, 0.1, 0.99), 4, voices), "new");
+  assert.equal(placeVoice(unit(0.1, 0.1, 0.99), 4, new Map()), "new"); // the first voice heard
 });
 
 test("a short unnamed line between two lines of one voice takes it, unless it is a lone acknowledgement", async () => {
@@ -962,4 +965,13 @@ test("caption times past a recording's end are pulled back inside it", async () 
   db.clampUtterances(id);
   const times = db.getMeeting(id)!.utterances.map((u) => Math.round(u.startSec * 1000) / 1000);
   assert.deepEqual(times, [2, 7.005]);
+});
+
+test("a line is translated only when most of its letters are in another language's script", async () => {
+  const { inLanguage } = await import("./shared/text.ts");
+  assert.equal(inLanguage("그래서 API 문서를 봤어요.", "ko"), true);
+  assert.equal(inLanguage("I need a sales website.", "ko"), false);
+  assert.equal(inLanguage("I need a sales website.", "en"), true);
+  assert.equal(inLanguage("음 그 PR 리뷰", "en"), false);
+  assert.equal(inLanguage("2026.", "ko"), true); // nothing to translate
 });

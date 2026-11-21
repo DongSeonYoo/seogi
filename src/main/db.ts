@@ -81,6 +81,9 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
   // Speaker 1, 2, … within a track, when diarization told voices apart; null otherwise.
   const utteranceColumns = db.prepare("PRAGMA table_info(utterances)").all().map((c) => c.name);
   if (!utteranceColumns.includes("speaker")) db.exec("ALTER TABLE utterances ADD COLUMN speaker INTEGER");
+  // The line in the meeting's translate_to language (kept when translation is turned off).
+  if (!utteranceColumns.includes("translation")) db.exec("ALTER TABLE utterances ADD COLUMN translation TEXT");
+  addColumn("translate_to", "translate_to TEXT");
   // A crash mid-recording leaves rows that no session will ever finish.
   db.prepare("UPDATE meetings SET status = 'error', error = ? WHERE status IN ('recording', 'processing')").run(
     appQuitMessage,
@@ -136,8 +139,14 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       };
     },
 
-    setSessionOptions(id: number, o: { liveModel?: string | null; glossary?: string }) {
+    setSessionOptions(id: number, o: { liveModel?: string | null; glossary?: string; translateTo?: string | null }) {
       if (o.liveModel !== undefined) db.prepare("UPDATE meetings SET live_model = ? WHERE id = ?").run(o.liveModel, id);
+      if (o.translateTo) {
+        // Translations into another language are no longer wanted.
+        const was = db.prepare("SELECT translate_to FROM meetings WHERE id = ?").get(id)?.translate_to;
+        if (was && was !== o.translateTo) db.prepare("UPDATE utterances SET translation = NULL WHERE meeting_id = ?").run(id);
+      }
+      if (o.translateTo !== undefined) db.prepare("UPDATE meetings SET translate_to = ? WHERE id = ?").run(o.translateTo, id);
       if (o.glossary !== undefined)
         db.prepare("UPDATE meetings SET glossary = ? WHERE id = ?").run(o.glossary.trim() || null, id);
     },
@@ -297,18 +306,19 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
     },
     /** Lines as stored, for putting them back after an edit is undone. */
     linesById(meetingId: number, ids: number[]): Utterance[] {
-      const get = db.prepare("SELECT id, track, start_sec, text, speaker FROM utterances WHERE id = ? AND meeting_id = ?");
+      const get = db.prepare("SELECT id, track, start_sec, text, speaker, translation FROM utterances WHERE id = ? AND meeting_id = ?");
       return ids.flatMap((id) => {
         const r = get.get(id, meetingId);
-        return r ? [{ id: Number(r.id), track: r.track as Track, startSec: Number(r.start_sec), text: String(r.text), speaker: r.speaker === null ? null : Number(r.speaker) }] : [];
+        return r ? [{ id: Number(r.id), track: r.track as Track, startSec: Number(r.start_sec), text: String(r.text), speaker: r.speaker === null ? null : Number(r.speaker),
+          ...(r.translation !== null && { translation: String(r.translation) }) }] : [];
       });
     },
     /** Puts lines back exactly as they were, ids included. */
     restoreLines(meetingId: number, lines: Utterance[]) {
-      const put = db.prepare("INSERT OR REPLACE INTO utterances (id, meeting_id, track, start_sec, text, speaker) VALUES (?, ?, ?, ?, ?, ?)");
+      const put = db.prepare("INSERT OR REPLACE INTO utterances (id, meeting_id, track, start_sec, text, speaker, translation) VALUES (?, ?, ?, ?, ?, ?, ?)");
       db.exec("BEGIN");
       try {
-        for (const u of lines) put.run(u.id, meetingId, u.track, u.startSec, u.text, u.speaker);
+        for (const u of lines) put.run(u.id, meetingId, u.track, u.startSec, u.text, u.speaker, u.translation ?? null);
         db.exec("COMMIT");
       } catch (e) {
         db.exec("ROLLBACK");
@@ -320,13 +330,21 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       const remove = db.prepare("DELETE FROM utterances WHERE id = ? AND meeting_id = ?");
       db.exec("BEGIN");
       try {
-        db.prepare("UPDATE utterances SET text = ? WHERE id = ? AND meeting_id = ?").run(text, id, meetingId);
+        db.prepare("UPDATE utterances SET text = ?, translation = NULL WHERE id = ? AND meeting_id = ?").run(text, id, meetingId);
         for (const piece of joined) remove.run(piece, meetingId);
         db.exec("COMMIT");
       } catch (e) {
         db.exec("ROLLBACK");
         throw e;
       }
+    },
+    /**
+     * Translations of a meeting's lines, each kept only if its line still reads `text` (it may
+     * have been corrected meanwhile). How many were kept.
+     */
+    setTranslations(meetingId: number, lines: { id: number; text: string; translation: string }[]) {
+      const update = db.prepare("UPDATE utterances SET translation = ? WHERE id = ? AND meeting_id = ? AND text = ?");
+      return lines.reduce((n, u) => n + Number(update.run(u.translation, u.id, meetingId, u.text).changes), 0);
     },
     /** Speaker numbers for a meeting's lines, written together. */
     setSpeakers(meetingId: number, speakers: Map<number, number>) {
@@ -345,7 +363,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       if (!r) return null;
       const utterances = db
         .prepare(
-          "SELECT id, track, start_sec, text, speaker FROM utterances WHERE meeting_id = ? ORDER BY start_sec, id",
+          "SELECT id, track, start_sec, text, speaker, translation FROM utterances WHERE meeting_id = ? ORDER BY start_sec, id",
         )
         .all(id)
         .map(
@@ -355,6 +373,8 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
             startSec: Number(u.start_sec),
             text: String(u.text),
             speaker: u.speaker === null ? null : Number(u.speaker),
+            // Shown only while translation is on.
+            ...(r.translate_to && u.translation !== null && { translation: String(u.translation) }),
           }),
         );
       return {
@@ -363,6 +383,7 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
         error: r.error ? String(r.error) : null,
         liveModel: r.live_model ? String(r.live_model) : null,
         glossary: r.glossary ? String(r.glossary) : "",
+        translateTo: r.translate_to ? String(r.translate_to) : null,
         speakerNames: r.speaker_names ? (JSON.parse(String(r.speaker_names)) as SpeakerNames) : {},
         utterances,
       };
