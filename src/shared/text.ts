@@ -27,6 +27,22 @@ export function finishedSentences(text: string, at: (i: number) => number) {
   return { lines, rest, restStartSec: at(text.length - text.slice(from).trimStart().length) };
 }
 
+/** Where the last sentence that another sentence has already followed ends (0: none yet). */
+export function settledEnd(text: string): number {
+  let to = 0;
+  for (const m of text.matchAll(new RegExp(SENTENCE_END.source, "g"))) {
+    const end = m.index + m[0].length;
+    if (text.slice(end).trim()) to = end;
+  }
+  return to;
+}
+
+/** `text` without its first `count` sentences. */
+export function afterSentences(text: string, count: number): string {
+  const ends = [...text.matchAll(new RegExp(SENTENCE_END.source, "g"))].map((m) => m.index + m[0].length);
+  return count ? text.slice(ends[count - 1] ?? text.length).trim() : text;
+}
+
 /**
  * A caption as it is kept: sound tags the live models write ("[sigh ]", "[chuckle]") are dropped,
  * and a line left with no letter or digit (a lone "." a model starts a turn with) is no line.

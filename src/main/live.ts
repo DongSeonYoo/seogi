@@ -1,5 +1,5 @@
 import type { Translate } from "../shared/i18n";
-import { appendDelta, finishedSentences } from "../shared/text.ts";
+import { afterSentences, appendDelta, finishedSentences, settledEnd } from "../shared/text.ts";
 import type { LiveEvent, LiveLine, LiveView, Track } from "../shared/types";
 
 export type { LiveEvent };
@@ -370,6 +370,13 @@ export class LiveCaptions {
   private readonly held = new Map<string, (Segment & { endSec: number }) | null>();
   /** Corrections made to lines still being spoken, applied again to their finished text. */
   private readonly fixes = new Map<string, [string, string][]>();
+  /**
+   * Sentences of a line still being spoken go as soon as the next sentence starts (settle), not
+   * when the speaker pauses: how many went and up to when, so the finished text skips them.
+   */
+  private readonly settled = new Map<string, { count: number; untilSec: number }>();
+  /** How long after its speech a line's first words arrive, per track: settled times are pulled back by it. */
+  private readonly lag = new Map<Track, number>();
   /** Finished lines, kept in the view only when nothing else shows them (the settings test). */
   private readonly finished: LiveLine[] = [];
   private readonly streams = new Map<Track, LiveStream>();
@@ -464,18 +471,50 @@ export class LiveCaptions {
       this.error = null; // captions are flowing again
       const key = `${track}:${e.id}`;
       const d = this.drafts.get(key);
-      if (e.type === "delta")
-        this.drafts.set(key, { key, track, startSec: d?.startSec ?? e.atSec, text: appendDelta(d?.text ?? "", e.text) });
-      else if (this.held.has(key)) {
+      if (e.type === "delta") {
+        const draft = { key, track, startSec: d?.startSec ?? e.atSec, text: appendDelta(d?.text ?? "", e.text) };
+        this.drafts.set(key, draft);
+        if (this.bySentence && !this.held.has(key)) this.settle(track, draft, e.atSec);
+      } else {
+        if (d && !this.settled.has(key)) this.lag.set(track, Math.min(3, Math.max(0, d.startSec - e.startSec)));
+        const done = this.unsettled(key, { startSec: e.startSec, endSec: e.endSec, text: e.text });
         // Being corrected: it stays on screen, finished, until the correction is saved or dropped.
         // The screen keeps the text being edited; the finished text waits with the hold.
-        this.held.set(key, { startSec: e.startSec, endSec: e.endSec, text: e.text });
-      } else {
-        this.drafts.delete(key);
-        this.finish(track, key, { startSec: e.startSec, endSec: e.endSec, text: e.text });
+        if (this.held.has(key)) this.held.set(key, done);
+        else {
+          this.drafts.delete(key);
+          this.finish(track, key, done);
+        }
       }
     }
     this.changed();
+  }
+
+  /** A draft's sentences that the next one has followed are final: they become lines now. */
+  private settle(track: Track, draft: LiveLine, atSec: number) {
+    const cut = settledEnd(draft.text);
+    if (!cut) return;
+    const before = this.settled.get(draft.key);
+    const lag = this.lag.get(track) ?? 0;
+    const startSec = before?.untilSec ?? draft.startSec - lag;
+    const endSec = atSec - lag;
+    // Time stands still when the words come after the turn (OpenAI's own stream): its end settles them.
+    if (endSec <= startSec) return;
+    const text = draft.text.slice(0, cut).trim();
+    const count = finishedSentences(text, () => 0).lines.length;
+    this.onPiece(track, `${draft.key}:s${before?.count ?? 0}`, { startSec, endSec, text });
+    this.settled.set(draft.key, { count: (before?.count ?? 0) + count, untilSec: endSec });
+    draft.text = draft.text.slice(cut).trimStart();
+    draft.startSec = atSec;
+  }
+
+  /** A finished line without the sentences that settled while it was spoken. */
+  private unsettled(key: string, e: Segment & { endSec: number }): Segment & { endSec: number } {
+    const settled = this.settled.get(key);
+    this.settled.delete(key);
+    return settled
+      ? { startSec: settled.untilSec, endSec: Math.max(e.endSec, settled.untilSec), text: afterSentences(e.text.trim(), settled.count) }
+      : e;
   }
 
   private finish(track: Track, key: string, segment: Segment & { endSec: number }) {

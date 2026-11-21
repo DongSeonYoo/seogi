@@ -109,6 +109,23 @@ test("the voice ring keeps the last minutes by stretch time, and a voice takes a
   assert.equal(matchVoice(unit(0.4, 0.4, 0.82), voices), null); // like neither enough
 });
 
+test("a short unnamed line between two lines of one voice takes it, unless it is a lone acknowledgement", async () => {
+  const { nameBetween } = await import("./main/speakers.ts");
+  const line = (id: number, startSec: number, speaker: number | null, text = "So there's that.") => ({ id, startSec, speaker, text });
+  const named = nameBetween([
+    line(1, 0, 1),
+    line(2, 4, null), // short, between two of voice 1
+    line(3, 5, 1),
+    line(4, 9, null, "네 네."), // an acknowledgement: anyone's
+    line(5, 10, 1),
+    line(6, 14, null), // long: likely someone unnamed
+    line(7, 20, 1),
+    line(8, 22, null), // between two voices
+    line(9, 23, 2),
+  ]);
+  assert.deepEqual([...named], [[2, 1]]);
+});
+
 test("captions lose sound tags, and a line with no letter or digit is dropped", async () => {
   const { cleanCaption } = await import("./shared/text.ts");
   assert.equal(cleanCaption("[sigh ]한국어 억양으로 해볼래"), "한국어 억양으로 해볼래");
@@ -209,6 +226,27 @@ test("streamed pieces become sentence lines: an unfinished end waits for the nex
   assert.ok(stored[1].startSec > 11 && stored[1].startSec < 14); // where "그래서" was spoken in piece 1
   await c.stop();
   assert.equal(stored.at(-1)!.text, "다음은");
+});
+
+test("a sentence still being spoken becomes a line once the next one starts, and the finished text skips it", async () => {
+  const { LiveCaptions } = await import("./main/live.ts");
+  const stored: { startSec: number; endSec?: number; text: string }[] = [];
+  const c = new LiveCaptions(() => ({ audio() {}, stop: async () => {} }), () => {}, (_t, s) => stored.push(s), true);
+  // A short turn teaches the lag: its first words came 1 s after its speech.
+  c.onEvent("system", { type: "delta", id: "1", text: "Hi", atSec: 3 });
+  c.onEvent("system", { type: "segment", id: "1", text: "Hi there. And so I", startSec: 2, endSec: 4 });
+  const delta = (text: string, atSec: number) => c.onEvent("system", { type: "delta", id: "2", text, atSec });
+  delta("would feel free", 6);
+  delta(" to do fun things.", 8);
+  assert.equal(stored.length, 1); // the sentence may still go on
+  delta(" What", 9);
+  assert.deepEqual(stored.map((s) => s.text), ["Hi there.", "And so I would feel free to do fun things."]);
+  assert.equal(stored[1].endSec, 8); // pulled back by the lag
+  assert.deepEqual(c.view().lines.map((l) => l.text), ["What"]);
+  delta(" do you think?", 11);
+  c.onEvent("system", { type: "segment", id: "2", text: "would feel free to do fun things. What do you think?", startSec: 5, endSec: 11 });
+  assert.deepEqual(stored.slice(2).map((s) => [s.text, s.startSec]), [["What do you think?", 8]]);
+  assert.deepEqual(c.view().lines, []);
 });
 
 test("a line corrected while spoken keeps the correction, held back if it finishes during the edit", async () => {
