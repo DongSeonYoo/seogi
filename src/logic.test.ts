@@ -562,9 +562,9 @@ test("library changes undo and redo, deletes purge for real, and a resummary kee
   assert.deepEqual(db.listFolders(), [{ id: folder.id, name: "고객사", count: 2 }]);
   assert.equal(db.counts().starred, 1);
   assert.equal(history.undo(translator("ko")), "즐겨찾기");
-  assert.equal(history.undo(translator("ko")), "폴더 이동");
+  assert.equal(history.undo(translator("ko")), "프로젝트 이동");
   assert.equal(db.listMeetings(folder.id!).length, 0);
-  assert.equal(history.redo(translator("ko")), "폴더 이동");
+  assert.equal(history.redo(translator("ko")), "프로젝트 이동");
   assert.equal(db.listMeetings(folder.id!).length, 2);
 
   run({ type: "deleteFolder", id: folder.id! });

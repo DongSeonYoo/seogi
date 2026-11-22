@@ -494,12 +494,19 @@ export function App() {
   );
 
   /** The right-click menu for a meeting: the same actions plus "move to folder". */
+  /** The projects a meeting can be moved to, its own checked (menu ids "folder:…"). */
+  const projectItems = (m: MeetingRow): MenuSpec[] => [
+    { id: "folder:none", label: t("folder.none"), checked: m.folderId === null },
+    ...library.folders.map((f) => ({ id: `folder:${f.id}`, label: f.name, checked: m.folderId === f.id })),
+  ];
+  function moveTo(m: MeetingRow, chosen: string) {
+    const folderId = chosen === "folder:none" ? null : Number(chosen.slice(7));
+    if (folderId !== m.folderId) void run({ type: "move", ids: [m.id], folderId });
+  }
+
   async function meetingMenu(m: MeetingRow) {
     select(m.id);
-    const folders: MenuSpec[] = [
-      { id: "folder:none", label: t("folder.none"), checked: m.folderId === null },
-      ...library.folders.map((f) => ({ id: `folder:${f.id}`, label: f.name, checked: m.folderId === f.id })),
-    ];
+    const folders = projectItems(m);
     const locked = busy(m);
     const chosen = await api.showMenu([
       { id: "rename", label: t("action.rename") },
@@ -518,10 +525,7 @@ export function App() {
       { id: "delete", label: t("action.delete"), enabled: !locked },
     ]);
     if (!chosen) return;
-    if (chosen.startsWith("folder:")) {
-      const folderId = chosen === "folder:none" ? null : Number(chosen.slice(7));
-      return void run({ type: "move", ids: [m.id], folderId });
-    }
+    if (chosen.startsWith("folder:")) return moveTo(m, chosen);
     if (chosen === "rename") return setRenaming(true);
     if (chosen === "star") return void run({ type: "star", ids: [m.id], starred: !m.starred });
     if (chosen === "summarize") return void summarizeMeeting(await api.getMeeting(m.id) ?? m);
@@ -592,6 +596,12 @@ export function App() {
       )}
       <Toolbar
         meeting={current}
+        project={current ? (library.folders.find((f) => f.id === current.folderId)?.name ?? null) : null}
+        onProject={async () => {
+          if (!current) return;
+          const chosen = await api.showMenu(projectItems(current));
+          if (chosen?.startsWith("folder:")) moveTo(current, chosen);
+        }}
         renaming={renaming}
         sidebar={sidebar}
         summary={panes.layout.summary}

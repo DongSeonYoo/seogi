@@ -203,6 +203,27 @@
   white-space: nowrap;
 }
 
+/* The meeting's project, first in the subtitle: a quiet button that opens the project menu. */
+.toolbar__project {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-ink-2);
+  font-size: inherit;
+}
+
+.toolbar__project:hover {
+  color: var(--color-ink);
+}
+
+.toolbar__project .lucide {
+  width: 12px;
+  height: 12px;
+}
+
 .toolbar__actions {
   display: flex;
   align-items: center;

@@ -613,6 +613,12 @@ const Message = memo(function Message({
   const t = useT();
   const name = given || speakerName(u, t);
   const [naming, setNaming] = useState(false);
+  const nameEl = useRef<HTMLSpanElement>(null);
+  // Renaming starts with the whole name selected, to type over: the click or key that started it
+  // has already focused the name, so this runs once naming begins, not on focus.
+  useEffect(() => {
+    if (naming && nameEl.current) startEditing(nameEl.current);
+  }, [naming]);
   /** The word (its index in `parts`) or the whole line being corrected. */
   const [editing, setEditing] = useState<number | "line" | null>(null);
   const parts = useMemo(() => u.text.split(/(\s+)/), [u.text]);
@@ -716,9 +722,7 @@ const Message = memo(function Message({
               // Naming a voice names every line it speaks in this meeting.
               contentEditable={naming ? "plaintext-only" : undefined}
               suppressContentEditableWarning
-              ref={(el) => {
-                if (el && naming && document.activeElement !== el) startEditing(el);
-              }}
+              ref={nameEl}
               onClick={() => !u.draft && setNaming(true)}
               // A button for the keyboard too: Enter or Space renames.
               role={u.draft || naming ? undefined : "button"}
@@ -775,9 +779,11 @@ const Message = memo(function Message({
                     }}
                     onMouseEnter={() => setHoverWord(i)}
                     onMouseLeave={() => setHoverWord((h) => (h === i ? null : h))}
-                    onClick={() => {
-                      // A click corrects this word; a drag still selects text to copy.
-                      if (editing === i || window.getSelection()?.isCollapsed === false) return;
+                    onClick={(e) => {
+                      // A click corrects this word; a drag from it still selects text to copy. The
+                      // word being corrected elsewhere is still selected: that is no drag.
+                      const sel = window.getSelection();
+                      if (editing === i || (sel && !sel.isCollapsed && e.currentTarget.contains(sel.anchorNode))) return;
                       setCursor(i);
                       setEditing(i);
                       if (u.draft) onDraft.hold(u);

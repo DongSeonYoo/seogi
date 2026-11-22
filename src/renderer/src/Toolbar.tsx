@@ -1,4 +1,4 @@
-import { PanelLeft, PanelRight, Plus, Search, Sparkles, Star } from "lucide-react";
+import { Folder, PanelLeft, PanelRight, Plus, Search, Sparkles, Star } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { MeetingDetail } from "../../shared/types";
 import { clock } from "../../shared/summary";
@@ -16,6 +16,8 @@ export type Recording = { id: number; startedAt: number | null; offsetSec: numbe
 /** The unified toolbar over the list and detail: title on the left, capsules of actions on the right. */
 export function Toolbar({
   meeting: m,
+  project,
+  onProject,
   renaming,
   sidebar,
   summary,
@@ -30,6 +32,9 @@ export function Toolbar({
   onPalette,
 }: {
   meeting: MeetingDetail | null;
+  /** The meeting's project, by name (null: none); clicking it moves the meeting to another. */
+  project: string | null;
+  onProject: () => void;
   renaming: boolean;
   sidebar: boolean;
   summary: boolean;
@@ -66,7 +71,15 @@ export function Toolbar({
             {m?.title ?? t("app.name")}
           </h1>
         )}
-        {subtitle && <p className="toolbar__sub tnum">{subtitle}</p>}
+        {m && (
+          <p className="toolbar__sub tnum">
+            <button type="button" className="toolbar__project" onClick={onProject} title={t("action.moveTo")}>
+              <Folder aria-hidden />
+              {project ?? t("folder.none")}
+            </button>
+            {subtitle && ` · ${subtitle}`}
+          </p>
+        )}
       </div>
       <div className="toolbar__actions">
         <div className="capsule">
