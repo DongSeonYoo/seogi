@@ -290,6 +290,7 @@ const en = {
   "effort.ultra": "Ultra",
   "effort.max": "Max",
   "settings.apiKeyProvider": "{name} · API key",
+  "settings.localProvider": "This Mac · no account",
   "settings.glossaryDesc": "Shared by every session: names and product terms, separated by commas, keep their spelling in captions and summaries. A session can set its own instead. ⌘↵ saves.",
   "settings.glossaryPlaceholder": "Dongseon, qgrid, Seogi",
   "settings.transcribeTest": "Try It",
@@ -325,6 +326,7 @@ const en = {
   "model.noGlossary": "No glossary",
   "model.liveDraft": "Shows text while you speak",
   "model.tokens": "Per 1M tokens: input {input} · cached {cached} · output {output}",
+  "model.apple": "macOS 26's own transcriber · free, works offline · less accurate than the online models",
   "model.gptLive": "Experimental · ~$0.05/min · the conversational model behind Codex /voice; its replies are discarded",
 
   // Main-process messages
@@ -618,6 +620,7 @@ const ko: Record<MessageKey, string> = {
   "effort.ultra": "울트라",
   "effort.max": "최대",
   "settings.apiKeyProvider": "{name} · API 키",
+  "settings.localProvider": "이 Mac · 계정 없이",
   "settings.glossaryDesc": "모든 세션이 함께 쓰는 용어집입니다. 사람 이름, 제품명을 쉼표로 구분해 적으면 자막과 요약의 표기를 맞춥니다. 세션마다 따로 정할 수도 있습니다. ⌘↵로 저장합니다.",
   "settings.glossaryPlaceholder": "동선, 큐그리드, 회의록 앱",
   "settings.transcribeTest": "시험해 보기",
@@ -651,6 +654,7 @@ const ko: Record<MessageKey, string> = {
   "model.noGlossary": "용어집 미지원",
   "model.liveDraft": "말하는 중에 바로 표시",
   "model.tokens": "100만 토큰당 입력 {input} · 캐시 {cached} · 출력 {output}",
+  "model.apple": "macOS 26 내장 받아쓰기 · 무료, 오프라인 동작 · 온라인 모델보다 덜 정확함",
   "model.gptLive": "실험 기능 · 분당 약 $0.05 · Codex /voice가 쓰는 대화 모델이며 대답은 버립니다",
   "meeting.defaultTitle": "회의 {date}",
   "error.nothingTranscribed": "기록된 자막이 없습니다",

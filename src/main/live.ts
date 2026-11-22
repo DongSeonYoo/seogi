@@ -472,7 +472,9 @@ export class LiveCaptions {
       const key = `${track}:${e.id}`;
       const d = this.drafts.get(key);
       if (e.type === "delta") {
-        const draft = { key, track, startSec: d?.startSec ?? e.atSec, text: appendDelta(d?.text ?? "", e.text) };
+        // A stretch sent whole again starts after the sentences that already went (settle).
+        const text = e.replace ? afterSentences(e.text.trim(), this.settled.get(key)?.count ?? 0) : appendDelta(d?.text ?? "", e.text);
+        const draft = { key, track, startSec: d?.startSec ?? e.atSec, text };
         this.drafts.set(key, draft);
         if (this.bySentence && !this.held.has(key)) this.settle(track, draft, e.atSec);
       } else {

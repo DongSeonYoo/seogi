@@ -29,12 +29,12 @@
     "sherpa-onnx-node": "^2.0.1"
   },
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "dev": "sh scripts/build-speech.sh && electron-vite dev",
+    "build": "sh scripts/build-speech.sh && electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc",
     "test": "node --test src/",
-    "dist": "electron-vite build && electron-builder --mac --dir && sh scripts/sign-mac.sh dist/mac-arm64/Seogi.app"
+    "dist": "sh scripts/build-speech.sh && electron-vite build && electron-builder --mac --dir && sh scripts/sign-mac.sh dist/mac-arm64/Seogi.app"
   },
   "build": {
     "appId": "io.github.dongseonyoo.seogi",
@@ -62,6 +62,10 @@
         {
           "from": "build/ko.lproj",
           "to": "ko.lproj"
+        },
+        {
+          "from": "build/bin",
+          "to": "bin"
         }
       ]
     }

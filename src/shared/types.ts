@@ -106,7 +106,7 @@ export type LiveLine = { key: string; track: Track; startSec: number; text: stri
 /** A live caption event from any provider: text still being spoken, or a finished segment. */
 export type LiveEvent =
   /** Text appended to segment `id`; `endSec`, when known, is where this piece of audio ends. */
-  | { type: "delta"; id: string; text: string; atSec: number; endSec?: number }
+  | { type: "delta"; id: string; text: string; atSec: number; endSec?: number; /** The whole stretch so far, not an addition. */ replace?: boolean }
   | { type: "segment"; id: string; text: string; startSec: number; endSec: number }
   /** The stream lost its connection and is opening a new one; speech in between has no captions. */
   | { type: "reconnect" }
@@ -127,11 +127,12 @@ export type LiveView = { lines: LiveLine[]; error: string | null };
 export type Chunk = { meetingId: number; track: Track; startSec: number } & ({ ogg: Uint8Array } | { pcm: Int16Array });
 export const IMPORT_CHUNK_SEC = 30;
 
-export type LiveProvider = "qgrid" | "openai";
+/** "local": on this Mac (macOS 26's own transcriber), no account. */
+export type LiveProvider = "local" | "qgrid" | "openai";
 export type SummaryProvider = "qgrid" | "openai" | "anthropic";
 
 export const DEFAULT_MODELS = {
-  live: { openai: "gpt-live-transcribe", qgrid: "openai/gpt-live-transcribe" },
+  live: { local: "apple", openai: "gpt-live-transcribe", qgrid: "openai/gpt-live-transcribe" },
   summary: { openai: "gpt-6-luna", anthropic: "claude-sonnet-5-5", qgrid: "openai/gpt-6-luna" },
 } as const;
 

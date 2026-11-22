@@ -334,7 +334,7 @@ export function MeetingView({
  * Before a session is recorded: its live caption model and glossary. Both start from Settings;
  * a glossary typed here replaces the shared one for this session (captions and summary).
  */
-const SESSION_MODEL = new RegExp(`^(${GPT_LIVE_MODEL}|(openai/)?gpt-live-transcribe)$`);
+const SESSION_MODEL = new RegExp(`^(${GPT_LIVE_MODEL}|(openai/)?gpt-live-transcribe|apple)$`);
 
 /** While recording runs, the model is fixed and only GPT-Live takes a glossary change at once. */
 function SessionOptions({ meeting: m, running }: { meeting: MeetingDetail; running: boolean }) {

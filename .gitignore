@@ -159,3 +159,6 @@ vite.config.ts.timestamp-*
 # Seogi
 node_modules
 .DS_Store
+
+# The on-device transcription helper, built by scripts/build-speech.sh
+build/bin

@@ -22,7 +22,7 @@ import type {
 import { INTL_LOCALE, showStored, storedMessage, translator, type Locale } from "../shared/i18n";
 import { meetingDocument, speakerKey, summaryMarkdown } from "../shared/summary";
 import { joinSplitSentences } from "../shared/transcript";
-import { glossaryPrompt, isPromptEcho, splitUtterances } from "./transcription";
+import { glossaryPrompt, glossaryTerms, isPromptEcho, splitUtterances } from "./transcription";
 import { openDb } from "./db";
 import { History, perform } from "./library";
 import { diarize } from "./diarize";
@@ -30,6 +30,7 @@ import { cleanModelDownloads, ensureModels } from "./modelFiles";
 import { embedVoice } from "./voices";
 import { assignSpeakers, AudioRing, nameBetween, placeVoice, speakerTurns } from "./speakers";
 import { LiveCaptions, openLiveStream } from "./live";
+import { openLocalStream } from "./localSpeech";
 import { appMenu } from "./menu";
 import { listModels } from "./models";
 import { openSettings } from "./settings";
@@ -309,12 +310,14 @@ app.whenReady().then(async () => {
     const rendererDriven = provider === "qgrid" && model === GPT_LIVE_MODEL;
     const captions = new LiveCaptions(
       (onEvent) =>
-        openLiveStream(
-          provider === "qgrid"
-            ? { provider: "qgrid", url: s.qgridUrl, model, language, prompt, t: tr() }
-            : { provider: "openai", apiKey: settings.key("openai"), model, language, prompt, t: tr() },
-          onEvent,
-        ),
+        provider === "local"
+          ? openLocalStream(s.language, glossaryTerms(glossary), onEvent)
+          : openLiveStream(
+              provider === "qgrid"
+                ? { provider: "qgrid", url: s.qgridUrl, model, language, prompt, t: tr() }
+                : { provider: "openai", apiKey: settings.key("openai"), model, language, prompt, t: tr() },
+              onEvent,
+            ),
       () => sendLive(id, token),
       id === LIVE_TEST_ID
         ? null

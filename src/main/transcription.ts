@@ -34,3 +34,6 @@ export function isPromptEcho(text: string, prompt: string): boolean {
 export function glossaryPrompt(language: string, glossary: string) {
   return `${language === "ko" ? "용어" : "Glossary"}: ${glossary}`;
 }
+
+/** A glossary's terms: separated by commas or lines. */
+export const glossaryTerms = (glossary: string) => glossary.split(/[,\n]/).map((t) => t.trim()).filter(Boolean);

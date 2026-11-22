@@ -10,7 +10,8 @@ const DEFAULTS: StoredSettings = {
   style: "seogi",
   depth: 50,
   qgridUrl: "http://localhost:44900",
-  live: { provider: "openai", model: DEFAULT_MODELS.live.openai },
+  // On this Mac: works with no account or key (macOS 26).
+  live: { provider: "local", model: DEFAULT_MODELS.live.local },
   summary: { provider: "openai", model: DEFAULT_MODELS.summary.openai },
   language: "ko",
   glossary: "",

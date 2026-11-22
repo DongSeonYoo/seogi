@@ -12,6 +12,9 @@ type CatalogText = {
 type CatalogSpeech = { id: string; available: boolean; usdPerMinute?: number; prompt: boolean; liveDraft: boolean };
 type Catalog = { text: CatalogText[]; transcription: CatalogSpeech[]; transcriptionStream: CatalogSpeech[] };
 
+/** Whether this Mac can transcribe on its own (seogi-speech): macOS 26 or later. */
+const localSpeechAvailable = () => process.platform === "darwin" && Number(process.getSystemVersion?.().split(".")[0]) >= 26;
+
 const usd = (n: number) => `$${Number(n.toPrecision(3))}`;
 
 function speechOption(m: CatalogSpeech, t: Translate): ModelOption {
@@ -40,6 +43,8 @@ function textOption(m: CatalogText, t: Translate): ModelOption {
 export async function listModels(store: SettingsStore, role: ModelRole, provider: string): Promise<ModelList> {
   const t = translator(store.get().locale);
   try {
+    if (provider === "local")
+      return { ok: true, models: [{ id: "apple", available: localSpeechAvailable(), detail: t("model.apple") }] };
     if (provider === "qgrid") {
       const catalog: Catalog = await getJson(`${store.get().qgridUrl.replace(/\/$/, "")}/api/qgrid/models`);
       const models =

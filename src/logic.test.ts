@@ -976,3 +976,19 @@ test("a line is translated only when most of its letters are in another language
   assert.equal(inLanguage("음 그 PR 리뷰", "en"), false);
   assert.equal(inLanguage("2026.", "ko"), true); // nothing to translate
 });
+
+test("a stretch sent whole again replaces the draft and still settles sentence by sentence", async () => {
+  const { LiveCaptions } = await import("./main/live.ts");
+  const stored: { startSec: number; text: string }[] = [];
+  const c = new LiveCaptions(() => ({ audio() {}, stop: async () => {} }), () => {}, (_t, s) => stored.push(s), true);
+  const whole = (text: string, atSec: number) => c.onEvent("system", { type: "delta", id: "1", text, atSec, replace: true });
+  whole("우리가 원래", 1);
+  whole("우리가 원래 10만 개를 만든다고 했잖아요.", 3);
+  assert.deepEqual(c.view().lines.map((l) => l.text), ["우리가 원래 10만 개를 만든다고 했잖아요."]);
+  whole("우리가 원래 10만 개를 만든다고 했잖아요. 근데", 4);
+  assert.deepEqual(stored.map((s) => s.text), ["우리가 원래 10만 개를 만든다고 했잖아요."]);
+  whole("우리가 원래 10만 개를 만든다고 했잖아요. 근데 그런 생각이", 5); // the settled sentence again, then more
+  assert.deepEqual(c.view().lines.map((l) => l.text), ["근데 그런 생각이"]);
+  c.onEvent("system", { type: "segment", id: "1", text: "우리가 원래 10만 개를 만든다고 했잖아요. 근데 그런 생각이 들더라고요.", startSec: 0, endSec: 6 });
+  assert.deepEqual(stored.map((s) => s.text), ["우리가 원래 10만 개를 만든다고 했잖아요.", "근데 그런 생각이 들더라고요."]);
+});

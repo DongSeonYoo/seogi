@@ -318,7 +318,7 @@ function ModelGroup({
         >
           {providers.map((p) => (
             <option key={p} value={p}>
-              {p === "qgrid" ? PROVIDER_NAME[p] : t("settings.apiKeyProvider", { name: PROVIDER_NAME[p] })}
+              {p === "local" ? t("settings.localProvider") : p === "qgrid" ? PROVIDER_NAME[p] : t("settings.apiKeyProvider", { name: PROVIDER_NAME[p] })}
             </option>
           ))}
         </Select>
@@ -387,7 +387,7 @@ function Models({ s, patch, setS }: SectionProps & { setS: (s: Settings) => void
         role="live"
         title={t("settings.liveTitle")}
         description={t("settings.liveDesc")}
-        providers={["qgrid", "openai"]}
+        providers={["local", "openai", "qgrid"]}
         value={s.live}
         onChange={(v) => patch({ live: { provider: v.provider as LiveProvider, model: v.model } })}
         reloadKey={reloadKey}
