@@ -9,8 +9,13 @@ import type {
   Summary,
   Track,
   Utterance,
+  SearchResult,
 } from "../shared/types";
 import { summaryMarkdown, summaryPreview } from "../shared/summary.ts";
+import { isInitialsQuery, matchRanges } from "../shared/search.ts";
+
+const SEARCH_MEETINGS = 20;
+const SEARCH_LINES = 50;
 import type { Translate } from "../shared/i18n";
 
 export type Db = ReturnType<typeof openDb>;
@@ -261,7 +266,45 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
       }
     },
 
-    // ponytail: LIKE scan over all text; add an FTS5 trigram table if search gets slow.
+    /**
+     * ⌘K: meetings whose title or summary match, and the lines that match, best first (the exact
+     * phrase, then newer meetings). ponytail: a LIKE scan, 4 ms over 1,230 lines (2026-11); an
+     * FTS5 trigram index would also miss one- and two-syllable Korean queries.
+     */
+    search(query: string): SearchResult {
+      const q = query.trim();
+      if (!q) return { meetings: [], lines: [] };
+      const summaries = new Map(db.prepare("SELECT id, summary FROM meetings").all().map((r) => [Number(r.id), String(r.summary ?? "")]));
+      const meetings = this.listMeetings("all")
+        .filter((m) => matchRanges(`${m.title}\n${summaries.get(m.id) ?? ""}`, q).length)
+        .slice(0, SEARCH_MEETINGS);
+      // Words narrow the scan in SQL (each one LIKE); initials are matched here on every line.
+      const words = isInitialsQuery(q) ? [] : q.split(/\s+/);
+      const rows = db
+        .prepare(
+          `SELECT u.id, u.meeting_id, u.start_sec, u.text, m.title, m.started_at FROM utterances u
+           JOIN meetings m ON m.id = u.meeting_id WHERE ${live} ${words.map(() => "AND u.text LIKE ?").join(" ")}
+           ORDER BY m.started_at DESC, u.start_sec`,
+        )
+        .all(...words.map((w) => `%${w}%`));
+      const lower = q.toLowerCase();
+      const lines = rows
+        .map((r) => ({
+          id: Number(r.id),
+          meetingId: Number(r.meeting_id),
+          meetingTitle: String(r.title),
+          startedAt: String(r.started_at),
+          startSec: Number(r.start_sec),
+          text: String(r.text),
+          ranges: matchRanges(String(r.text), q),
+        }))
+        .filter((l) => l.ranges.length)
+        // Stable: the exact phrase first, the SQL order (newest meeting, then time) within.
+        .sort((a, b) => Number(b.text.toLowerCase().includes(lower)) - Number(a.text.toLowerCase().includes(lower)))
+        .slice(0, SEARCH_LINES);
+      return { meetings, lines };
+    },
+
     listMeetings(view: LibraryView = "all", query?: string): MeetingRow[] {
       const folder = typeof view === "number";
       // Both parameters are always bound, so the clauses that do not apply test them as no-ops.

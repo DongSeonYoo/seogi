@@ -430,6 +430,7 @@ app.whenReady().then(async () => {
   db.migrateSummaries(tr());
 
   ipcMain.handle("listMeetings", (_e, view: LibraryView, query?: string) => db.listMeetings(view, query));
+  ipcMain.handle("search", (_e, query: string) => db.search(query));
   ipcMain.handle("library", () => ({ counts: db.counts(), folders: db.listFolders() }));
   ipcMain.handle("perform", (_e, op: LibraryOp) => {
     const result = perform(db, history, op, tr());

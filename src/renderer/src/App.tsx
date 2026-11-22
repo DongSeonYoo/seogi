@@ -60,6 +60,10 @@ export function App() {
   const panes = useLayout();
   const { sidebar } = panes.layout;
   const [palette, setPalette] = useState(false);
+  /** ⌘F presses: each opens (or refocuses) the open meeting's find bar. */
+  const [findN, setFindN] = useState(0);
+  /** A line picked in ⌘K: its meeting opens there. */
+  const [reveal, setReveal] = useState<{ id: number; sec: number; n: number } | null>(null);
   const [guide, setGuide] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState<number | null>(null);
@@ -435,6 +439,12 @@ export function App() {
       enabled: !!current,
       run: () => void (current && run({ type: "star", ids: [current.id], starred: !current.starred })),
     },
+    find: {
+      label: t("action.find"),
+      shortcut: "⌘F",
+      enabled: !!current,
+      run: () => setFindN((n) => n + 1),
+    },
     summarize: {
       label: t("action.summarize"),
       shortcut: "⇧⌘S",
@@ -613,6 +623,8 @@ export function App() {
         ) : current ? (
           <MeetingView
             meeting={current}
+            reveal={reveal?.id === current.id ? reveal : null}
+            findN={findN}
             live={live?.id === current.id ? live.view : null}
             recording={recording?.id === current.id ? recording : null}
             systemSilent={systemSilent}
@@ -658,9 +670,10 @@ export function App() {
         actions={(Object.keys(actions) as ActionId[])
           .filter((id) => !["palette", "undo", "redo", "styleGuide"].includes(id))
           .map((id) => ({ ...actions[id], id }))}
-        onPick={(id) => {
+        onPick={(id, sec) => {
           setView("all");
           select(id);
+          setReveal(sec === undefined ? null : { id, sec, n: Date.now() });
         }}
       />
     </div>

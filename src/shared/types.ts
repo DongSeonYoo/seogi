@@ -54,6 +54,7 @@ export type ActionId =
   | "undo"
   | "redo"
   | "palette"
+  | "find"
   | "rename"
   | "star"
   | "summarize"
@@ -85,6 +86,18 @@ export type Utterance = {
   /** The line in the meeting's translation language, while translation is on. */
   translation?: string;
 };
+
+/** A transcript line found by search, with its meeting and where the query is in it. */
+export type SearchLine = {
+  id: number;
+  meetingId: number;
+  meetingTitle: string;
+  startedAt: string;
+  startSec: number;
+  text: string;
+  ranges: [number, number][];
+};
+export type SearchResult = { meetings: MeetingRow[]; lines: SearchLine[] };
 
 export type MeetingDetail = MeetingRow & {
   /** Markdown, written by Summarize and edited by the user. */
@@ -191,6 +204,8 @@ export type AppInfo = { version: string; electron: string; platform: string; pac
 export type Api = {
   /** A query (even empty) searches for up to 50 palette results. Omit it to list the whole view. */
   listMeetings(view: LibraryView, query?: string): Promise<MeetingRow[]>;
+  /** ⌘K: matching meetings and lines (see shared/search.ts). */
+  search(query: string): Promise<SearchResult>;
   library(): Promise<Library>;
   perform(op: LibraryOp): Promise<LibraryResult>;
   /** App-level undo; resolves to the label of what changed, or null. */

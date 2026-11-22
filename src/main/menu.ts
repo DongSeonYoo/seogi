@@ -71,6 +71,7 @@ export function appMenu(
         { role: "paste", label: t("menu.paste") },
         { role: "selectAll", label: t("menu.selectAll") },
         { type: "separator" },
+        item("find", `${t("action.find")}…`, "Cmd+F"),
         item("palette", `${t("action.palette")}…`, "Cmd+K"),
       ],
     },

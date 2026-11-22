@@ -1,6 +1,8 @@
-import { ChevronRight, FileText } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { ActionId, MeetingRow } from "../../shared/types";
+import { ChevronRight, FileText, Quote } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { snippet } from "../../shared/search";
+import { clock } from "../../shared/summary";
+import type { ActionId, MeetingRow, SearchLine, SearchResult } from "../../shared/types";
 import { fullDate } from "./format";
 import { useI18n, useT } from "./i18n";
 import { Dialog, Kbd } from "./ui";
@@ -13,9 +15,28 @@ export type PaletteAction = {
   run: () => void | Promise<void>;
 };
 
-type Item = { kind: "action"; id: ActionId; action: PaletteAction } | { kind: "meeting"; meeting: MeetingRow };
+type Item =
+  | { kind: "action"; id: ActionId; action: PaletteAction }
+  | { kind: "meeting"; meeting: MeetingRow }
+  | { kind: "line"; line: SearchLine };
 
-/** ⌘K: one field for commands and for every meeting's title, summary and transcript. */
+/** `text` with its found ranges marked. */
+function Marked({ text, ranges }: { text: string; ranges: [number, number][] }) {
+  const out: ReactNode[] = [];
+  let at = 0;
+  for (const [a, b] of ranges) {
+    if (a < at) continue;
+    out.push(text.slice(at, a), <mark key={a}>{text.slice(a, b)}</mark>);
+    at = b;
+  }
+  out.push(text.slice(at));
+  return <>{out}</>;
+}
+
+/**
+ * ⌘K: one field for commands, meetings (title and summary) and the lines that say it; a line
+ * opens its meeting at that moment.
+ */
 export function CommandPalette({
   open,
   onClose,
@@ -25,7 +46,7 @@ export function CommandPalette({
   open: boolean;
   onClose: () => void;
   actions: (PaletteAction & { id: ActionId })[];
-  onPick: (meetingId: number) => void;
+  onPick: (meetingId: number, sec?: number) => void;
 }) {
   const t = useT();
   return (
@@ -42,19 +63,20 @@ function PaletteBody({
 }: {
   onClose: () => void;
   actions: (PaletteAction & { id: ActionId })[];
-  onPick: (id: number) => void;
+  onPick: (id: number, sec?: number) => void;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<{ query: string; rows: MeetingRow[] } | null>(null);
+  const [results, setResults] = useState<{ query: string; found: SearchResult } | null>(null);
   const [active, setActive] = useState(0);
 
   useEffect(() => {
     let stale = false;
     const timer = setTimeout(() => {
-      void window.api.listMeetings("all", query).then((rows) => {
-        if (!stale) setResults({ query, rows });
+      // An empty field lists recent meetings; a query searches them and their lines.
+      void (query.trim() ? window.api.search(query) : window.api.listMeetings("all").then((meetings) => ({ meetings: meetings.slice(0, 20), lines: [] }))).then((found) => {
+        if (!stale) setResults({ query, found });
       });
     }, query ? 150 : 0);
     return () => {
@@ -64,12 +86,13 @@ function PaletteBody({
   }, [query]);
 
   const q = query.trim().toLowerCase();
-  const meetings = results?.query === query ? results.rows : [];
+  const found = results?.query === query ? results.found : { meetings: [], lines: [] };
   const items: Item[] = [
     ...actions
       .filter((a) => a.enabled !== false && (!q || a.label.toLowerCase().includes(q)))
       .map((a) => ({ kind: "action" as const, id: a.id, action: a })),
-    ...meetings.map((m) => ({ kind: "meeting" as const, meeting: m })),
+    ...found.meetings.map((m) => ({ kind: "meeting" as const, meeting: m })),
+    ...found.lines.map((l) => ({ kind: "line" as const, line: l })),
   ];
 
   function pick(item: Item | undefined) {
@@ -78,7 +101,8 @@ function PaletteBody({
     // After the dialog closes, so focus is off its search field: commands like Delete refuse to
     // act while the user is typing.
     if (item.kind === "action") setTimeout(() => void item.action.run());
-    else onPick(item.meeting.id);
+    else if (item.kind === "meeting") onPick(item.meeting.id);
+    else onPick(item.line.meetingId, item.line.startSec);
   }
 
   return (
@@ -109,19 +133,19 @@ function PaletteBody({
         }}
       />
       <ul className="palette__list" id="palette-list" role="listbox" aria-label={t("palette.results")}>
-        {(["action", "meeting"] as const).map((kind) => {
+        {(["action", "meeting", "line"] as const).map((kind) => {
           const group = items.flatMap((item, i) => (item.kind === kind ? [{ item, i }] : []));
           if (!group.length) return null;
           return (
             <li key={kind} role="group" aria-labelledby={`palette-group-${kind}`}>
               <div className="palette__group" id={`palette-group-${kind}`}>
-                {kind === "action" ? t("palette.commands") : t("palette.meetings")}
+                {t(kind === "action" ? "palette.commands" : kind === "meeting" ? "palette.meetings" : "palette.lines")}
               </div>
               <ul role="presentation">
                 {group.map(({ item, i }) => (
                   // Options are the items themselves; focus stays in the search field (aria-activedescendant).
                   <li
-                    key={item.kind === "action" ? item.id : item.meeting.id}
+                    key={item.kind === "action" ? item.id : item.kind === "meeting" ? item.meeting.id : `l${item.line.id}`}
                     id={`palette-${i}`}
                     role="option"
                     className="palette__item"
@@ -129,12 +153,28 @@ function PaletteBody({
                     onMouseMove={() => setActive(i)}
                     onClick={() => pick(item)}
                   >
-                    {item.kind === "action" ? <ChevronRight aria-hidden /> : <FileText aria-hidden />}
-                    <span className="palette__item-title">{item.kind === "action" ? item.action.label : item.meeting.title}</span>
                     {item.kind === "action" ? (
-                      item.action.shortcut && <Kbd>{item.action.shortcut}</Kbd>
+                      <>
+                        <ChevronRight aria-hidden />
+                        <span className="palette__item-title">{item.action.label}</span>
+                        {item.action.shortcut && <Kbd>{item.action.shortcut}</Kbd>}
+                      </>
+                    ) : item.kind === "meeting" ? (
+                      <>
+                        <FileText aria-hidden />
+                        <span className="palette__item-title">{item.meeting.title}</span>
+                        <span className="palette__item-meta tnum">{fullDate(item.meeting.startedAt, i18n)}</span>
+                      </>
                     ) : (
-                      <span className="palette__item-meta tnum">{fullDate(item.meeting.startedAt, i18n)}</span>
+                      <>
+                        <Quote aria-hidden />
+                        <span className="palette__item-title palette__line">
+                          <Marked text={snippet(item.line.text, item.line.ranges)[0]} ranges={snippet(item.line.text, item.line.ranges)[1]} />
+                        </span>
+                        <span className="palette__item-meta tnum">
+                          {item.line.meetingTitle} · {clock(item.line.startSec)}
+                        </span>
+                      </>
                     )}
                   </li>
                 ))}

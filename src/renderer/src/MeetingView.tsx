@@ -1,8 +1,9 @@
-import { AlertCircle, BookmarkPlus, BookPlus, Ellipsis, RotateCcw, X, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
+import { AlertCircle, BookmarkPlus, BookPlus, ChevronDown, ChevronUp, Ellipsis, RotateCcw, Search, X, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { GPT_LIVE_MODEL, type LiveView, type Track, type MeetingDetail, type ModelOption, type Settings, type SpeakerNames, type Utterance } from "../../shared/types";
 import { clock, shownNames, speakerKey, speakerName } from "../../shared/summary";
 import { joinSplitSentences } from "../../shared/transcript";
+import { matchRanges } from "../../shared/search";
 import { duration, fullDate, groupUtterances, insertDrafts } from "./format";
 import { useI18n, useT } from "./i18n";
 import { showStored } from "../../shared/i18n";
@@ -44,7 +45,13 @@ export function MeetingView({
   onPause,
   onContinue,
   recordingElsewhere,
+  reveal,
+  findN,
 }: {
+  /** ⌘F presses, passed down to the transcript's find bar. */
+  findN: number;
+  /** A moment to show (a search result): the transcript scrolls to it and marks it; n repeats it. */
+  reveal: { sec: number; n: number } | null;
   /** Records on into this meeting once it has finished. */
   onContinue: () => void;
   meeting: MeetingDetail;
@@ -91,6 +98,13 @@ export function MeetingView({
   // (Korean turns came back as Japanese), so it is the fallback, not the default.
   // A [mm:ss] clicked in the summary; n makes a second click on the same time scroll again.
   const [focus, setFocus] = useState<{ sec: number; n: number } | null>(null);
+  // After the meeting has laid out (its options and notices push the transcript down), or the
+  // jump lands short.
+  useEffect(() => {
+    if (!reveal) return;
+    const timer = setTimeout(() => setFocus({ sec: Math.floor(reveal.sec), n: reveal.n }), 150);
+    return () => clearTimeout(timer);
+  }, [reveal]);
   /** Appends a transcript line, with its time, to the end of the summary. */
   const stamp = useCallback((u: Utterance) => {
     const line = `- ${u.text} [${clock(u.startSec)}]`;
@@ -263,7 +277,7 @@ export function MeetingView({
             <span>{t("detail.systemSilent")}</span>
           </p>
         )}
-        <Transcript meeting={m} confirmed={confirmed} player={playback.controls} progress={playback.now?.progress} live={live} focus={focus} onStamp={stamp} importing={!!importing} paused={paused} />
+        <Transcript findN={findN} meeting={m} confirmed={confirmed} player={playback.controls} progress={playback.now?.progress} live={live} focus={focus} onStamp={stamp} importing={!!importing} paused={paused} />
         {playback.spot && (
           <PlaybackBar
             meeting={m}
@@ -418,7 +432,10 @@ function Transcript({
   onStamp,
   importing,
   paused,
+  findN,
 }: {
+  /** ⌘F asked to find in this meeting (a count, so each press opens or refocuses the bar). */
+  findN: number;
   meeting: MeetingDetail;
   confirmed: Utterance[];
   player: Player;
@@ -509,9 +526,16 @@ function Transcript({
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [m.utterances.length, live]);
 
+  const [finding, setFinding] = useState(false);
+  useEffect(() => {
+    if (findN) setFinding(true);
+  }, [findN]);
+  useEffect(() => setFinding(false), [m.id]);
+
   const busy = m.status === "recording" || m.status === "processing";
   return (
     <div className="transcript selectable" ref={scroller}>
+      {finding && <FindBar lines={confirmed} scroller={scroller} focusN={findN} onClose={() => setFinding(false)} />}
       {groups.map((group) => (
         <MessageGroup key={lineKey(group[0])} group={group} player={player} focused={focused}
           progress={player.playingId !== null && group.some((u) => u.id === player.playingId) ? progress : undefined} onStamp={onStamp} onEdit={edit} onTerm={addTerm} names={shownNames(m, t)} onRename={rename} onDraft={draftFix} />
@@ -906,6 +930,106 @@ function PlaybackBar({ meeting: m, line, at, playing, failure, onToggle, onSeek,
         onChange={(e) => onSeek(Number(e.target.value))}
       />
       <IconButton label={t("player.close")} onClick={onClose}>
+        <X aria-hidden />
+      </IconButton>
+    </div>
+  );
+}
+
+/** A DOM range over characters [a, b) of `el`'s text. */
+function textRange(el: Element, [a, b]: [number, number]): Range | null {
+  const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const range = document.createRange();
+  let at = 0;
+  let started = false;
+  for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+    const len = node.textContent?.length ?? 0;
+    if (!started && a < at + len) {
+      range.setStart(node, a - at);
+      started = true;
+    }
+    if (started && b <= at + len) {
+      range.setEnd(node, b - at);
+      return range;
+    }
+    at += len;
+  }
+  return null;
+}
+
+/**
+ * ⌘F in a meeting: every match is marked in place (CSS highlights, so the editable words are left
+ * alone), the current one stronger; Enter and ⇧Enter step through them, Esc closes.
+ */
+function FindBar({ lines, scroller, focusN, onClose }: { lines: Line[]; scroller: React.RefObject<HTMLDivElement | null>; focusN: number; onClose: () => void }) {
+  const t = useT();
+  const input = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState("");
+  const [at, setAt] = useState(0);
+  const hits = useMemo(() => lines.flatMap((u) => matchRanges(u.text, query).map((r) => ({ id: u.id, r }))), [lines, query]);
+  const current = hits.length ? Math.min(at, hits.length - 1) : -1;
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, [focusN]);
+  // Marks follow the lines as they change (a recording goes on); the view moves only when asked.
+  useEffect(() => {
+    const box = scroller.current;
+    if (!box) return;
+    const ranges = hits.map((h) => {
+      const el = box.querySelector(`.msg[data-key="${h.id}"] .msg__text`);
+      return el && textRange(el, h.r);
+    });
+    CSS.highlights.set("find", new Highlight(...ranges.filter((r): r is Range => !!r)));
+    const now = ranges[current];
+    if (now) CSS.highlights.set("find-current", new Highlight(now));
+    else CSS.highlights.delete("find-current");
+    return () => {
+      CSS.highlights.delete("find");
+      CSS.highlights.delete("find-current");
+    };
+  }, [hits, current, scroller]);
+  useEffect(() => {
+    if (current < 0) return;
+    scroller.current?.querySelector(`.msg[data-key="${hits[current].id}"]`)?.scrollIntoView({ block: "center", behavior: scrollBehavior() });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the person moves or types
+  }, [current, query]);
+  const step = (by: number) => hits.length && setAt((current + by + hits.length) % hits.length);
+  return (
+    <div className="findbar" role="search">
+      <Search aria-hidden />
+      <input
+        ref={input}
+        className="findbar__input"
+        value={query}
+        placeholder={t("find.placeholder")}
+        aria-label={t("find.placeholder")}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setAt(0);
+        }}
+        onKeyDown={(e) => {
+          if (e.nativeEvent.isComposing || e.keyCode === 229) return; // an Enter that ends a Korean syllable
+          if (e.key === "Enter") {
+            e.preventDefault();
+            step(e.shiftKey ? -1 : 1);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            onClose();
+          }
+        }}
+      />
+      <span className="findbar__count tnum" role="status">
+        {query.trim() ? (hits.length ? t("find.count", { at: current + 1, n: hits.length }) : t("find.none")) : ""}
+      </span>
+      <IconButton label={t("find.previous")} onClick={() => step(-1)} disabled={!hits.length}>
+        <ChevronUp aria-hidden />
+      </IconButton>
+      <IconButton label={t("find.next")} onClick={() => step(1)} disabled={!hits.length}>
+        <ChevronDown aria-hidden />
+      </IconButton>
+      <IconButton label={t("find.close")} onClick={onClose}>
         <X aria-hidden />
       </IconButton>
     </div>

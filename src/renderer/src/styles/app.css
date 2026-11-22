@@ -999,6 +999,72 @@
 .palette__item-meta {
   color: var(--color-ink-3);
   font-size: var(--text-sm);
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A found line: the words searched for stand out in it, as in ⌘F. */
+.palette__line mark {
+  background: var(--color-accent-soft);
+  color: inherit;
+  border-radius: 2px;
+}
+
+/* On the accent of the chosen row a tint would vanish: the match is underlined there. */
+.palette__item[aria-selected="true"] .palette__line mark {
+  background: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ⌘F: a bar pinned over the transcript; matches marked in place, the current one in the accent. */
+.findbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-window);
+  border-bottom: 1px solid var(--color-line);
+}
+
+.findbar > .lucide {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--color-ink-3);
+}
+
+.findbar__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--color-ink);
+  font: inherit;
+  font-size: var(--text-base);
+  outline: none;
+}
+
+.findbar__count {
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+::highlight(find) {
+  background-color: var(--color-accent-soft);
+}
+
+::highlight(find-current) {
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
 }
 
 .palette__foot {

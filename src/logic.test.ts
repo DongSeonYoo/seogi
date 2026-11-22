@@ -1029,3 +1029,16 @@ test("requests on the ChatGPT plan stream unstored, with system text as instruct
     input: [{ role: "user", content: [{ type: "input_text", text: "hi" }] }],
   });
 });
+
+test("search finds every word in any order, ignoring case, and Korean initial consonants across spaces", async () => {
+  const { matchRanges, snippet } = await import("./shared/search.ts");
+  const line = "근데 하루에 30분 쓰는 헤비 유저가 API를 쓰면";
+  assert.deepEqual(matchRanges(line, "유저 30분"), [[7, 10], [17, 19]]);
+  assert.deepEqual(matchRanges(line, "api"), [[21, 24]]);
+  assert.deepEqual(matchRanges(line, "유저 결제"), []); // one word missing
+  assert.deepEqual(matchRanges(line, "ㅎㅂㅇㅈ"), [[14, 19]]); // "헤비 유저"
+  assert.deepEqual(matchRanges(line, "ㅎ ㅂ"), [[14, 16]]); // 헤비, not 하루 (ㅎㄹ)
+  const [text, marks] = snippet("가".repeat(100) + "헤비" + "나".repeat(100), [[100, 102]], 10, 20);
+  assert.equal(text, `…${"가".repeat(10)}헤비${"나".repeat(20)}…`);
+  assert.deepEqual(marks, [[11, 13]]);
+});

@@ -10,6 +10,7 @@ function on<A extends unknown[]>(channel: string, listener: (...args: A) => void
 
 const api: Api = {
   listMeetings: (view, query) => ipcRenderer.invoke("listMeetings", view, query),
+  search: (query) => ipcRenderer.invoke("search", query),
   library: () => ipcRenderer.invoke("library"),
   perform: (op) => ipcRenderer.invoke("perform", op),
   undo: () => ipcRenderer.invoke("undo"),
