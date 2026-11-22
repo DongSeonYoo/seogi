@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { ConnectionResult, ConnectionRole, SpeakerNames, Summary, Utterance } from "../shared/types";
 import { glossaryPrompt, glossaryTerms, isPromptEcho, type Transcript } from "./transcription.ts";
 import { transcribeLocalFile } from "./localSpeech.ts";
+import { transcribeWhisper, whisperPrompt } from "./whisper.ts";
 import type { SettingsStore } from "./settings";
 import { summarizeParts, SUMMARY_INPUT, SUMMARY_OUTPUT, type CitedNotes } from "./summaryParts.ts";
 
@@ -15,7 +16,10 @@ const FILE_MODEL = { qgrid: "openai/gpt-transcribe", openai: "gpt-4o-transcribe"
 /** One piece of an imported file, with the meeting's glossary; `lang` "auto" lets the model detect it. */
 export async function transcribeFile(store: SettingsStore, wav: Uint8Array, glossary: string, lang = store.get().language, abortSignal?: AbortSignal): Promise<Transcript> {
   const s = store.get();
-  if (s.live.provider === "local") return transcribeLocalFile(wav, lang, glossaryTerms(glossary));
+  if (s.live.provider === "local")
+    return s.live.model === "whisper"
+      ? transcribeWhisper(wav, lang, whisperPrompt(lang, glossaryTerms(glossary)))
+      : transcribeLocalFile(wav, lang, glossaryTerms(glossary));
   const id = FILE_MODEL[s.live.provider];
   // Detecting the language, a hint in another language (Korean names under "용어:") pulls short
   // lines toward it, so the glossary goes only with a chosen language, prefixed in that language.

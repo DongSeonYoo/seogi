@@ -44,7 +44,10 @@ export async function listModels(store: SettingsStore, role: ModelRole, provider
   const t = translator(store.get().locale);
   try {
     if (provider === "local")
-      return { ok: true, models: [{ id: "apple", available: localSpeechAvailable(), detail: t("model.apple") }] };
+      return { ok: true, models: [
+        { id: "apple", available: localSpeechAvailable(), detail: t("model.apple") },
+        { id: "whisper", available: true, detail: t("model.whisper") },
+      ] };
     if (provider === "qgrid") {
       const catalog: Catalog = await getJson(`${store.get().qgridUrl.replace(/\/$/, "")}/api/qgrid/models`);
       const models =

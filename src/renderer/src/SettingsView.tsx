@@ -351,6 +351,7 @@ function ModelGroup({
           <CommitInput id={id} value={value.model} onCommit={(model) => onChange({ ...value, model })} />
         )}
       </Row>
+      {value.provider === "local" && value.model === "whisper" && <WhisperModel />}
       {!!selected?.efforts?.length && (
         <Row label={t("settings.effort")} description={t("settings.effortDesc")} htmlFor={`${role}-effort`}>
           <Select
@@ -374,6 +375,38 @@ function ModelGroup({
       )}
       {children}
     </Group>
+  );
+}
+
+/** Local Whisper's model: downloaded once (1.6 GB) before Whisper can be used. */
+function WhisperModel() {
+  const t = useT();
+  const [ready, setReady] = useState<boolean | null>(null);
+  const [done, setDone] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void window.api.whisperReady().then(setReady);
+    return window.api.onWhisperProgress(setDone);
+  }, []);
+  async function download() {
+    setError(null);
+    setDone(0);
+    const failed = await window.api.downloadWhisper();
+    setDone(null);
+    setError(failed);
+    setReady(await window.api.whisperReady());
+  }
+  return (
+    <Row
+      label={t("settings.whisperModel")}
+      description={error ? t("settings.whisperFailed", { error }) : ready ? t("settings.whisperReady") : t("settings.whisperNeeded")}
+    >
+      {ready ? null : done !== null ? (
+        <span className="tnum" role="status">{t("settings.whisperDownloading", { percent: Math.floor(done * 100) })}</span>
+      ) : (
+        <Button onClick={() => void download()} disabled={ready === null}>{t("settings.whisperDownload")}</Button>
+      )}
+    </Row>
   );
 }
 

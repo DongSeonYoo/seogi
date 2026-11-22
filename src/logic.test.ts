@@ -992,3 +992,11 @@ test("a stretch sent whole again replaces the draft and still settles sentence b
   c.onEvent("system", { type: "segment", id: "1", text: "우리가 원래 10만 개를 만든다고 했잖아요. 근데 그런 생각이 들더라고요.", startSec: 0, endSec: 6 });
   assert.deepEqual(stored.map((s) => s.text), ["우리가 원래 10만 개를 만든다고 했잖아요.", "근데 그런 생각이 들더라고요."]);
 });
+
+test("a long stretch is cut in the middle of its quietest 100 ms among the last 4 s", async () => {
+  const { quietestCut } = await import("./main/live.ts");
+  const pcm = new Int16Array(16000 * 10).fill(3000);
+  pcm.fill(10, 16000 * 8, 16000 * 8 + 1600); // a breath at 8.0-8.1 s
+  pcm.fill(0, 16000 * 2, 16000 * 3); // silent, but too far back
+  assert.equal(quietestCut(pcm), 16000 * 8 + 800);
+});

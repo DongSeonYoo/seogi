@@ -346,6 +346,23 @@ export class CommitPolicy {
   }
 }
 
+/** A stretch this long is cut at its quietest moment in the last few seconds: a noisy room has no pauses. */
+export const LONG_SEC = 10;
+const LOOK_BACK_SEC = 4;
+
+/** Where to cut `pcm` (a sample index): the start of its quietest 100 ms in the last LOOK_BACK_SEC. */
+export function quietestCut(pcm: Int16Array): number {
+  const step = 1600;
+  let best = pcm.length;
+  let least = Infinity;
+  for (let i = Math.max(0, pcm.length - LOOK_BACK_SEC * 16000); i + step <= pcm.length; i += step) {
+    let sq = 0;
+    for (let j = i; j < i + step; j++) sq += pcm[j] * pcm[j];
+    if (sq < least) [least, best] = [sq, i + step / 2];
+  }
+  return best;
+}
+
 /** A finished stretch of speech, ready to be stored as an utterance. */
 /** `endSec`, when known, is where the line's audio ends (its voice can be read from it). */
 export type Segment = { startSec: number; text: string; endSec?: number };

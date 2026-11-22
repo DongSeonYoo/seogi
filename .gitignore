@@ -162,3 +162,4 @@ node_modules
 
 # The on-device transcription helper, built by scripts/build-speech.sh
 build/bin
+build/whisper.cpp-*

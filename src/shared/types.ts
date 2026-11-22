@@ -219,6 +219,11 @@ export type Api = {
   /** Transcribes a track's opening audio (16 kHz mono from 0 s) that reached no live session. */
   transcribeOpening(id: number, track: Track, pcm: Int16Array, token?: number): Promise<void>;
   importFile(id: number, pcm: Int16Array, language: string, ogg: (Uint8Array | null)[]): Promise<boolean>;
+  /** Whether local Whisper's model is downloaded. */
+  whisperReady(): Promise<boolean>;
+  /** Downloads it; resolves to null, or the error. Progress (0-1) comes via onWhisperProgress. */
+  downloadWhisper(): Promise<string | null>;
+  onWhisperProgress(listener: (done: number) => void): () => void;
   /** null: the import of `id` ended. */
   onImportProgress(listener: (id: number, progress: ImportProgress | null) => void): () => void;
   /** The glossary of a meeting being recorded with GPT-Live changed. */

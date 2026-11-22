@@ -31,6 +31,7 @@ import { embedVoice } from "./voices";
 import { assignSpeakers, AudioRing, nameBetween, placeVoice, speakerTurns } from "./speakers";
 import { LiveCaptions, openLiveStream } from "./live";
 import { openLocalStream } from "./localSpeech";
+import { downloadWhisper, openWhisperStream, setWhisperDir, stopWhisper, whisperPrompt, whisperReady } from "./whisper";
 import { appMenu } from "./menu";
 import { listModels } from "./models";
 import { openSettings } from "./settings";
@@ -45,6 +46,7 @@ app.setPath("userData", dataDir);
 const audioDir = path.join(dataDir, "meetings");
 const chunkIndex = new ChunkIndex();
 const modelsDir = path.join(dataDir, "models");
+setWhisperDir(modelsDir);
 /** Lines per translation request: one or two while recording; a finished meeting goes in these steps. */
 const TRANSLATE_BATCH = 20;
 let aiModule: Promise<typeof import("./ai")> | undefined;
@@ -259,7 +261,10 @@ app.whenReady().then(async () => {
       }
     }
   }
-  app.on("before-quit", () => void removeAudio(db.purgeDeleted(), true));
+  app.on("before-quit", () => {
+    void removeAudio(db.purgeDeleted(), true);
+    stopWhisper();
+  });
 
   /** `tailMs`: how long a stop waits for captions the renderer still sends (GPT-Live). */
   type LiveSession = {
@@ -311,7 +316,9 @@ app.whenReady().then(async () => {
     const captions = new LiveCaptions(
       (onEvent) =>
         provider === "local"
-          ? openLocalStream(s.language, glossaryTerms(glossary), onEvent)
+          ? model === "whisper"
+            ? openWhisperStream(s.language, whisperPrompt(s.language, glossaryTerms(glossary)), onEvent)
+            : openLocalStream(s.language, glossaryTerms(glossary), onEvent)
           : openLiveStream(
               provider === "qgrid"
                 ? { provider: "qgrid", url: s.qgridUrl, model, language, prompt, t: tr() }
@@ -719,6 +726,13 @@ app.whenReady().then(async () => {
   ipcMain.handle("setKey", (_e, name: KeyName, value: string) => settings.setKey(name, value));
   ipcMain.handle("testConnection", async (_e, role: ConnectionRole) => (await loadAI()).testConnection(settings, role));
   ipcMain.handle("listModels", (_e, role: ModelRole, provider: string) => listModels(settings, role, provider));
+  // Local Whisper's model: whether it is here, and fetching it with progress (whisper-progress).
+  ipcMain.handle("whisperReady", () => whisperReady());
+  ipcMain.handle("downloadWhisper", (e) =>
+    downloadWhisper((done) => broadcast("whisper-progress", done)).then(
+      () => null,
+      (err: unknown) => (err instanceof Error ? err.message : String(err)),
+    ));
   ipcMain.handle("storageInfo", (): StorageInfo => {
     const dbFiles = readdirSync(dataDir).filter((f) => f.startsWith("seogi.db"));
     const database = dbFiles.reduce((n, f) => n + (statSync(path.join(dataDir, f), { throwIfNoEntry: false })?.size ?? 0), 0);
