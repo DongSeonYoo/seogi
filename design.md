@@ -4,7 +4,7 @@ The design system for the Seogi (서기) meeting-notes app. New screens use thes
 
 ## Direction
 
-- **Look like a Mac app.** System font, Apple's label and separator greys, the user's macOS accent colour, AppKit control shapes and sizes, window vibrancy behind the sidebar, native menus. Nothing should read as a web page: no pointer cursors, no hover fills on list rows, selection greys out when the list loses focus or the window goes to the background.
+- **Look like a Mac app.** Pretendard (bundled), Apple's label and separator greys, the user's macOS accent colour, AppKit control shapes and sizes, window vibrancy behind the sidebar, native menus. Nothing should read as a web page: no pointer cursors, no hover fills on list rows, selection greys out when the list loses focus or the window goes to the background.
 - **Structure from Tower** (git-tower.com). Three panes under one toolbar:
 
 | Tower | Seogi |
@@ -54,8 +54,8 @@ Text ≥ 4.5:1 and control boundaries ≥ 3:1, both themes.
 
 ## Type
 
-- The system font (`-apple-system`: SF Pro, Apple SD Gothic Neo for Korean). Nothing bundled.
-- AppKit sizes: `xs` 11 (section headers, badges) · `sm` 12 (meta, status bar) · `base` 13 (UI) · `read` 14 (transcript and summary) · `lg` 15 (toolbar title) · `xl` 20 · `2xl` 24 (style guide only).
+- Pretendard Variable 1.3.9, bundled (`assets/fonts`, SIL Open Font License); the system font is the fallback.
+- One step above AppKit's sizes: `xs` 12 (section headers, badges) · `sm` 13 (meta, status bar) · `base` 14 (UI) · `read` 15 (transcript and summary) · `lg` 16 (toolbar title) · `xl` 21 · `2xl` 25 (style guide only).
 - Weights 400, 500, 600. Changing numbers use tabular figures (`.tnum`). Korean breaks between words (`word-break: keep-all`).
 
 ## Space, shape, motion
