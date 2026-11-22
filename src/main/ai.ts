@@ -1,11 +1,12 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import qgrid from "@cartanova/qgrid-ai-sdk";
-import { generateText, Output, transcribe, type LanguageModel } from "ai";
+import { generateText, Output, streamText, transcribe, type LanguageModel } from "ai";
 import { z } from "zod";
 import type { ConnectionResult, ConnectionRole, SpeakerNames, Summary, Utterance } from "../shared/types";
 import { glossaryPrompt, glossaryTerms, isPromptEcho, type Transcript } from "./transcription.ts";
 import { transcribeLocalFile } from "./localSpeech.ts";
+import { chatgptFetch } from "./chatgpt.ts";
 import { transcribeWhisper, whisperPrompt } from "./whisper.ts";
 import type { SettingsStore } from "./settings";
 import { summarizeParts, SUMMARY_INPUT, SUMMARY_OUTPUT, type CitedNotes } from "./summaryParts.ts";
@@ -58,9 +59,21 @@ const SummarySchema = z.object({
 
 const LANGUAGE_NAMES: Record<string, string> = { ko: "Korean", en: "English", ja: "Japanese" };
 
+/**
+ * generateText, except on the ChatGPT plan, which only streams and sets no output limit: the same
+ * call through streamText.
+ */
+async function generate<T>(store: SettingsStore, options: Parameters<typeof generateText>[0]): Promise<{ output: T; text: string }> {
+  if (store.get().summary.provider !== "chatgpt") return (await generateText(options)) as unknown as { output: T; text: string };
+  const { maxOutputTokens: _limit, ...rest } = options;
+  const r = streamText(rest as Parameters<typeof streamText>[0]);
+  return { output: (await r.output) as T, text: await r.text };
+}
+
 function summaryModel(store: SettingsStore, s: ReturnType<SettingsStore["get"]>, model = s.summary.model): LanguageModel {
   const { provider } = s.summary;
   if (provider === "qgrid") return qgrid(model as never, { serverUrl: s.qgridUrl });
+  if (provider === "chatgpt") return createOpenAI({ apiKey: "chatgpt-plan", fetch: chatgptFetch(store) }).responses(model);
   if (provider === "openai") return createOpenAI({ apiKey: store.key("openai") })(model);
   return createAnthropic({ apiKey: store.key("anthropic") })(model);
 }
@@ -91,7 +104,7 @@ export async function summarize(
   };
   const budget = SUMMARY_INPUT - Math.max(Buffer.byteLength(prompts.transcript), Buffer.byteLength(prompts.merge));
   return summarizeParts(transcript, budget, async (stage, prompt) => {
-    const { output } = await generateText({
+    const { output } = await generate<CitedNotes>(store, {
       model: languageModel,
       ...(s.summary.provider === "qgrid" && model === s.summary.model && s.summary.effort &&
         { providerOptions: { qgrid: { effort: s.summary.effort } } }),
@@ -110,7 +123,7 @@ const TranslationSchema = z.object({ lines: z.array(z.string()) });
 export async function translateLines(store: SettingsStore, lines: string[], before: string[], lang: string, glossary: string): Promise<string[]> {
   const s = store.get();
   const qgridModel = s.summary.provider === "qgrid";
-  const { output } = await generateText({
+  const { output } = await generate<{ lines: string[] }>(store, {
     model: summaryModel(store, s, qgridModel ? TRANSLATE_MODEL : s.summary.model),
     ...(qgridModel && { providerOptions: { qgrid: { effort: "none", serviceTier: "fast" } } }),
     output: Output.object({ schema: TranslationSchema }),
@@ -130,7 +143,7 @@ export async function translateLines(store: SettingsStore, lines: string[], befo
 export async function testConnection(store: SettingsStore, role: ConnectionRole): Promise<ConnectionResult> {
   const started = Date.now();
   try {
-    if (role === "summary") await generateText({ model: summaryModel(store, store.get()), prompt: "Reply with OK.", maxRetries: 0 });
+    if (role === "summary") await generate(store, { model: summaryModel(store, store.get()), prompt: "Reply with OK.", maxRetries: 0 });
     return { ok: true, ms: Date.now() - started };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

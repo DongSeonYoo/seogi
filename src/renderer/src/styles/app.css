@@ -1364,6 +1364,13 @@
   width: min(560px, 100%);
 }
 
+/* Under the session's fields: what a choice still needs. */
+.session-options__note {
+  grid-column: 2;
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+}
+
 /* A short visible name beside a field, so a model id or a glossary says what it is for. */
 .field-label {
   color: var(--color-ink-3);

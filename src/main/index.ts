@@ -31,6 +31,7 @@ import { embedVoice } from "./voices";
 import { assignSpeakers, AudioRing, nameBetween, placeVoice, speakerTurns } from "./speakers";
 import { LiveCaptions, openLiveStream } from "./live";
 import { openLocalStream } from "./localSpeech";
+import { signInChatGPT, signOutChatGPT } from "./chatgpt";
 import { downloadWhisper, openWhisperStream, setWhisperDir, stopWhisper, whisperPrompt, whisperReady } from "./whisper";
 import { appMenu } from "./menu";
 import { listModels } from "./models";
@@ -723,7 +724,21 @@ app.whenReady().then(async () => {
     }
     return view;
   });
-  ipcMain.handle("setKey", (_e, name: KeyName, value: string) => settings.setKey(name, value));
+  ipcMain.handle("setKey", (_e, name: KeyName, value: string) => (name === "chatgpt" ? settings.view() : settings.setKey(name, value)));
+  // Sign in with ChatGPT through the system browser; resolves to the settings, or the error's text.
+  ipcMain.handle("signInChatGPT", async () => {
+    try {
+      await signInChatGPT(settings, (url) => void shell.openExternal(url), app.getName());
+      return { settings: settings.view(), error: null };
+    } catch (e) {
+      return { settings: settings.view(), error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+  ipcMain.handle("openChatGPTUsage", () => shell.openExternal("https://chatgpt.com/settings/usage"));
+  ipcMain.handle("signOutChatGPT", async () => {
+    await signOutChatGPT(settings);
+    return settings.view();
+  });
   ipcMain.handle("testConnection", async (_e, role: ConnectionRole) => (await loadAI()).testConnection(settings, role));
   ipcMain.handle("listModels", (_e, role: ModelRole, provider: string) => listModels(settings, role, provider));
   // Local Whisper's model: whether it is here, and fetching it with progress (whisper-progress).

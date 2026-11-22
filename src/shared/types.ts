@@ -129,17 +129,19 @@ export const IMPORT_CHUNK_SEC = 30;
 
 /** "local": on this Mac (macOS 26's own transcriber), no account. */
 export type LiveProvider = "local" | "qgrid" | "openai";
-export type SummaryProvider = "qgrid" | "openai" | "anthropic";
+/** "chatgpt": the signed-in ChatGPT account's plan (Sign in with ChatGPT), no key. */
+export type SummaryProvider = "chatgpt" | "qgrid" | "openai" | "anthropic";
 
 export const DEFAULT_MODELS = {
   live: { local: "apple", openai: "gpt-live-transcribe", qgrid: "openai/gpt-live-transcribe" },
-  summary: { openai: "gpt-6-luna", anthropic: "claude-sonnet-5-5", qgrid: "openai/gpt-6-luna" },
+  summary: { chatgpt: "gpt-6.2-sol", openai: "gpt-6-luna", anthropic: "claude-sonnet-5-5", qgrid: "openai/gpt-6-luna" },
 } as const;
 
 export type ThemeMode = "system" | "light" | "dark";
 /** The look: Seogi's own (warm paper, terracotta) or the macOS system one (greys, the system accent). */
 export type AppStyle = "seogi" | "mac";
-export type KeyName = "openai" | "anthropic";
+/** "chatgpt" holds the signed-in ChatGPT account's tokens (main process only). */
+export type KeyName = "openai" | "anthropic" | "chatgpt";
 export type ConnectionRole = "summary";
 export type ModelRole = "live" | "summary";
 
@@ -170,9 +172,11 @@ export type Settings = {
   };
   /** Whether a key is stored; key values never leave the main process. */
   hasKey: { openai: boolean; anthropic: boolean };
+  /** The ChatGPT account whose plan summarizes and translates, when signed in. */
+  chatgpt: { email: string } | null;
 };
 
-export type StoredSettings = Omit<Settings, "hasKey">;
+export type StoredSettings = Omit<Settings, "hasKey" | "chatgpt">;
 
 /** Where an import is: fetching the speaker models once, finding speakers, then transcribing turns. */
 export type ImportProgress = { phase: "audio" | "recording" | "models" | "speakers" } | { phase: "transcribe"; done: number; total: number };
@@ -283,6 +287,11 @@ export type Api = {
   patchSettings(patch: Partial<StoredSettings>): Promise<Settings>;
   /** "" deletes the key. */
   setKey(name: KeyName, value: string): Promise<Settings>;
+  /** Signs in with ChatGPT in the browser; `error` says why it did not. */
+  signInChatGPT(): Promise<{ settings: Settings; error: string | null }>;
+  signOutChatGPT(): Promise<Settings>;
+  /** ChatGPT's usage settings in the browser. */
+  openChatGPTUsage(): Promise<void>;
   testConnection(role: ConnectionRole): Promise<ConnectionResult>;
   /** The models `provider` offers for `role`, from qgrid's catalog or the provider's model list. */
   listModels(role: ModelRole, provider: string): Promise<ModelList>;

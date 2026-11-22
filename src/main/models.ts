@@ -1,6 +1,7 @@
 import { translator, type Translate } from "../shared/i18n.ts";
 import { GPT_LIVE_MODEL, type ModelList, type ModelOption, type ModelRole } from "../shared/types.ts";
 import type { SettingsStore } from "./settings";
+import { chatgptModels } from "./chatgpt.ts";
 
 // qgrid's GET /api/qgrid/models: every served model by task, with prices.
 type CatalogText = {
@@ -48,6 +49,10 @@ export async function listModels(store: SettingsStore, role: ModelRole, provider
         { id: "apple", available: localSpeechAvailable(), detail: t("model.apple") },
         { id: "whisper", available: true, detail: t("model.whisper") },
       ] };
+    if (provider === "chatgpt") {
+      const ids = await chatgptModels(store);
+      return { ok: true, models: ids.map((id) => ({ id, available: true, detail: t("model.chatgpt") })) };
+    }
     if (provider === "qgrid") {
       const catalog: Catalog = await getJson(`${store.get().qgridUrl.replace(/\/$/, "")}/api/qgrid/models`);
       const models =

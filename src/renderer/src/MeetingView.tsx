@@ -337,6 +337,10 @@ export function MeetingView({
 const SESSION_MODEL = new RegExp(`^(${GPT_LIVE_MODEL}|(openai/)?gpt-live-transcribe|apple|whisper)$`);
 
 /** While recording runs, the model is fixed and only GPT-Live takes a glossary change at once. */
+/** Whether the summary provider can answer (it also translates): signed in, or its key stored. */
+const canAsk = (s: Settings) =>
+  s.summary.provider === "chatgpt" ? !!s.chatgpt : s.summary.provider === "qgrid" || s.hasKey[s.summary.provider];
+
 function SessionOptions({ meeting: m, running }: { meeting: MeetingDetail; running: boolean }) {
   const t = useT();
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -391,6 +395,7 @@ function SessionOptions({ meeting: m, running }: { meeting: MeetingDetail; runni
         <option value="ko" lang="ko">한국어</option>
         <option value="en" lang="en">English</option>
       </Select>
+      {m.translateTo && !canAsk(settings) && <p className="session-options__note">{t("session.translateNeeds")}</p>}
     </div>
   );
 }

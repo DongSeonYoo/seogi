@@ -1000,3 +1000,32 @@ test("a long stretch is cut in the middle of its quietest 100 ms among the last 
   pcm.fill(0, 16000 * 2, 16000 * 3); // silent, but too far back
   assert.equal(quietestCut(pcm), 16000 * 8 + 800);
 });
+
+test("requests on the ChatGPT plan stream unstored, with system text as instructions and no unsupported fields", async () => {
+  const { chatgptFetch } = await import("./main/chatgpt.ts");
+  const account = { clientId: "oaiapp_x", hostId: "urn:uuid:1", email: "a@b.c", sub: "s", accessToken: "tok", refreshToken: "r", expiresAt: Date.now() + 3_600_000, scope: "" };
+  const store = { secret: () => JSON.stringify(account), t: (k: string) => k } as unknown as Parameters<typeof chatgptFetch>[0];
+  const sent: { url: string; headers: Headers; body: Record<string, unknown> }[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init: RequestInit) => {
+    sent.push({ url, headers: new Headers(init.headers), body: JSON.parse(String(init.body)) });
+    return new Response("{}");
+  }) as typeof fetch;
+  try {
+    await chatgptFetch(store)("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { authorization: "Bearer chatgpt-plan" },
+      body: JSON.stringify({
+        model: "gpt-6.2-sol", max_output_tokens: 100, temperature: 0, store: true,
+        input: [{ role: "system", content: "Summarize." }, { role: "user", content: [{ type: "input_text", text: "hi" }] }],
+      }),
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(sent[0].headers.get("authorization"), "Bearer tok");
+  assert.deepEqual(sent[0].body, {
+    model: "gpt-6.2-sol", store: false, stream: true, instructions: "Summarize.",
+    input: [{ role: "user", content: [{ type: "input_text", text: "hi" }] }],
+  });
+});

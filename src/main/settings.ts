@@ -12,7 +12,8 @@ const DEFAULTS: StoredSettings = {
   qgridUrl: "http://localhost:44900",
   // On this Mac: works with no account or key (macOS 26).
   live: { provider: "local", model: DEFAULT_MODELS.live.local },
-  summary: { provider: "openai", model: DEFAULT_MODELS.summary.openai },
+  // The signed-in ChatGPT plan: no key; until signed in, summaries ask for it.
+  summary: { provider: "chatgpt", model: DEFAULT_MODELS.summary.chatgpt },
   language: "ko",
   glossary: "",
   recording: { micDeviceId: "", systemAudio: true },
@@ -45,9 +46,15 @@ export async function openSettings(dir: string) {
   // CSS prefers-color-scheme follows themeSource, so one switch re-themes every window.
   nativeTheme.themeSource = settings.theme;
 
+  const chatgptEmail = () => {
+    if (!keys.chatgpt) return null;
+    const a: { email: string; refreshToken: string } = JSON.parse(keys.chatgpt);
+    return a.refreshToken ? { email: a.email } : null; // a refused refresh token means signed out
+  };
   const view = (): Settings => ({
     ...settings,
     hasKey: { openai: !!keys.openai, anthropic: !!keys.anthropic },
+    chatgpt: chatgptEmail(),
   });
 
   return {
@@ -56,6 +63,14 @@ export async function openSettings(dir: string) {
     },
 
     view,
+
+    /** A stored secret, or undefined. */
+    secret(name: KeyName): string | undefined {
+      return keys[name];
+    },
+
+    /** Text in the app's language, for errors made in the main process. */
+    t: ((key, vars) => translator(settings.locale)(key, vars)) as ReturnType<typeof translator>,
 
     key(name: KeyName): string {
       const k = keys[name];

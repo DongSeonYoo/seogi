@@ -318,7 +318,7 @@ function ModelGroup({
         >
           {providers.map((p) => (
             <option key={p} value={p}>
-              {p === "local" ? t("settings.localProvider") : p === "qgrid" ? PROVIDER_NAME[p] : t("settings.apiKeyProvider", { name: PROVIDER_NAME[p] })}
+              {p === "local" ? t("settings.localProvider") : p === "chatgpt" ? t("settings.chatgptProvider") : p === "qgrid" ? PROVIDER_NAME[p] : t("settings.apiKeyProvider", { name: PROVIDER_NAME[p] })}
             </option>
           ))}
         </Select>
@@ -410,10 +410,42 @@ function WhisperModel() {
   );
 }
 
+/** Sign in with ChatGPT: the account whose plan pays for summaries and translations. */
+function ChatGPTAccount({ s, setS }: { s: Settings; setS: (s: Settings) => void }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function signIn() {
+    setBusy(true);
+    setError(null);
+    const r = await window.api.signInChatGPT();
+    setBusy(false);
+    setError(r.error);
+    setS(r.settings);
+  }
+  return (
+    <Group title={t("settings.chatgptAccount")}>
+      <Row
+        label={t("settings.chatgptAccount")}
+        description={error ?? (s.chatgpt ? t("settings.chatgptIn", { email: s.chatgpt.email }) : busy ? t("settings.chatgptSigningIn") : t("settings.chatgptOut"))}
+      >
+        {s.chatgpt ? (
+          <span className="inline-form">
+            <Button onClick={() => void window.api.openChatGPTUsage()}>{t("settings.chatgptManage")}</Button>
+            <Button onClick={async () => setS(await window.api.signOutChatGPT())}>{t("settings.chatgptSignOut")}</Button>
+          </span>
+        ) : (
+          <Button variant="primary" onClick={() => void signIn()} disabled={busy}>{t("settings.chatgptSignIn")}</Button>
+        )}
+      </Row>
+    </Group>
+  );
+}
+
 function Models({ s, patch, setS }: SectionProps & { setS: (s: Settings) => void }) {
   const t = useT();
   const usesQgrid = [s.live, s.summary].some((x) => x.provider === "qgrid");
-  const reloadKey = `${s.qgridUrl}|${s.hasKey.openai}|${s.hasKey.anthropic}`;
+  const reloadKey = `${s.qgridUrl}|${s.hasKey.openai}|${s.hasKey.anthropic}|${s.chatgpt?.email ?? ""}`;
   return (
     <>
       <ModelGroup
@@ -429,12 +461,13 @@ function Models({ s, patch, setS }: SectionProps & { setS: (s: Settings) => void
         role="summary"
         title={t("settings.summaryTitle")}
         description={t("settings.summaryDesc")}
-        providers={["qgrid", "openai", "anthropic"]}
+        providers={["chatgpt", "openai", "anthropic", "qgrid"]}
         value={s.summary}
         onChange={(v) => patch({ summary: { provider: v.provider as SummaryProvider, model: v.model, effort: v.effort } })}
         test="summary"
         reloadKey={reloadKey}
       />
+      {s.summary.provider === "chatgpt" && <ChatGPTAccount s={s} setS={setS} />}
 
       {usesQgrid && (
         <Group title="qgrid">
