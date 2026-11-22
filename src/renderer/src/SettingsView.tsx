@@ -1,4 +1,4 @@
-import { Cpu, FolderOpen, HardDrive, Info, Languages, Mic, Plug, SlidersHorizontal, Square } from "lucide-react";
+import { Cpu, FolderOpen, HardDrive, Info, Languages, Mic, Plug, Server, SlidersHorizontal, Square } from "lucide-react";
 import { useId, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   DEFAULT_MODELS,
@@ -29,6 +29,7 @@ import { onAccent } from "./format";
 const SECTIONS = [
   { id: "general", label: "settings.general", icon: SlidersHorizontal },
   { id: "models", label: "settings.models", icon: Cpu },
+  { id: "qgrid", label: "settings.qgrid", icon: Server },
   { id: "transcription", label: "settings.transcription", icon: Languages },
   { id: "recording", label: "settings.recording", icon: Mic },
   { id: "storage", label: "settings.storage", icon: HardDrive },
@@ -135,6 +136,7 @@ export function SettingsView() {
           )}
           {s && section === "general" && <General s={s} patch={patch} />}
           {s && section === "models" && <Models s={s} patch={patch} setS={setS} />}
+          {s && section === "qgrid" && <QgridSection s={s} patch={patch} />}
           {s && section === "transcription" && <Transcription s={s} patch={patch} />}
           {s && section === "recording" && <RecordingSection s={s} patch={patch} recording={recording} />}
           {section === "storage" && <Storage />}
@@ -258,6 +260,8 @@ function KeysNote() {
 }
 
 const PROVIDER_NAME: Record<string, string> = { qgrid: "qgrid", openai: "OpenAI", anthropic: "Anthropic" };
+/** The on-device engines by name; other models show their ids. */
+const MODEL_NAME: Record<string, string> = { apple: "Apple · macOS", whisper: "Whisper large-v3-turbo" };
 
 /** Reasoning effort names as qgrid lists them; an unknown one shows as it is. */
 const EFFORT_LABEL: Record<string, MessageKey> = {
@@ -307,7 +311,7 @@ function ModelGroup({
 
   return (
     <Group title={title}>
-      <Row label={t("settings.provider")} description={description} htmlFor={`${role}-provider`}>
+      {providers.length > 1 && <Row label={t("settings.provider")} description={description} htmlFor={`${role}-provider`}>
         <Select
           id={`${role}-provider`}
           value={value.provider}
@@ -322,7 +326,7 @@ function ModelGroup({
             </option>
           ))}
         </Select>
-      </Row>
+      </Row>}
       <Row
         label={t("settings.model")}
         htmlFor={id}
@@ -341,7 +345,7 @@ function ModelGroup({
               <optgroup key={group} label={group}>
                 {items?.map((m) => (
                   <option key={m.id} value={m.id} disabled={!m.available}>
-                    {m.available ? m.id : t("settings.modelUnavailable", { id: m.id })}
+                    {m.available ? (MODEL_NAME[m.id] ?? m.id) : t("settings.modelUnavailable", { id: MODEL_NAME[m.id] ?? m.id })}
                   </option>
                 ))}
               </optgroup>
@@ -410,6 +414,93 @@ function WhisperModel() {
   );
 }
 
+/** A role handed to qgrid: said here, set in the qgrid tab. */
+function ViaQgrid({ title, model }: { title: string; model: string }) {
+  const t = useT();
+  return (
+    <Group title={title}>
+      <Row label={t("settings.provider")} description={t("settings.viaQgrid")}>
+        <span className="tnum">qgrid · {model}</span>
+      </Row>
+    </Group>
+  );
+}
+
+/**
+ * Everything qgrid adds, in one place: its server, and handing live captions or summaries and
+ * translation to it. Off, Seogi works without it (this Mac, ChatGPT, or API keys).
+ */
+function QgridSection({ s, patch }: SectionProps) {
+  const t = useT();
+  const [status, setStatus] = useState<ModelList | null>(null);
+  useEffect(() => {
+    setStatus(null);
+    void window.api.listModels("summary", "qgrid").then(setStatus);
+  }, [s.qgridUrl]);
+  const reloadKey = s.qgridUrl;
+  const live = s.live.provider === "qgrid";
+  const summary = s.summary.provider === "qgrid";
+  return (
+    <>
+      <p className="settings-group__note">{t("settings.qgridIntro")}</p>
+      <Group title={t("settings.qgridServer")}>
+        <Row label={t("settings.qgridUrl")} description={t("settings.qgridUrlDesc")} htmlFor="qgrid-url">
+          <CommitInput id="qgrid-url" value={s.qgridUrl} onCommit={(qgridUrl) => patch({ qgridUrl })} />
+        </Row>
+        <Row
+          label={t("settings.qgridStatus")}
+          description={status === null ? t("settings.modelsLoading") : status.ok ? t("settings.qgridOk", { n: status.models.length }) : t("settings.qgridDown", { error: status.error })}
+        >
+          {null}
+        </Row>
+      </Group>
+      <Group title={t("settings.liveTitle")}>
+        <Row label={t("settings.qgridLive")} description={t("settings.qgridLiveDesc")} htmlFor="qgrid-live">
+          <Switch
+            id="qgrid-live"
+            label={t("settings.qgridLive")}
+            checked={live}
+            onChange={(on) => patch({ live: on ? { provider: "qgrid", model: DEFAULT_MODELS.live.qgrid } : { provider: "local", model: DEFAULT_MODELS.live.local } })}
+          />
+        </Row>
+      </Group>
+      {live && (
+        <ModelGroup
+          role="live"
+          title={t("settings.qgridLiveModel")}
+          description=""
+          providers={["qgrid"]}
+          value={s.live}
+          onChange={(v) => patch({ live: { provider: "qgrid", model: v.model } })}
+          reloadKey={reloadKey}
+        />
+      )}
+      <Group title={t("settings.summaryTitle")}>
+        <Row label={t("settings.qgridSummary")} description={t("settings.qgridSummaryDesc")} htmlFor="qgrid-summary">
+          <Switch
+            id="qgrid-summary"
+            label={t("settings.qgridSummary")}
+            checked={summary}
+            onChange={(on) => patch({ summary: on ? { provider: "qgrid", model: DEFAULT_MODELS.summary.qgrid } : { provider: "chatgpt", model: DEFAULT_MODELS.summary.chatgpt } })}
+          />
+        </Row>
+      </Group>
+      {summary && (
+        <ModelGroup
+          role="summary"
+          title={t("settings.qgridSummaryModel")}
+          description=""
+          providers={["qgrid"]}
+          value={s.summary}
+          onChange={(v) => patch({ summary: { provider: "qgrid", model: v.model, effort: v.effort } })}
+          test="summary"
+          reloadKey={reloadKey}
+        />
+      )}
+    </>
+  );
+}
+
 /** Sign in with ChatGPT: the account whose plan pays for summaries and translations. */
 function ChatGPTAccount({ s, setS }: { s: Settings; setS: (s: Settings) => void }) {
   const t = useT();
@@ -444,38 +535,37 @@ function ChatGPTAccount({ s, setS }: { s: Settings; setS: (s: Settings) => void 
 
 function Models({ s, patch, setS }: SectionProps & { setS: (s: Settings) => void }) {
   const t = useT();
-  const usesQgrid = [s.live, s.summary].some((x) => x.provider === "qgrid");
   const reloadKey = `${s.qgridUrl}|${s.hasKey.openai}|${s.hasKey.anthropic}|${s.chatgpt?.email ?? ""}`;
   return (
     <>
-      <ModelGroup
-        role="live"
-        title={t("settings.liveTitle")}
-        description={t("settings.liveDesc")}
-        providers={["local", "openai", "qgrid"]}
-        value={s.live}
-        onChange={(v) => patch({ live: { provider: v.provider as LiveProvider, model: v.model } })}
-        reloadKey={reloadKey}
-      />
-      <ModelGroup
-        role="summary"
-        title={t("settings.summaryTitle")}
-        description={t("settings.summaryDesc")}
-        providers={["chatgpt", "openai", "anthropic", "qgrid"]}
-        value={s.summary}
-        onChange={(v) => patch({ summary: { provider: v.provider as SummaryProvider, model: v.model, effort: v.effort } })}
-        test="summary"
-        reloadKey={reloadKey}
-      />
-      {s.summary.provider === "chatgpt" && <ChatGPTAccount s={s} setS={setS} />}
-
-      {usesQgrid && (
-        <Group title="qgrid">
-          <Row label={t("settings.qgridUrl")} description={t("settings.qgridUrlDesc")} htmlFor="qgrid-url">
-            <CommitInput id="qgrid-url" value={s.qgridUrl} onCommit={(qgridUrl) => patch({ qgridUrl })} />
-          </Row>
-        </Group>
+      {s.live.provider === "qgrid" ? (
+        <ViaQgrid title={t("settings.liveTitle")} model={s.live.model} />
+      ) : (
+        <ModelGroup
+          role="live"
+          title={t("settings.liveTitle")}
+          description={t("settings.liveDesc")}
+          providers={["local", "openai"]}
+          value={s.live}
+          onChange={(v) => patch({ live: { provider: v.provider as LiveProvider, model: v.model } })}
+          reloadKey={reloadKey}
+        />
       )}
+      {s.summary.provider === "qgrid" ? (
+        <ViaQgrid title={t("settings.summaryTitle")} model={s.summary.model} />
+      ) : (
+        <ModelGroup
+          role="summary"
+          title={t("settings.summaryTitle")}
+          description={t("settings.summaryDesc")}
+          providers={["chatgpt", "openai", "anthropic"]}
+          value={s.summary}
+          onChange={(v) => patch({ summary: { provider: v.provider as SummaryProvider, model: v.model, effort: v.effort } })}
+          test="summary"
+          reloadKey={reloadKey}
+        />
+      )}
+      {s.summary.provider === "chatgpt" && <ChatGPTAccount s={s} setS={setS} />}
 
       <Group title={t("settings.apiKeys")}>
         <KeyRow name="openai" label="OpenAI" placeholder="sk-…" stored={s.hasKey.openai} onChange={setS} />
