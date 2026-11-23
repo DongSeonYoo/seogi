@@ -671,7 +671,7 @@ app.whenReady().then(async () => {
         signal: AbortSignal.any([entry.abort.signal, AbortSignal.timeout(15_000)]),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body?.message ?? `qgrid ${res.status}`);
+      if (!res.ok) throw new Error(body?.message ?? `Server ${res.status}`);
       return { ok: true, sdp: String(body.sdp) };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };

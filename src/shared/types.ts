@@ -145,6 +145,9 @@ export type LiveProvider = "local" | "qgrid" | "openai";
 /** "chatgpt": the signed-in ChatGPT account's plan (Sign in with ChatGPT), no key. */
 export type SummaryProvider = "chatgpt" | "qgrid" | "openai" | "anthropic";
 
+/** The on-device engines by name; other models show their ids. */
+export const MODEL_NAME: Record<string, string> = { apple: "Apple · macOS", whisper: "Whisper large-v3-turbo" };
+
 export const DEFAULT_MODELS = {
   live: { local: "apple", openai: "gpt-live-transcribe", qgrid: "openai/gpt-live-transcribe" },
   summary: { chatgpt: "gpt-6.2-sol", openai: "gpt-6-luna", anthropic: "claude-sonnet-5-5", qgrid: "openai/gpt-6-luna" },

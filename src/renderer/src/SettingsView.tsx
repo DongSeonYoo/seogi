@@ -18,6 +18,7 @@ import {
   type SummaryProvider,
   type AppStyle,
   type ThemeMode,
+  MODEL_NAME,
 } from "../../shared/types";
 import { liveCaptionHooks } from "./gptLive";
 import { startRecording } from "./recorder";
@@ -259,9 +260,7 @@ function KeysNote() {
   return <p className="settings-group__note">{t(packaged ? "settings.keysNote" : "settings.keysNoteDev")}</p>;
 }
 
-const PROVIDER_NAME: Record<string, string> = { qgrid: "qgrid", openai: "OpenAI", anthropic: "Anthropic" };
-/** The on-device engines by name; other models show their ids. */
-const MODEL_NAME: Record<string, string> = { apple: "Apple · macOS", whisper: "Whisper large-v3-turbo" };
+const PROVIDER_NAME: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic" };
 
 /** Reasoning effort names as qgrid lists them; an unknown one shows as it is. */
 const EFFORT_LABEL: Record<string, MessageKey> = {
@@ -322,7 +321,7 @@ function ModelGroup({
         >
           {providers.map((p) => (
             <option key={p} value={p}>
-              {p === "local" ? t("settings.localProvider") : p === "chatgpt" ? t("settings.chatgptProvider") : p === "qgrid" ? PROVIDER_NAME[p] : t("settings.apiKeyProvider", { name: PROVIDER_NAME[p] })}
+              {p === "local" ? t("settings.localProvider") : p === "chatgpt" ? t("settings.chatgptProvider") : p === "qgrid" ? t("settings.qgrid") : t("settings.apiKeyProvider", { name: PROVIDER_NAME[p] })}
             </option>
           ))}
         </Select>
@@ -420,7 +419,7 @@ function ViaQgrid({ title, model }: { title: string; model: string }) {
   return (
     <Group title={title}>
       <Row label={t("settings.provider")} description={t("settings.viaQgrid")}>
-        <span className="tnum">qgrid · {model}</span>
+        <span className="tnum">{t("settings.qgrid")} · {model}</span>
       </Row>
     </Group>
   );
@@ -435,7 +434,7 @@ function QgridSection({ s, patch }: SectionProps) {
   const [status, setStatus] = useState<ModelList | null>(null);
   useEffect(() => {
     setStatus(null);
-    void window.api.listModels("summary", "qgrid").then(setStatus);
+    if (s.qgridUrl.trim()) void window.api.listModels("summary", "qgrid").then(setStatus);
   }, [s.qgridUrl]);
   const reloadKey = s.qgridUrl;
   const live = s.live.provider === "qgrid";
@@ -449,7 +448,7 @@ function QgridSection({ s, patch }: SectionProps) {
         </Row>
         <Row
           label={t("settings.qgridStatus")}
-          description={status === null ? t("settings.modelsLoading") : status.ok ? t("settings.qgridOk", { n: status.models.length }) : t("settings.qgridDown", { error: status.error })}
+          description={!s.qgridUrl.trim() ? t("settings.qgridNone") : status === null ? t("settings.modelsLoading") : status.ok ? t("settings.qgridOk", { n: status.models.length }) : t("settings.qgridDown", { error: status.error })}
         >
           {null}
         </Row>

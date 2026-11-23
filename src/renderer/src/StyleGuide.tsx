@@ -78,13 +78,13 @@ export function StyleGuide() {
           {(a) => <input {...a} className="control" defaultValue="sk-invalid" />}
         </Field>
         <Field label="성공" helper="연결을 확인했습니다.">
-          {(a) => <input {...a} className="control" data-state="success" defaultValue="http://localhost:44900" />}
+          {(a) => <input {...a} className="control" data-state="success" defaultValue="http://localhost:8080" />}
         </Field>
         <Field label="선택">
           {(a) => (
-            <Select {...a} defaultValue="qgrid">
+            <Select {...a} defaultValue="openai">
               <option value="openai">OpenAI · API key</option>
-              <option value="qgrid">qgrid</option>
+              <option value="anthropic">Anthropic · API key</option>
             </Select>
           )}
         </Field>

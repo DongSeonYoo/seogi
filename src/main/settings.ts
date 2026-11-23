@@ -9,7 +9,8 @@ const DEFAULTS: StoredSettings = {
   theme: "system",
   style: "seogi",
   depth: 50,
-  qgridUrl: "http://localhost:44900",
+  // The custom connection: off until the user enters a server.
+  qgridUrl: "",
   // On this Mac: works with no account or key (macOS 26).
   live: { provider: "local", model: DEFAULT_MODELS.live.local },
   // The signed-in ChatGPT plan: no key; until signed in, summaries ask for it.

@@ -1,6 +1,6 @@
 import { AlertCircle, BookmarkPlus, BookPlus, ChevronDown, ChevronUp, Ellipsis, RotateCcw, Search, X, Check, Copy, FileAudio, Info, Mic, Pause, Pencil, Play, Share, Sparkles, Square } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { GPT_LIVE_MODEL, type LiveView, type Track, type MeetingDetail, type ModelOption, type Settings, type SpeakerNames, type Utterance } from "../../shared/types";
+import { GPT_LIVE_MODEL, MODEL_NAME, type LiveView, type Track, type MeetingDetail, type ModelOption, type Settings, type SpeakerNames, type Utterance } from "../../shared/types";
 import { clock, shownNames, speakerKey, speakerName } from "../../shared/summary";
 import { joinSplitSentences } from "../../shared/transcript";
 import { matchRanges } from "../../shared/search";
@@ -383,7 +383,7 @@ function SessionOptions({ meeting: m, running }: { meeting: MeetingDetail; runni
         {!models.some((x) => x.id === model) && <option value={model}>{model}</option>}
         {models.map((x) => (
           <option key={x.id} value={x.id}>
-            {x.id === saved ? t("session.modelDefault", { model: x.id }) : x.id}
+            {x.id === saved ? t("session.modelDefault", { model: MODEL_NAME[x.id] ?? x.id }) : (MODEL_NAME[x.id] ?? x.id)}
           </option>
         ))}
       </Select>}
