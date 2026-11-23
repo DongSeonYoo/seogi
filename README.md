@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/DongSeonYoo/seogi/releases/latest"><img src="assets/readme/download-macos.svg" width="232" alt="Download Seogi for macOS (beta)"></a>
+  <a href="https://github.com/DongSeonYoo/seogi/releases/latest/download/Seogi-macOS-arm64.zip"><img src="assets/readme/download-macos.svg" width="232" alt="Download Seogi for macOS (beta)"></a>
 </p>
 
 <p align="center">
@@ -57,7 +57,7 @@ Answers cite lines as `seogi://meeting/51?t=12:34` links, which open Seogi at th
 
 ## Install
 
-1. Download the latest release and move **Seogi.app** to Applications.
+1. Download [Seogi-macOS-arm64.zip](https://github.com/DongSeonYoo/seogi/releases/latest/download/Seogi-macOS-arm64.zip) from the [latest release](https://github.com/DongSeonYoo/seogi/releases/latest), unzip it, and move **Seogi.app** to Applications.
 2. Seogi is not notarized yet, so macOS stops the first launch. Open **System Settings › Privacy & Security** and choose **Open Anyway**.
 3. On the first recording, allow the microphone and **Screen & System Audio Recording**.
 
