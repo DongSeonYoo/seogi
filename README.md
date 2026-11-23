@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/readme/icon.png" width="128" alt="">
+</p>
+
 <h1 align="center">Seogi</h1>
 
 <p align="center">
