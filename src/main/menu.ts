@@ -17,6 +17,8 @@ export function appMenu(
   disabled: ReadonlySet<string> = new Set(),
   /** Labels the screen words by state (Star / Unstar), so the menu says the same. */
   labels: Record<string, string> = {},
+  /** Installs the seogi command and agent skill; packaged app only. */
+  installForAgents?: () => void,
 ): Menu {
   const item = (id: ActionId, label: string, accelerator?: string): MenuItemConstructorOptions => ({
     label: labels[id] ?? label,
@@ -31,6 +33,7 @@ export function appMenu(
         { role: "about", label: t("menu.about") },
         { type: "separator" },
         { label: t("menu.settings"), accelerator: "Cmd+,", click: openSettings },
+        ...(installForAgents ? [{ label: t("menu.installForAgents"), click: installForAgents }] : []),
         { type: "separator" },
         { role: "services", label: t("menu.services") },
         { type: "separator" },

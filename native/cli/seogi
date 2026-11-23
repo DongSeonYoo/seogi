@@ -1,0 +1,5 @@
+#!/bin/sh
+# The seogi command (src/main/cli.ts), run by Seogi's own Electron as Node. The Seogi menu links
+# it into ~/.local/bin, so it finds the app through that link.
+res="$(dirname "$(readlink -f "$0")")/.."
+ELECTRON_RUN_AS_NODE=1 exec "$res/../MacOS/Seogi" "$res/app.asar/out/main/cli.js" "$@"

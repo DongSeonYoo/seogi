@@ -30,7 +30,8 @@ const cspInBuild: Plugin = {
 
 export default defineConfig({
   // electron-vite externalizes production dependencies. Only sherpa and its native addon ship loose.
-  main: { build: { license: true } },
+  // cli.ts is the seogi command (src/main/cli.ts), run by the app's Electron as Node.
+  main: { build: { license: true, rollupOptions: { input: { index: "src/main/index.ts", cli: "src/main/cli.ts" } } } },
   // Sandboxed preloads cannot be ES modules.
   preload: { build: { rollupOptions: { output: { format: "cjs", entryFileNames: "[name].cjs" } } } },
   renderer: { build: { minify: true, license: true }, plugins: [react(), cspInBuild] },

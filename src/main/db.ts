@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 import type {
   Folder,
   LibraryCounts,
@@ -18,7 +20,7 @@ const SEARCH_MEETINGS = 20;
 const SEARCH_LINES = 50;
 import type { Translate } from "../shared/i18n";
 
-export type Db = ReturnType<typeof openDb>;
+export type Db = ReturnType<typeof queries>;
 
 function legacySummary(json: string): Summary | null {
   let s: Summary;
@@ -93,7 +95,21 @@ export function openDb(file: string, appQuitMessage = "Processing stopped becaus
   db.prepare("UPDATE meetings SET status = 'error', error = ? WHERE status IN ('recording', 'processing')").run(
     appQuitMessage,
   );
+  return queries(db);
+}
 
+/**
+ * The library as it is, for the seogi command: no schema changes and no crash recovery, which
+ * would end a meeting the app is recording. Read only, so it works in an agent's sandbox. With the
+ * app closed there is no -wal file, and a read-only reader cannot make one: the file is then read
+ * as unchanging. ponytail: an app starting during that read is not seen; reads are milliseconds.
+ */
+export function readDb(file: string) {
+  const closed = !existsSync(`${file}-wal`);
+  return queries(new DatabaseSync(closed ? new URL(`${pathToFileURL(file).href}?immutable=1`) : file, { readOnly: true }));
+}
+
+function queries(db: DatabaseSync) {
   const live = "m.deleted_at IS NULL";
   const select = `SELECT m.*, f.id AS live_folder_id,
       COALESCE((julianday(m.ended_at) - julianday(m.started_at)) * 86400,

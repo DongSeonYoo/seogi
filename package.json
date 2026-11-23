@@ -51,6 +51,12 @@
     },
     "mac": {
       "category": "public.app-category.productivity",
+      "protocols": [
+        {
+          "name": "Seogi meeting",
+          "schemes": ["seogi"]
+        }
+      ],
       "target": "dir",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Seogi records your voice in meetings to transcribe it.",
@@ -66,6 +72,14 @@
         {
           "from": "build/bin",
           "to": "bin"
+        },
+        {
+          "from": "native/cli/seogi",
+          "to": "bin/seogi"
+        },
+        {
+          "from": "skills/seogi",
+          "to": "skill"
         }
       ]
     }

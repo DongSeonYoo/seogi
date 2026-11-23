@@ -1,5 +1,6 @@
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, protocol, session, shell, systemPreferences } from "electron";
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { GPT_LIVE_MODEL, GPT_LIVE_TAIL_MS, IMPORT_CHUNK_SEC, LIVE_TEST_ID, type LiveEvent, type LiveView } from "../shared/types";
@@ -20,7 +21,7 @@ import type {
   Track,
 } from "../shared/types";
 import { INTL_LOCALE, showStored, storedMessage, translator, type Locale } from "../shared/i18n";
-import { meetingDocument, speakerKey, summaryMarkdown } from "../shared/summary";
+import { clockSeconds, meetingDocument, speakerKey, summaryMarkdown } from "../shared/summary";
 import { joinSplitSentences } from "../shared/transcript";
 import { glossaryPrompt, glossaryTerms, isPromptEcho, splitUtterances } from "./transcription";
 import { openDb } from "./db";
@@ -67,6 +68,59 @@ const IMPORT_PARALLEL = 5;
 const TURN_PAD_SEC = 0.2;
 /** How far before a line's time its playback starts. */
 const PLAYBACK_LEAD_SEC = 1;
+/**
+ * seogi://meeting/51?t=12:34 opens a meeting at a line: the links the seogi command and agents
+ * cite. One that starts the app waits until the window asks for it (takeLink).
+ */
+type Link = { id: number; sec?: number };
+let pendingLink: Link | null = null;
+function parseLink(url: string): Link | null {
+  const u = URL.parse(url);
+  const id = Number(u?.pathname.slice(1));
+  if (u?.host !== "meeting" || !Number.isInteger(id)) return null;
+  const sec = clockSeconds(u.searchParams.get("t") ?? "");
+  return { id, ...(Number.isFinite(sec) && u.searchParams.has("t") && { sec }) };
+}
+app.on("open-url", (e, url) => {
+  e.preventDefault();
+  const link = parseLink(url);
+  if (!link) return;
+  if (!win) return void (pendingLink = link);
+  win.show();
+  win.webContents.send("open-link", link);
+});
+
+/**
+ * Links the seogi command and the agent skill (skills/seogi) to the app's own copies, so a new
+ * version updates them. Only links are replaced; a file or folder of the user's stays.
+ */
+function installForAgents(t: ReturnType<typeof translator>) {
+  const res = process.resourcesPath;
+  const links: [string, string][] = [
+    [path.join(res, "bin", "seogi"), path.join(homedir(), ".local", "bin", "seogi")],
+    [path.join(res, "skill"), path.join(homedir(), ".agents", "skills", "seogi")],
+    ...(existsSync(path.join(homedir(), ".claude")) ? [[path.join(res, "skill"), path.join(homedir(), ".claude", "skills", "seogi")] as [string, string]] : []),
+  ];
+  const done: string[] = [];
+  const kept: string[] = [];
+  for (const [target, at] of links) {
+    const shown = at.replace(homedir(), "~");
+    const existing = lstatSync(at, { throwIfNoEntry: false });
+    if (existing && !existing.isSymbolicLink()) {
+      kept.push(shown);
+      continue;
+    }
+    mkdirSync(path.dirname(at), { recursive: true });
+    rmSync(at, { force: true });
+    symlinkSync(target, at);
+    done.push(shown);
+  }
+  void dialog.showMessageBox({
+    message: t("agents.installed"),
+    detail: [done.join("\n"), kept.length ? t("agents.kept", { paths: kept.join(", ") }) : "", t("agents.path")].filter(Boolean).join("\n\n"),
+  });
+}
+
 protocol.registerSchemesAsPrivileged([
   { scheme: AUDIO_SCHEME, privileges: { stream: true, supportFetchAPI: true } },
 ]);
@@ -229,7 +283,7 @@ app.whenReady().then(async () => {
   }
   let menuState: { disabled: Set<string>; labels: Record<string, string> } = { disabled: new Set(), labels: {} };
   const rebuildMenu = () =>
-    Menu.setApplicationMenu(appMenu(history, sendAction, openSettingsWindow, tr(), menuState.disabled, menuState.labels));
+    Menu.setApplicationMenu(appMenu(history, sendAction, openSettingsWindow, tr(), menuState.disabled, menuState.labels, app.isPackaged ? () => installForAgents(tr()) : undefined));
   ipcMain.on("menuState", (_e, disabled: string[], labels: Record<string, string>) => {
     const same =
       disabled.length === menuState.disabled.size &&
@@ -691,6 +745,11 @@ app.whenReady().then(async () => {
       separating.delete(id);
       importProgress(id, null);
     }
+  });
+  ipcMain.handle("takeLink", () => {
+    const link = pendingLink;
+    pendingLink = null;
+    return link;
   });
   ipcMain.handle("markOpened", (_e, id: number) => db.setOpened(id, true));
   ipcMain.handle("audioFor", (_e, id: number, track: Track, startSec: number, exact?: boolean): AudioRef | null => {

@@ -1058,3 +1058,26 @@ test("search finds every word in any order, ignoring case, and Korean initial co
   assert.equal(text, `…${"가".repeat(10)}헤비${"나".repeat(20)}…`);
   assert.deepEqual(marks, [[11, 13]]);
 });
+
+test("the seogi command reads a meeting being recorded without ending it", async () => {
+  const { openDb, readDb } = await import("./main/db.ts");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(`${tmpdir()}/seogi-`);
+  const file = `${dir}/seogi.db`;
+  const app = openDb(file);
+  const id = app.createMeeting("Live", null);
+  app.startRecording(id);
+  app.addUtterances(id, "mic", [{ startSec: 1, text: "hello" }]);
+  const cli = readDb(file);
+  assert.equal(cli.getMeeting(id)?.status, "recording");
+  assert.equal(cli.getMeeting(id)?.utterances[0].text, "hello");
+  assert.equal(app.getMeeting(id)?.status, "recording");
+  cli.raw.close();
+  app.raw.close();
+  // The app closed (no -wal file left): read as an unchanging file.
+  const closed = readDb(file);
+  assert.equal(closed.getMeeting(id)?.utterances.length, 1);
+  closed.raw.close();
+  rmSync(dir, { recursive: true });
+});

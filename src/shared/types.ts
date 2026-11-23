@@ -291,6 +291,9 @@ export type Api = {
   /** Save dialog, then the meeting as Markdown or plain text; false when cancelled. */
   exportMeeting(id: number, format: "md" | "txt"): Promise<boolean>;
   markOpened(id: number): Promise<void>;
+  /** A seogi:// link that started the app, once. */
+  takeLink(): Promise<{ id: number; sec?: number } | null>;
+  onOpenLink(listener: (link: { id: number; sec?: number }) => void): () => void;
   /** `exact`: play from `startSec` itself (a seek), not a little before it (a line). */
   audioFor(meetingId: number, track: Track, startSec: number, exact?: boolean): Promise<AudioRef | null>;
   /** A track's saved chunks (Ogg Opus or WAV bytes) in time order. */

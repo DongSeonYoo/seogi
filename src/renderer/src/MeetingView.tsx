@@ -496,11 +496,26 @@ function Transcript({
     if (!target) return;
     const el = scroller.current?.querySelector(`[data-key="${target.id}"]`);
     stick.current = false;
-    el?.scrollIntoView({ block: "center", behavior: scrollBehavior() });
+    // Lines out of view are laid out only when near (content-visibility), so a jump first measures
+    // estimates and lands short; a smooth scroll stopped minutes early. It jumps at once and again
+    // each frame until the line stays put.
+    let frame = 0;
+    let last = NaN;
+    const settle = (tries: number) => {
+      if (!el) return;
+      el.scrollIntoView({ block: "center" });
+      const top = el.getBoundingClientRect().top;
+      if (top !== last && tries > 0) frame = requestAnimationFrame(() => settle(tries - 1));
+      last = top;
+    };
+    settle(JUMP_SETTLE_FRAMES);
     const same = confirmed.filter((u) => Math.floor(u.startSec) === Math.floor(target.startSec)).map((u) => u.id);
     setFocused(new Set(same.length ? same : [target.id]));
     const timer = setTimeout(() => setFocused(new Set()), 2000);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      cancelAnimationFrame(frame);
+    };
   }, [focus]);
 
   // A meeting opens where it is read from: a finished one at its start, one still being recorded at
@@ -1041,6 +1056,9 @@ function FindBar({ lines, scroller, focusN, onClose }: { lines: Line[]; scroller
     </div>
   );
 }
+
+/** Most frames a jump to a line keeps correcting itself while the lines around it lay out. */
+const JUMP_SETTLE_FRAMES = 30;
 
 /** Smooth jumps, unless the person asked macOS to reduce motion (CSS cannot stop a JS scroll). */
 const scrollBehavior = (): ScrollBehavior =>

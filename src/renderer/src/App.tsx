@@ -196,6 +196,20 @@ export function App() {
     if (detail?.status === "done" && detail.unread) void api.markOpened(detail.id).then(refreshList);
   }, [detail, refreshList]);
 
+  /** Opens a meeting, at a line when `sec` is given: from ⌘K and seogi:// links. */
+  function openAt(id: number, sec?: number) {
+    setView("all");
+    select(id);
+    setReveal(sec === undefined ? null : { id, sec, n: Date.now() });
+  }
+
+  // seogi:// links (the seogi command, agents' answers); a deleted meeting's link does nothing.
+  useEffect(() => {
+    const open = (l: { id: number; sec?: number }) => void api.getMeeting(l.id).then((m) => m && openAt(l.id, l.sec));
+    void api.takeLink().then((l) => l && open(l));
+    return api.onOpenLink(open);
+  }, []);
+
   function select(id: number | null) {
     setSelected(id);
     setRenaming(false);
@@ -680,11 +694,7 @@ export function App() {
         actions={(Object.keys(actions) as ActionId[])
           .filter((id) => !["palette", "undo", "redo", "styleGuide"].includes(id))
           .map((id) => ({ ...actions[id], id }))}
-        onPick={(id, sec) => {
-          setView("all");
-          select(id);
-          setReveal(sec === undefined ? null : { id, sec, n: Date.now() });
-        }}
+        onPick={openAt}
       />
     </div>
   );
