@@ -634,9 +634,18 @@ const Message = memo(function Message({
   useEffect(() => {
     if (naming && nameEl.current) startEditing(nameEl.current);
   }, [naming]);
-  /** The word (its index in `parts`) or the whole line being corrected. */
-  const [editing, setEditing] = useState<number | "line" | null>(null);
+  /**
+   * What is being corrected: the whole line, opening with the caret or selection at these
+   * characters, or one word (its index in `parts`) of a line still being spoken.
+   */
+  const [editing, setEditing] = useState<number | Span | null>(null);
+  const lineEdit = typeof editing === "object" ? editing : null;
   const parts = useMemo(() => u.text.split(/(\s+)/), [u.text]);
+  /** Where word `i` sits in the line's text. */
+  const wordSpan = (i: number): Span => {
+    const from = parts.slice(0, i).join("").length;
+    return { from, to: from + parts[i].length };
+  };
   /** The word the arrow keys are on (an index in `parts`); Tab corrects it. */
   const [cursor, setCursor] = useState<number | null>(null);
   const row = useRef<HTMLLIElement>(null);
@@ -662,7 +671,7 @@ const Message = memo(function Message({
   const replaceWord = (i: number, word: string) => parts.map((p, j) => (j === i ? word : p)).join("");
   const [hoverWord, setHoverWord] = useState<number | null>(null);
   const cancel = (el: HTMLElement) => {
-    el.textContent = editing === "line" ? u.text : parts[editing as number]; // undo the typing React does not know of
+    el.textContent = lineEdit ? u.text : parts[editing as number]; // undo the typing React does not know of
     setEditing(null);
     row.current?.focus();
     if (u.draft) onDraft.release(u);
@@ -698,7 +707,7 @@ const Message = memo(function Message({
         if (!from || !words.length) return;
         const word = from === "end" ? words.at(-1)! : words[0];
         setCursor(word);
-        if (edit) setEditing(word); // Tab from the last word of the line before
+        if (edit) setEditing(wordSpan(word)); // Tab from the line before
       }}
       onBlur={(e) => {
         if (e.currentTarget.contains(e.relatedTarget)) return;
@@ -712,7 +721,7 @@ const Message = memo(function Message({
           const next = at + (e.key === "ArrowRight" ? 1 : at === -1 ? words.length : -1);
           if (next >= 0 && next < words.length) setCursor(words[next]);
           else moveLine(e.currentTarget, e.key === "ArrowRight" ? 1 : -1);
-        } else if (e.key === "Tab" && cursor !== null && !e.shiftKey) setEditing(cursor);
+        } else if (e.key === "Tab" && cursor !== null && !e.shiftKey) setEditing(wordSpan(cursor));
         else if (e.key === "Escape" && cursor !== null) setCursor(null);
         else return;
         e.preventDefault();
@@ -769,14 +778,18 @@ const Message = memo(function Message({
         <p
           className="msg__text"
           // The whole line, corrected where it stands so nothing moves.
-          contentEditable={editing === "line" ? "plaintext-only" : undefined}
+          contentEditable={lineEdit ? "plaintext-only" : undefined}
           suppressContentEditableWarning
           ref={(el) => {
-            if (el && editing === "line" && document.activeElement !== el) startEditing(el);
+            if (el && lineEdit && document.activeElement !== el) startEditing(el, lineEdit);
           }}
-          {...(editing === "line" && editKeys(el => save(el.textContent ?? ""), cancel))}
+          {...(lineEdit && editKeys((el) => save(el.textContent ?? ""), cancel, (el, back) => {
+            // Tab: save and go on to the next line (Shift: the one before).
+            save(el.textContent ?? "");
+            if (row.current) moveLine(row.current, back ? -1 : 1, true);
+          }))}
         >
-          {editing === "line"
+          {lineEdit
             ? u.text
             : parts.map((p, i) =>
                 i % 2 ? p
@@ -795,13 +808,21 @@ const Message = memo(function Message({
                     onMouseEnter={() => setHoverWord(i)}
                     onMouseLeave={() => setHoverWord((h) => (h === i ? null : h))}
                     onClick={(e) => {
-                      // A click corrects this word; a drag from it still selects text to copy. The
-                      // word being corrected elsewhere is still selected: that is no drag.
+                      // A click corrects the line with the caret where it landed; a drag from it
+                      // still selects text to copy. The word being corrected elsewhere is still
+                      // selected: that is no drag.
                       const sel = window.getSelection();
                       if (editing === i || (sel && !sel.isCollapsed && e.currentTarget.contains(sel.anchorNode))) return;
                       setCursor(i);
-                      setEditing(i);
-                      if (u.draft) onDraft.hold(u);
+                      if (u.draft) {
+                        // Words still being spoken change under the caret, so only this one opens.
+                        setEditing(i);
+                        onDraft.hold(u);
+                        return;
+                      }
+                      const hit = document.caretPositionFromPoint(e.clientX, e.clientY);
+                      const at = wordSpan(i).from + (hit && e.currentTarget.firstChild === hit.offsetNode ? hit.offset : p.length);
+                      setEditing({ from: at, to: at });
                     }}
                     {...(editing === i && editKeys((el) => saveWord(i, el.textContent ?? ""), cancel, (el, back) => {
                       // Tab: save and go on to the next word (Shift: the one before), across lines.
@@ -855,7 +876,7 @@ const Message = memo(function Message({
             ]);
             if (pick === "play") void (playing ? player.pause() : player.play(u));
             else if (pick === "copy") void navigator.clipboard.writeText(u.text);
-            else if (pick === "edit") setEditing("line");
+            else if (pick === "edit") setEditing({ from: 0, to: u.text.length });
             else if (pick === "stamp") onStamp(u);
             else if (pick === "term") onTerm(word.replace(/[.,!?…"'()]+$/u, ""));
           }}
@@ -881,7 +902,7 @@ const Message = memo(function Message({
             <BookPlus aria-hidden />
           </IconButton>
         )}
-        <IconButton label={t("edit.line")} onClick={() => setEditing("line")}>
+        <IconButton label={t("edit.line")} onClick={() => setEditing({ from: 0, to: u.text.length })}>
           <Pencil aria-hidden />
         </IconButton>
         <IconButton
@@ -1075,11 +1096,22 @@ function moveLine(from: HTMLElement, step: 1 | -1, edit = false) {
   to.scrollIntoView({ block: "nearest" });
 }
 
-/** Puts the caret over the text being corrected, all of it selected so typing replaces it. */
-function startEditing(el: HTMLElement) {
+/** Characters of a line, [from, to); a caret when they are equal. */
+type Span = { from: number; to: number };
+
+/**
+ * Puts the caret in the text being corrected: over `span` of it, or all of it selected so typing
+ * replaces it.
+ */
+function startEditing(el: HTMLElement, span?: Span) {
   el.focus();
   const range = document.createRange();
-  range.selectNodeContents(el);
+  const text = el.firstChild;
+  if (span && text?.nodeType === Node.TEXT_NODE) {
+    const length = text.textContent?.length ?? 0;
+    range.setStart(text, Math.min(span.from, length));
+    range.setEnd(text, Math.min(span.to, length));
+  } else range.selectNodeContents(el);
   window.getSelection()?.removeAllRanges();
   window.getSelection()?.addRange(range);
 }
