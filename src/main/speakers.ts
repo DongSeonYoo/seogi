@@ -131,22 +131,78 @@ const VOICE_NEW_MIN_SEC = 3;
 const CLOSEST_MIN_SEC = 4;
 const CLOSEST_LEAD = 0.1;
 
+const dot = (a: Float32Array, b: Float32Array) => {
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d += a[i] * b[i];
+  return d;
+};
+
 /** The voice (speaker number) a line `sec` long with embedding `v` belongs to, "new", or null: unsure. */
-export function placeVoice(v: Float32Array, sec: number, voices: Map<number, Float32Array[]>): number | "new" | null {
-  const scores = [...voices]
-    .map(([speaker, samples]) => {
-      let score = -1;
-      for (const s of samples) {
-        let dot = 0;
-        for (let i = 0; i < v.length; i++) dot += v[i] * s[i];
-        score = Math.max(score, dot);
-      }
-      return [speaker, score] as const;
-    })
-    .sort((a, b) => b[1] - a[1]);
+export function placeVoice(v: Float32Array, sec: number, voices: Map<number, Float32Array>): number | "new" | null {
+  const scores = [...voices].map(([speaker, mean]) => [speaker, dot(v, mean)] as const).sort((a, b) => b[1] - a[1]);
   const [best, next] = scores;
   if (best && best[1] >= VOICE_MATCH) return best[0];
   if (sec >= VOICE_NEW_MIN_SEC && (!best || best[1] < VOICE_NEW)) return "new";
   if (best && (sec >= CLOSEST_MIN_SEC || best[1] - (next?.[1] ?? -1) >= CLOSEST_LEAD)) return best[0];
   return null;
+}
+
+/**
+ * A recording meeting's voices. Each is the mean of its long lines, not its first one: a single
+ * short line is noisy, more so over a phone. A new voice needs a second unlike line that sounds
+ * like the first; until then that line stays unsure. On a phone call with one voice on the other
+ * side this made 1-2 voices instead of 3-5, and 3 of 3 on the lab meeting instead of 4-8, at
+ * 98% right (seogi-lab/diarize/placement.mjs, 3-4 s spans).
+ */
+export class VoiceBook {
+  private readonly voices = new Map<number, { mean: Float32Array; n: number }>();
+  private pending: { line: number; v: Float32Array } | null = null;
+
+  keys() {
+    return this.voices.keys();
+  }
+
+  /** A line's voice joins `speaker`'s mean (placed there, or named by hand). */
+  add(speaker: number, v: Float32Array) {
+    const x = this.voices.get(speaker);
+    if (!x) return void this.voices.set(speaker, { mean: v, n: 1 });
+    const mean = Float32Array.from(x.mean, (m, i) => m * x.n + v[i]);
+    const norm = Math.hypot(...mean) || 1;
+    this.voices.set(speaker, { mean: mean.map((m) => m / norm), n: x.n + 1 });
+  }
+
+  /** One person heard as two: `from` joins `into`. */
+  merge(from: number, into: number) {
+    const x = this.voices.get(from);
+    this.voices.delete(from);
+    if (x) for (let i = 0; i < x.n; i++) this.add(into, x.mean);
+  }
+
+  /**
+   * Where line `line` goes, as line → speaker: none (unsure, or waiting to be confirmed), its
+   * own, or also the earlier line it confirmed as a new voice. `next` numbers a new voice.
+   */
+  place(line: number, v: Float32Array, sec: number, next: () => number): Map<number, number> {
+    const out = new Map<number, number>();
+    const means = new Map([...this.voices].map(([k, x]) => [k, x.mean]));
+    const place = placeVoice(v, sec, means);
+    if (place === "new") {
+      if (this.voices.size && !(this.pending && dot(v, this.pending.v) >= VOICE_MATCH)) {
+        this.pending = { line, v };
+        return out;
+      }
+      const speaker = next();
+      this.add(speaker, v);
+      if (this.pending) {
+        out.set(this.pending.line, speaker);
+        this.add(speaker, this.pending.v);
+        this.pending = null;
+      }
+      out.set(line, speaker);
+    } else if (place !== null) {
+      out.set(line, place);
+      if (sec >= VOICE_NEW_MIN_SEC) this.add(place, v);
+    }
+    return out;
+  }
 }

@@ -28,7 +28,7 @@ import { History, perform } from "./library";
 import { diarize } from "./diarize";
 import { cleanModelDownloads, ensureModels } from "./modelFiles";
 import { embedVoice } from "./voices";
-import { assignSpeakers, AudioRing, nameBetween, placeVoice, speakerTurns } from "./speakers";
+import { assignSpeakers, AudioRing, nameBetween, speakerTurns, VoiceBook } from "./speakers";
 import { LiveCaptions, openLiveStream } from "./live";
 import { openLocalStream } from "./localSpeech";
 import { signInChatGPT, signOutChatGPT } from "./chatgpt";
@@ -96,7 +96,7 @@ app.whenReady().then(async () => {
    * audio under that name (a speaker number); later lines that sound alike enough take it. The
    * book lasts until the meeting ends, across pauses.
    */
-  const voiceBook = new Map<number, Map<number, Float32Array[]>>();
+  const voiceBook = new Map<number, VoiceBook>();
   async function voiceOf(entry: LiveSession, startSec: number, endSec: number) {
     const audio = entry.voice.slice(startSec - entry.offsetSec, endSec - entry.offsetSec);
     return audio && embedVoice(audio, (await speakerModels()).embedding);
@@ -113,20 +113,19 @@ app.whenReady().then(async () => {
     for (const line of lines) {
       const entry = live.get(id);
       if (!entry) return;
-      const book = voiceBook.get(id) ?? new Map<number, Float32Array[]>();
+      const book = voiceBook.get(id) ?? new VoiceBook();
       voiceBook.set(id, book);
       try {
         const v = await voiceOf(entry, line.startSec, line.endSec ?? line.startSec + 6);
         if (!v) continue;
         // A line of unknown length can join a voice but not start one.
-        const place = placeVoice(v, line.endSec === undefined ? 0 : line.endSec - line.startSec, book);
-        if (place === "new") {
+        const sec = line.endSec === undefined ? 0 : line.endSec - line.startSec;
+        const placed = book.place(line.id, v, sec, () => {
           const m = db.getMeeting(id);
           const used = [...(m?.utterances.map((u) => u.speaker ?? 0) ?? []), ...Object.keys(m?.speakerNames ?? {}).map(Number).filter(Boolean), ...book.keys()];
-          const speaker = Math.max(0, ...used) + 1;
-          book.set(speaker, [v]);
-          named.set(line.id, speaker);
-        } else if (place) named.set(line.id, place);
+          return Math.max(0, ...used) + 1;
+        });
+        for (const [l, speaker] of placed) named.set(l, speaker);
       } catch (e) {
         console.warn("[seogi] voice naming failed:", e);
         return;
@@ -205,13 +204,12 @@ app.whenReady().then(async () => {
     const known = Object.entries(m.speakerNames).find(([key, given]) => given === name && /^\d+$/.test(key));
     const used = [...m.utterances.map((x) => x.speaker ?? 0), ...Object.keys(m.speakerNames).map(Number).filter(Boolean)];
     const speaker = known ? Number(known[0]) : u.speaker ?? Math.max(0, ...used, ...(voiceBook.get(meetingId)?.keys() ?? [])) + 1;
-    const book = voiceBook.get(meetingId) ?? new Map<number, Float32Array[]>();
+    const book = voiceBook.get(meetingId) ?? new VoiceBook();
     voiceBook.set(meetingId, book);
     if (u.speaker && u.speaker !== speaker) {
       db.setSpeakers(meetingId, new Map(m.utterances.filter((x) => x.speaker === u.speaker).map((x) => [x.id, speaker])));
       db.setSpeakerName(meetingId, String(u.speaker), "");
-      book.set(speaker, [...(book.get(speaker) ?? []), ...(book.get(u.speaker) ?? [])]);
-      book.delete(u.speaker);
+      book.merge(u.speaker, speaker);
     }
     db.setSpeakerName(meetingId, String(speaker), name);
     db.setSpeakers(meetingId, new Map([[u.id, speaker]]));
@@ -221,7 +219,7 @@ app.whenReady().then(async () => {
     try {
       const v = await voiceOf(entry, u.startSec, Math.min(next, u.startSec + 8));
       if (!v) return;
-      book.set(speaker, [...(book.get(speaker) ?? []), v]);
+      book.add(speaker, v);
     } catch (e) {
       return console.warn("[seogi] voice enrolment failed:", e);
     }

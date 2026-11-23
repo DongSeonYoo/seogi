@@ -1,4 +1,4 @@
-import { Folder, PanelLeft, PanelRight, Plus, Search, Sparkles, Star } from "lucide-react";
+import { Check, Copy, Folder, PanelLeft, PanelRight, Plus, Search, Sparkles, Star } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { MeetingDetail } from "../../shared/types";
 import { clock } from "../../shared/summary";
@@ -12,6 +12,32 @@ import { IconButton } from "./ui";
  */
 export type Recording = { id: number; startedAt: number | null; offsetSec: number };
 
+
+/**
+ * The session's id (#51), to point Seogi's developer or an assistant at it; clicking copies it
+ * with the title, so the paste says which meeting it is.
+ */
+function SessionId({ id, title }: { id: number; title: string }) {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  return (
+    <button
+      type="button"
+      className="toolbar__project"
+      title={t("toolbar.copyId")}
+      aria-label={`${t("toolbar.copyId")}: #${id}`}
+      onClick={() => void navigator.clipboard.writeText(`#${id} ${title}`).then(() => setCopied(true))}
+    >
+      {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
+      {copied ? t("toolbar.copied") : `#${id}`}
+    </button>
+  );
+}
 
 /** The unified toolbar over the list and detail: title on the left, capsules of actions on the right. */
 export function Toolbar({
@@ -78,6 +104,8 @@ export function Toolbar({
               {project ?? t("folder.none")}
             </button>
             {subtitle && ` · ${subtitle}`}
+            {" · "}
+            <SessionId id={m.id} title={m.title} />
           </p>
         )}
       </div>

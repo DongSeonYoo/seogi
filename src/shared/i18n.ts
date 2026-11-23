@@ -127,6 +127,8 @@ const en = {
   // Toolbar
   "toolbar.record": "Record",
   "toolbar.renameHint": "Double-click to rename",
+  "toolbar.copyId": "Copy session ID",
+  "toolbar.copied": "Copied",
   "toolbar.name": "Name",
 
   // Detail
@@ -503,6 +505,8 @@ const ko: Record<MessageKey, string> = {
   "error.deleteBusy": "녹음하거나 정리 중인 회의는 삭제할 수 없습니다",
   "toolbar.record": "녹음",
   "toolbar.renameHint": "더블클릭해 이름 변경",
+  "toolbar.copyId": "세션 ID 복사",
+  "toolbar.copied": "복사됨",
   "toolbar.name": "이름",
   "detail.summary": "요약",
   "detail.systemSilent":

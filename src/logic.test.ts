@@ -104,13 +104,29 @@ test("the voice ring keeps the last minutes by stretch time; a line joins a voic
   assert.equal(s.length, 16000 * 8); // at most 8 s of a line
   assert.ok(Math.abs(s[0] - 200 / 32768) < 1e-9);
   const unit = (...v: number[]) => Float32Array.from(v, (x) => x / Math.hypot(...v));
-  const voices = new Map([[1, [unit(1, 0, 0)]], [2, [unit(0, 1, 0)]]]);
+  const voices = new Map([[1, unit(1, 0, 0)], [2, unit(0, 1, 0)]]);
   assert.equal(placeVoice(unit(0.9, 0.2, 0), 2, voices), 1);
   assert.equal(placeVoice(unit(0.4, 0.4, 0.82), 2, voices), null); // like neither enough, too short to tell
   assert.equal(placeVoice(unit(0.4, 0.4, 0.82), 4, voices), 1); // long: the closest voice
   assert.equal(placeVoice(unit(0.45, 0.3, 0.84), 2, voices), 1); // short, but clearly closer to one
   assert.equal(placeVoice(unit(0.1, 0.1, 0.99), 4, voices), "new");
   assert.equal(placeVoice(unit(0.1, 0.1, 0.99), 4, new Map()), "new"); // the first voice heard
+});
+
+test("a recording's voices are means of their lines, and a new voice waits for a second line like it", async () => {
+  const { VoiceBook } = await import("./main/speakers.ts");
+  const unit = (...v: number[]) => Float32Array.from(v, (x) => x / Math.hypot(...v));
+  const book = new VoiceBook();
+  let n = 0;
+  const next = () => ++n;
+  assert.deepEqual([...book.place(1, unit(1, 0, 0), 4, next)], [[1, 1]]); // the first voice: at once
+  assert.deepEqual([...book.place(2, unit(0, 0, 1), 4, next)], []); // unlike it: held, not a voice yet
+  assert.deepEqual([...book.place(3, unit(0.95, 0.3, 0), 4, next)], [[3, 1]]);
+  assert.deepEqual([...book.place(4, unit(0, 0.4, 1), 4, next)], [[2, 2], [4, 2]]); // like line 2: both are voice 2
+  // The mean of voice 1 moved toward line 3, so a line between them is closer to it than either was.
+  assert.deepEqual([...book.place(5, unit(0.6, 0.4, 0.05), 2, next)], [[5, 1]]);
+  book.merge(2, 1);
+  assert.deepEqual([...book.keys()], [1]);
 });
 
 test("a short unnamed line between two lines of one voice takes it, unless it is a lone acknowledgement", async () => {
